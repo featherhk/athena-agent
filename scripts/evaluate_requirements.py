@@ -78,17 +78,25 @@ async def evaluate(key_file, selected_cases=None):
                         if contains_area(value):
                             return True
             return False
-        async def operations(session):
-            rows = await store.history(session)
-            result = set()
-            for row in rows:
-                for call in json.loads(row['tool_calls'] or '[]'):
-                    if call['function']['name'] == 'runtime':
-                        args = json.loads(call['function']['arguments'])
-                        result.add(args.get('op'))
-            return result
         async def inspection(session):
-            return {'context', 'usage'} <= await operations(session)
+            rows = await store.history(session)
+            calls = {call['id']: json.loads(call['function']['arguments']).get('op')
+                     for row in rows for call in json.loads(row['tool_calls'] or '[]')
+                     if call['function']['name'] == 'runtime'}
+            successful = set()
+            for row in rows:
+                op = calls.get(row['tool_call_id'])
+                if row['role'] != 'tool' or op not in {'context', 'usage'}:
+                    continue
+                result = json.loads(row['content'])
+                if op == 'context' and result.get('measurement') == 'estimated' and type(result.get('estimated_input_tokens')) is int:
+                    successful.add(op)
+                if (op == 'usage' and result.get('usage_measurement') == 'provider_reported'
+                        and result.get('window', {}).get('scope') == 'account'
+                        and result.get('window', {}).get('seconds') == 3600
+                        and 'request_count' in result.get('total', {})):
+                    successful.add(op)
+            return {'context', 'usage'} <= successful
         reference = await store.session('装修预算记录', user_id=user['id'])
         await store.message(reference, None, 'user', '装修预算上限为 23800 元，不含家电。')
         async def cross_chat(session):
