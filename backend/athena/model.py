@@ -4,10 +4,13 @@ import httpx
 from .errors import ServiceError
 
 
-async def complete(client: httpx.AsyncClient, api_base: str, api_key: str, payload: dict, on_text: Callable[[str], Awaitable[None]], on_reasoning: Callable[[str], Awaitable[None]] | None = None) -> dict:
+async def complete(client: httpx.AsyncClient, api_base: str, api_key: str, payload: dict, on_text: Callable[[str], Awaitable[None]], on_reasoning: Callable[[str], Awaitable[None]] | None = None, *, request_id: str | None = None) -> dict:
     content, reasoning, calls, usage, response_model = "", "", {}, {}, None
     finished = False
-    async with client.stream("POST", api_base.rstrip("/") + "/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json=payload) as response:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if request_id:
+        headers['Idempotency-Key'] = request_id
+    async with client.stream("POST", api_base.rstrip("/") + "/chat/completions", headers=headers, json=payload) as response:
         if response.status_code >= 400:
             await response.aread()
             # Do not forward a provider response containing request details or credentials.

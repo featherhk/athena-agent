@@ -17,6 +17,8 @@ export function AccountProfile({ user, onChange, passwordRequested = false, onPa
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [credit, setCredit] = useState<{ managed: boolean; available_micros: number } | null>(null);
+  useEffect(() => { let live = true; api<{ managed: boolean; available_micros: number }>('/account/credit').then(value => { if (live) setCredit(value); }).catch(() => {}); return () => { live = false; }; }, [user.id]);
   useEffect(() => { setName(user.display_name || ''); }, [user.id, user.display_name]);
   useEffect(() => { if (passwordRequested) setPasswordOpen(true); }, [passwordRequested]);
 
@@ -53,6 +55,7 @@ export function AccountProfile({ user, onChange, passwordRequested = false, onPa
     finally { setBusy(false); }
   }
   return <section className="account-profile">
+    {credit?.managed && <div className="account-credit"><span>{t('account.credit')}</span><strong>{new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(credit.available_micros / 1_000_000)}</strong><small>{t('account.noRecharge')}</small></div>}
     <div className="account-avatar" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       {user.avatar_url && <img src={user.avatar_url} alt={t('account.avatar')} width={52} height={52} style={{ borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />}
       <label style={{ margin: 0 }}>{t('account.avatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy}

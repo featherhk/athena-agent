@@ -287,3 +287,10 @@ __pycache__/
 
 # Private account media, even if accidentally copied beside source
 account-avatars/
+
+# Installation artifacts and machine-local secrets
+*.dmg
+*.app/
+*.xcarchive/
+.ssh/
+.secrets/

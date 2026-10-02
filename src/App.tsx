@@ -10,6 +10,7 @@ import type { FileEntry } from './FilePreview';
 import DeveloperPanel from './DeveloperPanel';
 import { AccountProfile } from './AccountProfile';
 import UserHelp from './UserHelp';
+import VoiceCall from './VoiceCall';
 import { RunTrace } from './RunTrace';
 import { StyledText } from './StyledText';
 import type { TextStyleEffect } from './effects';
@@ -67,6 +68,9 @@ export default function App() {
   const [textEffects, setTextEffects] = useState<Record<string, Record<string, TextStyleEffect>>>({});
   const [chooseFiles, setChooseFiles] = useState(false);
   const [actionWake, setActionWake] = useState(0);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceRecovery, setVoiceRecovery] = useState(0);
+  const [voiceHelpAnswers, setVoiceHelpAnswers] = useState<{ id: string; answers: Record<string, string> }>({ id: '', answers: {} });
   const appClient = useRef(crypto.randomUUID());
   const appActionActive = useRef(0);
   const authEpoch = useRef(0);
@@ -89,10 +93,13 @@ export default function App() {
   const nearBottom = useRef(true);
   const scrollIntent = useRef(0);
   const upgradeState = useRef({ user, session, text, attached, safe: false });
-  upgradeState.current = { user, session, text, attached, safe: !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu };
+  upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu };
   const busy = snapshot.runs.some(run => ['running', 'queued'].includes(run.status));
   const help = snapshot.help_requests?.[0];
   const waiting = Boolean(help);
+  const voiceAnswers = help && voiceHelpAnswers.id === help.id ? voiceHelpAnswers.answers : {};
+  const voiceQuestion = help?.questions.find(question => !(question.id in voiceAnswers));
+  const voiceMessages = voiceQuestion && help ? [...snapshot.messages, { id: `voice-help:${help.id}:${voiceQuestion.id}`, role: 'assistant', content: voiceQuestion.question, status: 'complete' }] : snapshot.messages;
   const queued = snapshot.runs.filter(run => run.status === 'queued').length;
   const lastError = snapshot.runs[0]?.error ? errorMessage(snapshot.runs[0]?.error_code) : '';
   const activePhase = snapshot.runs.find(run => run.status === 'running')?.phase;
@@ -365,8 +372,11 @@ export default function App() {
   }, [history, user?.id]);
 
   function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
-  async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true) {
-    if ((!value.trim() && (!fromComposer || attached.length === 0)) || sending || resetting || uploading) return;
+  async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false) {
+    if ((!value.trim() && (!fromComposer || attached.length === 0)) || sending || resetting || uploading) {
+      if (throwOnError) throw new Error('voice_busy');
+      return;
+    }
     if (!user) { requestLogin(); return; }
     const owner = user.id;
     let isCurrent = currentGuard(), sid = session;
@@ -389,14 +399,42 @@ export default function App() {
         if (uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(remaining);
         if (isCurrent()) input.current?.focus();
       }
-    } catch (e) { if (isCurrent()) setError((e as Error).message); }
+    } catch (e) { if (isCurrent()) setError((e as Error).message); if (throwOnError) throw e; }
     finally { if (isCurrent()) setSending(false); }
+  }
+  async function ensureVoiceSession() {
+    if (!user) { requestLogin(); return null; }
+    if (session) return session;
+    const isCurrent = currentGuard();
+    const next = await api<{ id: string }>('/sessions', {});
+    if (!isCurrent()) return null;
+    navigate(next.id, true);
+    return next.id;
+  }
+  async function submitVoice(value: string) {
+    if (session && help && voiceQuestion) {
+      const answers = { ...voiceAnswers, [voiceQuestion.id]: value };
+      if (help.questions.some(question => !(question.id in answers))) {
+        setVoiceHelpAnswers({ id: help.id, answers });
+      } else {
+        await api(`/sessions/${session}/help/${help.id}/answer`, { answers, file_ids: [] });
+        setVoiceHelpAnswers({ id: '', answers: {} });
+      }
+    } else await submit(value, 'interrupt', false, true);
+  }
+  async function interruptVoice() {
+    // Speaking over a clarification only stops its audio; the pending question
+    // remains available for the user's spoken answer.
+    if (!session || help) return;
+    invalidateActions();
+    await api(`/sessions/${session}/stop`, {});
   }
   function invalidateActions() {
     uiScope.current.control++; setChooseFiles(false); setSending(false); setUploading(false);
   }
   async function stop() {
     if (!session) return;
+    setVoiceRecovery(old => old + 1);
     invalidateActions(); const isCurrent = currentGuard();
     try { await api(`/sessions/${session}/stop`, {}); if (isCurrent()) setPhase('stopped'); }
     catch (e) { if (isCurrent()) setError((e as Error).message); }
@@ -418,6 +456,7 @@ export default function App() {
     finally { if (isCurrent()) setSending(false); }
   }
   async function reset() {
+    setVoiceRecovery(old => old + 1);
     invalidateActions(); const isCurrent = currentGuard();
     setSnapshot(old => ({ ...old, components: [] })); setTextEffects({}); applyPreferences(defaultPreferences);
     if (!user) { setError(''); setToast(t('resetGuest')); return; }
@@ -523,7 +562,7 @@ export default function App() {
   return <div className="app" data-reading={reading}>
     <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
-      <nav aria-label={t('chatControls')}><button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
+      <nav aria-label={t('chatControls')}>{workspace && !resetting && <button className="quiet workspace-return" onClick={() => setDismissedWorkspace(`${workspace.id}:${workspace.version}`)}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
     </header>
     <div className="workspace-layout">
       {!resetting && snapshot.components.some(component => component.placement === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{snapshot.components.filter(component => component.placement === 'sidebar-start').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>}
@@ -536,7 +575,7 @@ export default function App() {
     {!resetting && snapshot.components.filter(component => component.placement === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}><Widget sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div>)}
     <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
       {!resetting && snapshot.components.filter(component => component.placement === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}><Widget sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div>)}
-      {workspace && !resetting && <section className="workspace-panel"><button className="quiet" onClick={() => setDismissedWorkspace(`${workspace.id}:${workspace.version}`)}>{t('backToChat')}</button><Widget key={`${workspace.id}-${workspace.version}`} sessionId={session!} component={workspace} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></section>}
+      {workspace && !resetting && <section className="workspace-panel"><Widget key={`${workspace.id}-${workspace.version}`} sessionId={session!} component={workspace} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></section>}
       <div className="conversation" hidden={Boolean(workspace)}>
         <article className="message assistant greeting"><div>{t('greeting')}</div></article>
         {snapshot.messages.map(message => {
@@ -574,7 +613,7 @@ export default function App() {
       <form className="composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
         <button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
         <textarea dir="auto" ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
-        <div className="send-actions">{(busy || waiting) && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{(busy || waiting) && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={(busy && !waiting) || (help && help.questions.length > 1) ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
+        <div className="send-actions"><VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />{(busy || waiting) && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{(busy || waiting) && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={(busy && !waiting) || (help && help.questions.length > 1) ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
       </form>
     </div></footer>
     {toast && <div className="toast" role="status">{toast}</div>}

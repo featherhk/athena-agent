@@ -6,6 +6,8 @@ Athena is a personal assistant that starts with a conversation. Describe what yo
 
 The current release is a **local macOS / web prototype**, built with Python 3.14T, SQLite, TypeScript, and React. It is a general assistant with programmable capabilities, not a coding-only interface. The [product direction](docs/product.md) separates implemented behavior from ideas still to validate.
 
+The current preview also includes a separate account/model gateway with zero-credit registration, audited USD test credits, and a self-contained Apple Silicon macOS test package. The gateway has passed a real provider-stream and settlement check; public DNS/TLS activation is pending. The DMG is ad-hoc signed, not notarized. Voice turn-taking, interruption, and provider adapters are implemented, but a real audio channel and microphone call have not yet been verified. See [release readiness](docs/requirements-status.md), [cloud operations](docs/cloud-deployment.md), [desktop distribution](docs/distribution.md), and [voice](docs/voice.md).
+
 ## What works today
 
 - Accounts with display names and avatars, plus a fixed password-change form that keeps passwords out of model messages and tools. Provider credentials remain server-managed.
@@ -13,9 +15,9 @@ The current release is a **local macOS / web prototype**, built with Python 3.14
 - Streaming chat with safe Markdown rendering, separately collapsible reasoning actually returned by the provider, and distinct thinking, replying, and execution states. Durable events restore updates after reconnecting; closing the browser does not stop a task.
 - File attachments and generated outputs associated with their conversation. Owned files can be downloaded or previewed as Markdown, isolated HTML, images, or bounded XLSX cells and cached values.
 - Message queues, interruption, stop, and conversation forks. Forks inherit a fixed history boundary and copy background tasks in a paused state.
-- Through `runtime`, Athena can find/read other conversations in the same account, create or rename them, and fork idle conversations. Completed runs can be excluded from the current model context and restored; original chats remain intact. Returning a session ID does not automatically navigate the browser.
+- Through `runtime`, Athena can find/read other conversations in the same account, create or rename them, and fork idle conversations. Completed runs can be excluded from the current model context and restored; original chats remain intact. Browser navigation and other shell actions use durable claims and acknowledgements; returning a session ID alone does not navigate.
 - Three core OpenAI-format tools: `exec`, `update_frontend`, and `runtime`. The runtime uses a small `{op, args}` envelope. Skills are directory packages with `SKILL.md` metadata and optional scripts, references, templates, or other resources; bodies and resources load on demand.
-- Versioned tools, components, skills, and policy providers outside the source checkout. Restoring a previous registration creates a new version. Frontend contributions can appear inline, as a banner, or in a workspace; the fixed shell retains input, stop, navigation, and reset.
+- Versioned tools, components, skills, and policy providers outside the source checkout. Restoring a previous registration creates a new version. Frontend contributions support inline, workspace, sidebar, fixed, overlay, fullscreen and presence surfaces with live updates and render receipts; the fixed shell retains input, stop, navigation, and reset.
 - Three connected policy hooks: context compression, memory recall, and command preparation. Plugins run in bounded subprocesses; errors, timeouts, or invalid results fall back to the default. Service IDs are open, but a registration without a consumer is reported as waiting and does not change behavior.
 - Timers, recurring tasks, and script-based conditions. Checks run without an LLM; a match queues work in the original conversation.
 - Explicit user, project, and conversation memories; recoverable tool-output clipping; and runtime inspection of usage, cache hits, cost estimates, and context. Requested compaction can target an estimated token budget while preserving original messages, reasoning, and tool-call pairing. Missing usage and unknown model limits remain unknown.
@@ -98,11 +100,11 @@ Scheduled work requires the local service and computer to be running. Missed rec
 
 ## Current boundaries
 
-The macOS command runner uses Seatbelt to prevent writes to application source and restrict access to Athena's runtime data. Registered code lives in the user file area. This is not a complete sandbox for hostile tenants: other host resources remain within the local user's reach. Command execution is disabled on platforms without the protection adapter. Keep this prototype on loopback; it is not a ready-to-host public service.
+The macOS command runner uses Seatbelt to prevent writes to application source and restrict access to Athena's runtime data. Registered code lives in the user file area. This is not a complete sandbox for hostile tenants: other host resources remain within the local user's reach. Command execution is disabled on platforms without the protection adapter, including the hosted Linux preview. The local runtime stays on loopback. Hosted deployment uses a separate gateway and explicit HTTPS origin; it is not a general-purpose public execution sandbox.
 
 The current Engine and Store still implement the agent loop and persistence directly. They are not replaceable providers behind a service host yet. Existing policy hooks do not make the model transport, scheduler, authentication, or entire frontend interchangeable; registering an unused service ID cannot activate a missing integration. Core application updates still require a controlled restart.
 
-Still to build: integrated browser and desktop control, OS notifications, packaged resident execution nodes, hosted accounts, a balance/payment ledger, native mobile/Windows clients, voice, subagents, and broader task-quality evaluation. Current login and cost estimates do not constitute production identity or billing infrastructure. XLSX previews are bounded readers, not a spreadsheet calculation engine. There is deliberately no per-action approval workflow in this prototype.
+Still to build or validate: integrated browser and desktop control, OS notifications, production execution isolation, signed/notarized distribution, native mobile/Windows clients, real audio calls, subagents, and broader task-quality evaluation. Central accounts and a reservation/settlement ledger exist; payment collection, account recovery and production reconciliation remain out of scope. XLSX previews are bounded readers, not a spreadsheet calculation engine. There is deliberately no per-action approval workflow in this prototype.
 
 ## Verify
 

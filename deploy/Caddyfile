@@ -1,0 +1,39 @@
+{
+    auto_https disable_redirects
+    servers {
+        max_header_size 16KB
+    }
+}
+app.featherhk.com {
+    request_body {
+        max_size 40MB
+    }
+    @credentials path /api/auth/* /api/account/password /v1/auth/* /v1/account/password
+    request_body @credentials {
+        max_size 16KB
+    }
+    tls {
+        issuer acme {
+            disable_http_challenge
+        }
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000"
+    }
+    handle_path /downloads/* {
+        root * /srv/downloads
+        file_server
+    }
+    handle /v1/* {
+        reverse_proxy gateway:4321 {
+            flush_interval -1
+        }
+    }
+    handle {
+        reverse_proxy web:4317 {
+            flush_interval -1
+        }
+    }
+}

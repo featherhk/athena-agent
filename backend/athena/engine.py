@@ -22,6 +22,7 @@ class Engine:
         self.controls: dict[str, asyncio.Lock] = {}
         self.tools = ToolRunner(config, store)
         self.models = self.tools.models
+        self.cloud = None
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15))
         self.closing = False
         self.watchers: dict[str, asyncio.Task] = {}
@@ -71,7 +72,10 @@ class Engine:
         if owner["user_id"] in self.resetting_users:
             raise UserError("resetting", "正在恢复默认状态，请稍后再发。")
         profile, _ = await self.models.selected(session_id)
-        await self.models.require_key(profile)
+        if self.cloud:
+            await self.cloud.require_credit(owner['user_id'])
+        else:
+            await self.models.require_key(profile)
         async with self.controls.setdefault(session_id, asyncio.Lock()):
             if owner["user_id"] in self.resetting_users or self.user_reset_versions.get(owner["user_id"], 0) > began:
                 raise UserError("resetting", "This input was superseded by reset. Send it again when ready.")
@@ -242,7 +246,14 @@ class Engine:
                 # Tool outputs are clipped once at admission; previous messages stay stable.
                 # Freeze configuration for this request; switches affect only the next one.
                 profile, epoch = await self.models.selected(session_id)
-                key = await self.models.require_key(profile)
+                if self.cloud:
+                    owner = await self.tools.owner(session_id)
+                    await self.cloud.require_credit(owner['user_id'])
+                    key = await self.cloud.token(owner['user_id'])
+                    endpoint = self.cloud.base
+                else:
+                    key = await self.models.require_key(profile)
+                    endpoint = profile.api_base
                 messages = await self.context(session_id, profile, epoch)
                 request_id = uid()
                 definitions, bindings = await self.tools.snapshot_definitions(session_id)
@@ -267,7 +278,10 @@ class Engine:
                     nonlocal reasoning
                     reasoning += delta
                     await publish()
-                result = await complete(self.client, profile.api_base, key, payload, on_text, on_reasoning)
+                if self.cloud:
+                    result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning, request_id=request_id)
+                else:
+                    result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning)
                 assistant = result["message"]
                 outstanding = assistant.get("tool_calls", []).copy()
                 await self.store.execute("UPDATE messages SET content=?,reasoning=?,tool_calls=?,status='complete' WHERE id=?", (assistant["content"], assistant["reasoning_content"], json.dumps(outstanding) if outstanding else None, message_id))

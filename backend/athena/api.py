@@ -28,6 +28,7 @@ from .component_feedback import register_component_routes
 from .trace import register_trace_routes
 from .client_version import register_client_version_route
 from .app_controls import initialize_app_controls, list_app_actions, register_app_control_routes
+from .voice import VoiceConfig, VoiceService, initialize_voice, register_voice_routes
 
 
 class Input(BaseModel):
@@ -71,10 +72,22 @@ def create_app(config: Config | None = None):
         await initialize_registry(store)
         await initialize_accounts(store)
         await initialize_app_controls(store)
+        await initialize_voice(store)
+        app.state.voice = VoiceService(VoiceConfig.from_env(), store)
         engine = Engine(config, store)
         await engine.models.ensure_default()
         app.state.engine, app.state.store = engine, store
         app.state.auth = Auth(store)
+        app.state.cloud = None
+        if config.cloud_url:
+            from .cloud_client import CloudAccounts
+            cloud = CloudAccounts(store, config.cloud_url)
+            await cloud.initialize()
+            app.state.cloud = engine.cloud = cloud
+            app.state.auth = cloud
+            await app.state.voice.close()
+            from .voice_gateway import CloudVoiceService
+            app.state.voice = CloudVoiceService(cloud)
         scheduler = asyncio.create_task(engine.scheduler())
         try:
             yield
@@ -82,6 +95,9 @@ def create_app(config: Config | None = None):
             scheduler.cancel()
             await asyncio.gather(scheduler, return_exceptions=True)
             await engine.close()
+            await app.state.voice.close()
+            if app.state.cloud:
+                await app.state.cloud.http.aclose()
             await store.close()
             pool.shutdown(wait=True)
             lock.close()
@@ -91,16 +107,24 @@ def create_app(config: Config | None = None):
     async def local_only(request, call_next):
         # Local prototype has no action approval workflow; block cross-site access to it.
         host = request.url.hostname
-        if host not in ("127.0.0.1", "localhost", "::1", "testserver"):
+        public = urlparse(config.public_origin) if config.public_origin else None
+        if public and (public.scheme != 'https' or not config.cloud_url):
+            return JSONResponse({'code':'hosted_configuration_invalid'}, status_code=503)
+        if host not in ("127.0.0.1", "localhost", "::1", "testserver", public.hostname if public else None):
             return JSONResponse({"error": "Only local requests are accepted"}, status_code=403)
         origin = request.headers.get("origin")
         allowed_origins = {f"http://{host}:{port}" for host in ("127.0.0.1", "localhost") for port in (os.environ.get("ATHENA_PORT", "4317"), "5173")}
+        if public:
+            allowed_origins = {config.public_origin}
         if origin and origin not in allowed_origins:
             return JSONResponse({"error": "Cross-site requests are not allowed"}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"error": "Cross-site requests are not allowed"}, status_code=403)
         if request.url.path.startswith('/api/'):
-            request.state.user = await app.state.auth.current(request.cookies.get(COOKIE))
+            try:
+                request.state.user = await app.state.auth.current(request.cookies.get(COOKIE))
+            except ServiceError as exc:
+                return JSONResponse({'code':exc.code},status_code=exc.http_status)
             public = {"/api/health", "/api/auth/me", "/api/auth/login", "/api/auth/register"}
             if request.url.path not in public and not request.state.user:
                 return JSONResponse({"error": "请先登录", "code": "login_required"}, status_code=401)
@@ -133,29 +157,38 @@ def create_app(config: Config | None = None):
 
     async def login_response(user, token):
         response = JSONResponse({"user": user, "preferences": await read_preferences(app.state.store, user["id"])})
-        response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=30*86400, path="/")
+        response.set_cookie(COOKIE, token, httponly=True, secure=bool(config.public_origin), samesite="strict", max_age=30*86400, path="/")
         return response
 
     @app.get("/api/auth/me")
     async def me(request: Request):
-        return {"user": request.state.user, "preferences": await read_preferences(app.state.store, request.state.user["id"]) if request.state.user else None, "configured": bool(await app.state.engine.api_key()), "has_users": bool(await app.state.store.rows("SELECT id FROM users LIMIT 1"))}
+        return {"user": request.state.user, "preferences": await read_preferences(app.state.store, request.state.user["id"]) if request.state.user else None, "configured": bool(await app.state.engine.api_key()), "has_users": bool(config.cloud_url) or bool(await app.state.store.rows("SELECT id FROM users LIMIT 1"))}
 
     @app.post("/api/auth/register")
     async def register(body: Credentials):
-        user, token = await app.state.auth.register(body.username, body.password)
+        user, token = await app.state.cloud.authenticate('register',body.username,body.password) if app.state.cloud else await app.state.auth.register(body.username, body.password)
         return await login_response(user, token)
 
     @app.post("/api/auth/login")
     async def login(body: Credentials):
-        user, token = await app.state.auth.login(body.username, body.password)
+        user, token = await app.state.cloud.authenticate('login',body.username,body.password) if app.state.cloud else await app.state.auth.login(body.username, body.password)
         return await login_response(user, token)
 
     @app.post("/api/auth/logout")
     async def logout(request: Request):
+        if app.state.cloud:
+            await app.state.cloud.logout(request.cookies[COOKIE])
         await app.state.store.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash(request.cookies[COOKIE]),))
         response = JSONResponse({"ok": True})
         response.delete_cookie(COOKIE, path="/")
         return response
+
+    @app.get('/api/account/credit')
+    async def credit(request: Request):
+        if not app.state.cloud:
+            return {'managed':False}
+        result=await app.state.cloud.call('/auth/me',token=await app.state.cloud.token(request.state.user['id']))
+        return {'managed':True,**result['credit']}
 
     @app.post("/api/settings/developer")
     async def developer(request: Request, body: DeveloperInput):
@@ -314,6 +347,7 @@ def create_app(config: Config | None = None):
     register_account_routes(app)
     register_component_routes(app, exists)
     register_trace_routes(app, exists)
+    register_voice_routes(app, exists)
     register_client_version_route(app, config)
     register_app_control_routes(app, exists)
     dist = config.repo_dir / "dist"

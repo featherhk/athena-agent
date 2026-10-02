@@ -82,7 +82,7 @@ export function RunTrace({ sessionId, runId, revision = 0, phase }: { sessionId:
 
   useEffect(() => {
     if (!open) { refresh.current = null; return; }
-    let alive = true, busy = false, dirty = false;
+    let alive = true, busy = false, dirty = false, failed = false;
     let current: Trace | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let lastFetched = 0;
@@ -99,8 +99,8 @@ export function RunTrace({ sessionId, runId, revision = 0, phase }: { sessionId:
         if (!alive) return;
         const retained = previous?.entries.filter(item => item.seq <= after) || [];
         current = { ...page, entries: [...retained, ...page.entries] };
-        setTrace(current); setError('');
-      } catch (error) { if (alive) setError((error as Error).message); }
+        failed = false; setTrace(current); setError('');
+      } catch (error) { if (alive) { failed = true; setError((error as Error).message); } }
       finally {
         busy = false;
         if (alive) {
@@ -115,9 +115,19 @@ export function RunTrace({ sessionId, runId, revision = 0, phase }: { sessionId:
       if (timer !== undefined) return;
       timer = setTimeout(() => { timer = undefined; void load(next); }, next ? 0 : Math.max(0, 600 - (Date.now() - lastFetched)));
     }
+    // A local backend can restart while an expanded activity is on screen.
+    // Recover when the user returns or connectivity resumes, without polling
+    // failed requests or collapsing the record they were reading.
+    function recover() { if (failed && !document.hidden) schedule(); }
+    window.addEventListener('online', recover);
+    document.addEventListener('visibilitychange', recover);
     refresh.current = schedule;
     void load();
-    return () => { alive = false; if (timer !== undefined) clearTimeout(timer); refresh.current = null; };
+    return () => {
+      alive = false; if (timer !== undefined) clearTimeout(timer); refresh.current = null;
+      window.removeEventListener('online', recover);
+      document.removeEventListener('visibilitychange', recover);
+    };
   }, [open, base]);
 
   useEffect(() => { if (open) refresh.current?.(); }, [revision, phase, open]);

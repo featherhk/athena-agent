@@ -36,13 +36,14 @@ def public_user(user):
 
 
 class Auth:
-    def __init__(self, store):
+    def __init__(self, store, *, bootstrap_owner=True):
         self.store = store
+        self.bootstrap_owner = bootstrap_owner
 
     async def register(self, username, password):
         encoded = await asyncio.to_thread(password_hash, password)
         def insert(db):
-            first = not db.execute("SELECT 1 FROM users").fetchone()
+            first = self.bootstrap_owner and not db.execute("SELECT 1 FROM users").fetchone()
             user = {"id": uid(), "username": username.strip(), "role": "owner" if first else "user", "developer_mode": False}
             try:
                 db.execute("INSERT INTO users(id,username,password_hash,role,created_at) VALUES (?,?,?,?,?)", (user["id"], user["username"], encoded, user["role"], now()))

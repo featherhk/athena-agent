@@ -88,6 +88,10 @@ class Models:
         return await self.get(rows[0]["model_profile_id"]), rows[0]["model_epoch"]
 
     async def key(self, profile):
+        if self.config.cloud_url:
+            # Capability marker only. Actual bearer is resolved per account in
+            # Engine; this value can never authenticate directly to a provider.
+            return 'cloud-account-required'
         if profile.id == "default" and self.config.api_key:
             return self.config.api_key
         key = "deepseek_api_key" if profile.id == "default" else f"provider_key:{profile.id}"

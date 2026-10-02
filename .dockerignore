@@ -1,0 +1,17 @@
+**
+!pyproject.toml
+!uv.lock
+!.python-version
+!backend/
+!backend/**
+!dist/
+!dist/**
+!deploy/
+!deploy/**
+**/__pycache__/
+**/*.pyc
+**/.env*
+**/*.sqlite*
+**/*.db
+**/*.pem
+**/*.key

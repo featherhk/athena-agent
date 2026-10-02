@@ -29,6 +29,8 @@ class Config:
     model: str = "deepseek-flash"
     max_steps: int = 20
     tool_output_chars: int = 12_000
+    cloud_url: str = ""
+    public_origin: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -42,7 +44,18 @@ class Config:
             data_dir=Path(os.environ.get("ATHENA_DATA_DIR", default_data_dir())).expanduser().resolve(),
             repo_dir=repo,
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+            cloud_url=os.environ.get("ATHENA_CLOUD_URL", ""),
+            public_origin=os.environ.get("ATHENA_PUBLIC_ORIGIN", ""),
         )
+
+    @property
+    def core_dir(self) -> Path:
+        """Protect the entire installed bundle, including the launcher and Python runtime."""
+        repo = self.repo_dir.resolve()
+        for candidate in (repo, *repo.parents):
+            if candidate.suffix == ".app" and (candidate / "Contents" / "Info.plist").is_file():
+                return candidate
+        return repo
 
     def prepare(self) -> None:
         data = self.data_dir.resolve()

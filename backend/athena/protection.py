@@ -14,7 +14,7 @@ def protected_command(command, config, readable, writable):
     exceptions = " ".join(f"(require-not (subpath {path(value)}))" for value in readable)
     profile = f'''(version 1)
 (allow default)
-(deny file-write* (subpath {path(config.repo_dir)}))
+(deny file-write* (subpath {path(config.core_dir)}))
 (deny file-read* (literal {path(config.repo_dir / '.env')}))
 (deny file-read* (subpath {path(Path.home() / '.secrets')}))
 (deny file-read* (require-all (subpath {path(config.data_dir)}) {exceptions}))

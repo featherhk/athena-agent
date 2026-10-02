@@ -248,6 +248,12 @@ def register_account_routes(app: FastAPI):
     @app.post('/api/account/password')
     async def password(request: Request, body: PasswordInput):
         store, _, user_id = context(request)
+        cloud=getattr(app.state,'cloud',None)
+        if cloud:
+            rows=await store.rows('SELECT remote_token FROM cloud_logins WHERE local_hash=?',(token_hash(request.cookies.get(COOKIE,'')),))
+            if not rows:
+                raise HTTPException(401,'login_required')
+            return await cloud.call('/account/password',token=rows[0]['remote_token'],body={'current_password':body.current_password,'new_password':body.new_password})
         await change_password(store, user_id, request.cookies.get(COOKIE), body.current_password, body.new_password)
         return {'ok': True}
 

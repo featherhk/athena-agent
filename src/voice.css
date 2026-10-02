@@ -1,0 +1,25 @@
+.voice-control { position: relative; display: flex; align-items: center; }
+.composer-wrap { position: relative; }
+.voice-start { display: grid; place-items: center; width: 34px; height: 34px; border: 0; background: transparent; color: var(--muted); border-radius: 50%; }
+.voice-start:hover { color: var(--ink); background: var(--wash); }
+.voice-start svg,.voice-end svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
+.voice-control.active { position: absolute; inset-inline: 0; bottom: calc(100% + 14px); }
+.voice-call { width: 100%; padding: 18px 22px 12px; border: 1px solid var(--tint); border-radius: 10px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 30px #00000008; display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; }
+.voice-call-copy { display: flex; align-items: center; gap: 14px; font-size: 15px; }
+.voice-call-actions { display: flex; align-items: center; gap: 14px; grid-column: 2; grid-row: 1 / span 2; }
+.voice-call-actions button { border: 0; font: inherit; font-size: 13px; background: transparent; color: var(--muted); }
+.voice-call-actions .voice-end { width: 38px; height: 38px; display: grid; place-items: center; background: #884e4b; border-radius: 50%; color: white; }
+.voice-call small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; letter-spacing: .02em; }
+.voice-transcript { margin: 0; max-height: 58px; overflow: auto; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.voice-wave { height: 23px; width: 25px; display: flex; align-items: center; gap: 3px; color: var(--accent); }
+.voice-wave i { width: 2px; height: 5px; background: currentColor; border-radius: 1px; }
+.voice-wave.hearing i,.voice-wave.speaking i { animation: voice-pulse .9s ease-in-out infinite alternate; }
+.voice-wave i:nth-child(2),.voice-wave i:nth-child(4) { animation-delay: -.3s; height: 11px; }
+.voice-wave i:nth-child(3) { animation-delay: -.6s; height: 19px; }
+.voice-wave.muted { opacity: .35; }
+.voice-problem { position: absolute; z-index: 15; bottom: calc(100% + 12px); inset-inline-end: 0; width: min(320px, 75vw); display: flex; align-items: start; gap: 16px; padding: 16px; border: 1px solid var(--tint); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; line-height: 1.7; box-shadow: 0 6px 24px #00000009; }
+.voice-problem button { border: 0; background: transparent; color: var(--muted); font-size: 18px; }
+@keyframes voice-pulse { from { transform: scaleY(.35); } to { transform: scaleY(1.15); } }
+@media (prefers-reduced-motion: reduce) { .voice-wave i { animation: none !important; } }
+html[data-reduce-motion='true'] .voice-wave i { animation: none !important; }
+@media (max-width: 600px) { .voice-call { padding: 14px; } .voice-call-actions { gap: 8px; } }
