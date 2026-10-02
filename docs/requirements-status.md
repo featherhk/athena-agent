@@ -73,6 +73,14 @@ Ordinary native form drafts survive hide/reopen and placement/conversation chang
 
 Validation: 327 Python tests, 50 frontend logic tests, production build and free-threading doctor passed. Isolated browser acceptance exercised drag, keyboard resize, content-preserving hide/reopen, layout selection, full-workspace exit, expanded clarification receipts, durable page reload and a 390×844 mobile viewport. The fixture used a mock provider and disposable data, not live user commands. Public/cloud deployment and DMG validation above describe the previous release and must be repeated for a new distributed build.
 
+## Context budget follow-up
+
+Execution and context inspection now share one provider-message projection. The default compactor first folds exactly equal completed tool outputs, then retains as much original head/tail as the estimated budget permits. Both manual and automatic paths use that planner; raw messages, reasoning and tool-call slots remain intact. Automatic compaction protects the latest tool-call round, including freshly recovered evidence, from immediate re-clipping. Invalid plugin plans cannot override that protection. No-op compaction does not create another prefix boundary.
+
+Offline evaluation on a disposable copy of the three largest local conversations reached the estimated 20k target in one case. Two remained above target because preserved user/assistant messages and reasoning already occupied the budget; none of these three samples contained exact duplicate outputs. This is evidence for the remaining limitation, not a claim that deduplication improved those conversations. Original data was unchanged and no model requests were made. Recoverable handoff summaries and memory lifecycle quality still need work.
+
+The regression tests exercise the actual automatic execution path, exact inspection/payload agreement, immutable originals, attachments and memory notes, retained reasoning and call pairing, stable repeated projection, and protected recovery results when the requested budget is unattainable. The full check passed 331 Python tests, 50 frontend logic tests and the production build; the Python 3.14.8T doctor still reports GIL disabled.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.

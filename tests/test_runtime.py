@@ -88,11 +88,16 @@ async def test_compaction_is_recoverable_and_stable(engine, store):
     run = await store.enqueue(session, "keep this")
     await store.claim(session)
     original = "a" * 210000
+    await store.message(session, run, 'assistant', '', tool_calls=[{'id': 'a', 'type': 'function', 'function': {'name': 'exec', 'arguments': '{}'}}])
     message = await store.message(session, run, "tool", original, tool_call_id="a")
+    await store.message(session, run, 'assistant', '', tool_calls=[{'id': 'b', 'type': 'function', 'function': {'name': 'exec', 'arguments': '{}'}}])
+    await store.message(session, run, 'tool', 'The new observation', tool_call_id='b')
     context = await engine.context(session)
-    assert len(context[-1]["content"]) < 3000
-    assert message in context[-1]["content"]
-    assert (await store.history(session))[-1]["content"] == original
+    clipped = next(item for item in context if item.get('tool_call_id') == 'a')
+    assert len(clipped['content']) < 20000
+    assert message in clipped['content']
+    assert context[-1]['content'] == 'The new observation'
+    assert next(item for item in await store.history(session) if item['id'] == message)['content'] == original
     assert await engine.context(session) == context
     await store.message(session, run, "user", "next")
     assert (await engine.context(session))[:-1] == context

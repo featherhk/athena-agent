@@ -6,6 +6,6 @@
 
 `context` 的 `raw_chars` / `clipped_chars` 统计已完成消息的内容、reasoning 和工具调用字段。`estimated_payload_chars` 还包含估算的请求包装、固定前缀和最近请求的工具 schema。字符上限是应用的保护阈值，不等于供应商 token 窗口。工具注册或前缀刷新会使下次请求大小改变。
 
-`compact` 的 `target_tokens` 必须是 1000 至 1000000 的整数。它优先缩短较早的工具结果，可进一步缩短以前的裁剪。原消息和完整 artifact 不变；裁剪标记提供 `message_id`，用 `runtime {"op":"read_message","args":{"message_id":"原消息ID","offset":0,"limit":12000}}` 分页恢复。恢复原文用于检查，不自动重新执行原命令。
+`compact` 的 `target_tokens` 必须是 1000 至 1000000 的整数。默认先折叠完全相同的已完成工具结果，再按预算缩短较早结果的首尾；可进一步缩短以前的裁剪。原消息和完整 artifact 不变；裁剪标记提供 `message_id`，用 `runtime {"op":"read_message","args":{"message_id":"原消息ID","offset":0,"limit":12000}}` 分页恢复。恢复原文用于检查，不自动重新执行原命令。自动裁剪保护最新一轮工具结果，确保刚恢复的证据能先被模型读到；手动请求的裁剪不受这个临时保护限制。
 
 如果用户或助手正文、reasoning、工具调用、固定前缀或工具定义本身超过目标，只裁工具结果可能无法达到目标。返回 `target_met:false` 与剩余限制时，说明实际缩减了多少；不要宣布已精确压到两万 token。缺少工具 schema 的历史测量时，即使可见部分很小，也不会确认达到总目标。正在生成的内容和本次检查工具自身的结果不包含在估算内。

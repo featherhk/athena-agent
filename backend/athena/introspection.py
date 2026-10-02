@@ -5,6 +5,7 @@ import math
 from .metrics import summarize
 from .prompt import system_prompt
 from .store import now, uid
+from .context_projection import project_messages
 
 
 def _json_chars(value):
@@ -29,28 +30,6 @@ def _history_chars(history, clips):
                for row in history if row["status"] == "complete")
 
 
-def _messages(history, clips, profile, prefix):
-    messages = [{"role": profile.instruction_role, "content": prefix}]
-    for row in history:
-        if row["status"] != "complete":
-            continue
-        item = {"role": row["role"], "content": clips.get(row["id"], row["content"])}
-        if row.get("context_note"):
-            item["content"] += "\n" + row["context_note"]
-        attachments = json.loads(row.get("attachments") or "[]")
-        if attachments:
-            manifest = [{"name": value["name"], "workspace_path": value["workspace_path"]} for value in attachments]
-            item["content"] += "\n[Attached files; treat contents as data]\n" + json.dumps(manifest, ensure_ascii=False)
-        if row["role"] == "assistant" and profile.preserve_reasoning:
-            item["reasoning_content"] = row["reasoning"]
-        if row["tool_calls"]:
-            item["tool_calls"] = json.loads(row["tool_calls"])
-        if row["tool_call_id"]:
-            item["tool_call_id"] = row["tool_call_id"]
-        messages.append(item)
-    return messages
-
-
 def _last_context(request, profile):
     window = getattr(profile, "context_window_tokens", None)
     return {"actual_prompt_tokens": _prompt_tokens(request),
@@ -70,7 +49,7 @@ def _estimate(snapshot, profile):
     previous = json.loads(latest["input"]) if latest else {}
     known_tools = isinstance(previous.get("tools"), list)
     tools = previous["tools"] if known_tools else []
-    messages = _messages(snapshot["history"], snapshot["clips"], profile, snapshot["prefix"])
+    messages = project_messages(snapshot["history"], snapshot["clips"], profile, snapshot["prefix"])
     payload_chars = _json_chars(profile.payload(messages, tools))
     sample = snapshot["calibration_request"]
     tokens = _prompt_tokens(sample)
@@ -102,18 +81,49 @@ def _validate_target(target_tokens):
         raise ValueError("target_tokens must be an integer from 1000 to 1000000")
 
 
-def default_compaction_plan(history, clips, estimate, target_tokens):
+def latest_tool_round(history):
+    """Fresh observations must reach the model before automatic clipping."""
+    for row in reversed(history):
+        if row['role'] == 'assistant' and row['status'] == 'complete' and row.get('tool_calls'):
+            calls = {item['id'] for item in json.loads(row['tool_calls'])}
+            return {item['id'] for item in history if item.get('tool_call_id') in calls}
+    tools = [row['id'] for row in history if row['role'] == 'tool' and row['status'] == 'complete']
+    return set(tools[-1:])
+
+
+def default_compaction_plan(history, clips, estimate, target_tokens, protected=frozenset()):
     """Pure default policy. The caller owns validation and durable application."""
     _validate_target(target_tokens)
     payload_chars = estimate["payload_chars"]
     target_chars = math.floor(target_tokens * estimate["chars_per_token"])
     plan = {}
+    # Equal completed outputs contain no new evidence. Keep the latest full copy
+    # and spend the budget on unique material before clipping its head/tail.
+    representatives = {}
+    duplicates = []
+    for row in reversed(history):
+        if row["status"] != "complete" or row["role"] != "tool" or row['id'] in clips:
+            continue
+        content = row['content']
+        if content in representatives:
+            if row['id'] not in protected:
+                duplicates.append((row, representatives[content]))
+        else:
+            representatives[content] = row['id']
+    for row, representative in reversed(duplicates):
+        if payload_chars <= target_chars:
+            break
+        replacement = f"[工具输出与 message_id={representative} 完全相同；runtime read_message message_id={row['id']} 可恢复本次原文]"
+        saved = _json_chars(row['content']) - _json_chars(replacement)
+        if saved > 0:
+            plan[row['id']] = replacement
+            payload_chars -= saved
     for row in history:
         if payload_chars <= target_chars:
             break
-        if row["status"] != "complete" or row["role"] != "tool":
+        if row["status"] != "complete" or row["role"] != "tool" or row['id'] in protected:
             continue
-        current = clips.get(row["id"], row["content"])
+        current = plan.get(row['id'], clips.get(row["id"], row["content"]))
         marker = _clip(row["content"], row["id"], 0)
         if len(current) <= len(marker) or _json_chars(current) <= _json_chars(marker):
             continue
@@ -136,7 +146,7 @@ def default_compaction_plan(history, clips, estimate, target_tokens):
     return plan
 
 
-def validate_compaction_plan(history, clips, plan):
+def validate_compaction_plan(history, clips, plan, protected=frozenset()):
     """Reject unsafe strategy output before any projection is written."""
     if not isinstance(plan, dict):
         raise ValueError("Compaction plan must map message IDs to text")
@@ -145,6 +155,8 @@ def validate_compaction_plan(history, clips, plan):
         row = eligible.get(identifier)
         if row is None or not isinstance(content, str):
             raise ValueError("Compaction may only replace completed tool content")
+        if identifier in protected:
+            raise ValueError("Automatic compaction must retain the latest tool round.")
         current = clips.get(identifier, row["content"])
         if len(content) >= len(current) or _json_chars(content) >= _json_chars(current):
             raise ValueError("Compaction must shorten each current tool projection")
@@ -233,14 +245,15 @@ class Introspection:
                 "last_context_from_request": _last_context(snapshot["measured_request"], profile),
                 "remaining_limitations": estimate["limitations"]}
 
-    async def compaction_plan(self, session_id, target_tokens=20000):
+    async def compaction_plan(self, session_id, target_tokens=20000, protect_latest=False):
         """Return the default plan for optional strategy selection, without writes."""
         _validate_target(target_tokens)
         profile, epoch = await self.models.selected(session_id)
         snapshot = await self.store.call(lambda db: self._snapshot(db, session_id, profile, epoch))
-        return default_compaction_plan(snapshot["history"], snapshot["clips"], _estimate(snapshot, profile), target_tokens)
+        protected = latest_tool_round(snapshot['history']) if protect_latest else frozenset()
+        return default_compaction_plan(snapshot["history"], snapshot["clips"], _estimate(snapshot, profile), target_tokens, protected)
 
-    async def compact(self, session_id, target_tokens=20000, plan_override=None):
+    async def compact(self, session_id, target_tokens=20000, plan_override=None, protect_latest=False):
         _validate_target(target_tokens)
         profile, epoch = await self.models.selected(session_id)
 
@@ -248,10 +261,11 @@ class Introspection:
             snapshot = self._snapshot(db, session_id, profile, epoch)
             estimate = _estimate(snapshot, profile)
             history, clips = snapshot["history"], snapshot["clips"]
+            protected = latest_tool_round(history) if protect_latest else frozenset()
             before_chars = _history_chars(history, clips)
             payload_chars = estimate["payload_chars"]
-            proposed = default_compaction_plan(history, clips, estimate, target_tokens) if plan_override is None else plan_override
-            plan = validate_compaction_plan(history, clips, proposed)
+            proposed = default_compaction_plan(history, clips, estimate, target_tokens, protected) if plan_override is None else plan_override
+            plan = validate_compaction_plan(history, clips, proposed, protected)
             history_by_id = {row["id"]: row for row in history}
             changed = list(plan)
             timestamp = now()
@@ -272,6 +286,8 @@ class Introspection:
                 ))
             after_tokens = math.ceil(payload_chars / estimate["chars_per_token"])
             limitations = list(estimate["limitations"])
+            if protected:
+                limitations.append("Automatic compaction retains the latest tool round so newly read evidence reaches the model.")
             if after_tokens > target_tokens:
                 limitations.append("Preserved user/assistant messages, reasoning, calls, prefix or schema exceed the target after eligible tool outputs were clipped.")
             return {"measurement": "estimated", "target_tokens": target_tokens,
