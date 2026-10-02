@@ -42,7 +42,7 @@ async def test_switch_applies_at_next_request_keeps_identity_history_and_audit(e
     await register(store)
     sid = await store.session()
     payloads = []
-    async def provider(client, base, key, payload, on_text):
+    async def provider(client, base, key, payload, on_text, on_reasoning=None):
         payloads.append((base, key, payload))
         if len(payloads) == 1:
             message = {'role': 'assistant', 'content': '', 'reasoning_content': 'private reasoning', 'tool_calls': [
@@ -60,7 +60,8 @@ async def test_switch_applies_at_next_request_keeps_identity_history_and_audit(e
     assert 'DeepSeek V4.1 Flash' in first['messages'][0]['content']
     assert 'Athena' in second['messages'][0]['content'] and 'Example Text' in second['messages'][0]['content']
     assert second['messages'][0]['role'] == 'developer'
-    assert '上下文版本：1' in second['messages'][0]['content']
+    assert second['messages'][0]['content'].endswith('基模：Example Text。')
+    assert '上下文版本' not in second['messages'][0]['content']
     assert payloads[1][0] == 'https://example.invalid/v1' and payloads[1][1] == 'test-other-provider'
     assert 'thinking' not in second and 'max_tokens' not in second
     assert second['max_completion_tokens'] == 16384

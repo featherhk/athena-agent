@@ -19,10 +19,15 @@ from .store import Store
 from .auth import Auth, COOKIE, token_hash
 from .metrics import summarize
 from .errors import ServiceError
+from .registry import initialize_registry
+from .accounts import initialize_accounts, register_account_routes, pending_account_action
+from .preferences import read_preferences, update_preferences, preference_schema
+from .files import initialize_files, register_file_routes, attachment_info, list_session_files, list_files
 
 
 class Input(BaseModel):
-    text: str = Field(min_length=1, max_length=30000)
+    text: str = Field(default="", max_length=30000)
+    file_ids: list[str] = Field(default_factory=list, max_length=10)
     mode: Literal["queue", "interrupt"] = "queue"
 
 
@@ -36,7 +41,9 @@ class DeveloperInput(BaseModel):
 
 
 def public_message(message):
-    return {key: message[key] for key in ("id", "seq", "role", "content", "status", "run_id", "created_at") if key in message}
+    result = {key: message[key] for key in ("id", "seq", "role", "content", "reasoning", "status", "run_id", "created_at") if key in message}
+    result["attachments"] = [{k: v for k, v in item.items() if k != "workspace_path"} for item in json.loads(message.get("attachments") or "[]")]
+    return result
 
 
 def create_app(config: Config | None = None):
@@ -50,6 +57,9 @@ def create_app(config: Config | None = None):
         asyncio.get_running_loop().set_default_executor(pool)
         store = Store(config.data_dir / "athena.sqlite3")
         await store.initialize()
+        await initialize_files(store)
+        await initialize_registry(store)
+        await initialize_accounts(store)
         engine = Engine(config, store)
         await engine.models.ensure_default()
         app.state.engine, app.state.store = engine, store
@@ -110,24 +120,24 @@ def create_app(config: Config | None = None):
         if not await app.state.store.rows("SELECT id FROM sessions WHERE id=? AND user_id=?", (session_id, request.state.user["id"])):
             raise HTTPException(404, "session_not_found")
 
-    def login_response(user, token):
-        response = JSONResponse({"user": user})
+    async def login_response(user, token):
+        response = JSONResponse({"user": user, "preferences": await read_preferences(app.state.store, user["id"])})
         response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=30*86400, path="/")
         return response
 
     @app.get("/api/auth/me")
     async def me(request: Request):
-        return {"user": request.state.user, "configured": bool(await app.state.engine.api_key()), "has_users": bool(await app.state.store.rows("SELECT id FROM users LIMIT 1"))}
+        return {"user": request.state.user, "preferences": await read_preferences(app.state.store, request.state.user["id"]) if request.state.user else None, "configured": bool(await app.state.engine.api_key()), "has_users": bool(await app.state.store.rows("SELECT id FROM users LIMIT 1"))}
 
     @app.post("/api/auth/register")
     async def register(body: Credentials):
         user, token = await app.state.auth.register(body.username, body.password)
-        return login_response(user, token)
+        return await login_response(user, token)
 
     @app.post("/api/auth/login")
     async def login(body: Credentials):
         user, token = await app.state.auth.login(body.username, body.password)
-        return login_response(user, token)
+        return await login_response(user, token)
 
     @app.post("/api/auth/logout")
     async def logout(request: Request):
@@ -140,6 +150,14 @@ def create_app(config: Config | None = None):
     async def developer(request: Request, body: DeveloperInput):
         await app.state.store.execute("UPDATE users SET developer_mode=? WHERE id=?", (int(body.enabled), request.state.user["id"]))
         return {"enabled": body.enabled}
+
+    @app.get("/api/settings/preferences")
+    async def preferences(request: Request):
+        return {"settings": await read_preferences(app.state.store, request.state.user["id"]), "schema": preference_schema()}
+
+    @app.post("/api/settings/preferences")
+    async def set_preferences(request: Request, body: dict):
+        return await update_preferences(app.state.store, request.state.user["id"], body)
 
     @app.get("/api/developer/metrics")
     async def metrics(request: Request, session_id: str | None = None):
@@ -168,7 +186,7 @@ def create_app(config: Config | None = None):
         uid = request.state.user["id"]
         extensions = await app.state.store.rows("SELECT name,version,file_path,active,created_at FROM extensions WHERE user_id=? ORDER BY created_at DESC", (uid,))
         components = await app.state.store.rows("SELECT c.id,c.title,c.version,c.file_path,c.active FROM components c JOIN sessions s ON s.id=c.session_id WHERE s.user_id=? ORDER BY c.created_at DESC", (uid,))
-        return {"extensions": extensions, "components": components}
+        return {"extensions": extensions, "components": components, "files": await list_files(app.state.store, uid)}
 
     @app.post("/api/reset")
     async def reset(request: Request):
@@ -193,20 +211,25 @@ def create_app(config: Config | None = None):
         def snapshot(db):
             history = Store._history(db, session_id)
             return {
-                "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant") and row["content"]],
+                "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant") and (row["content"] or row["reasoning"] or row.get("attachments", "[]") != "[]")],
                 "runs": [dict(row) for row in db.execute("SELECT * FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 50", (session_id,))],
                 "components": [dict(row) for row in db.execute("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1", (session_id,))],
                 "tasks": [dict(row) for row in db.execute("SELECT * FROM tasks WHERE session_id=? AND status!='done' ORDER BY due_at", (session_id,))],
                 "cursor": db.execute("SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=?", (session_id,)).fetchone()[0],
             }
-        return await app.state.store.call(snapshot)
+        result = await app.state.store.call(snapshot)
+        result["account_action"] = await pending_account_action(app.state.store, request.state.user["id"])
+        result["preferences"] = await read_preferences(app.state.store, request.state.user["id"])
+        result["files"] = await list_session_files(app.state.store, config, request.state.user["id"], session_id)
+        return result
 
     @app.post("/api/sessions/{session_id}/messages")
     async def submit(session_id: str, body: Input, request: Request):
         await exists(session_id, request)
-        if not body.text.strip():
+        if not body.text.strip() and not body.file_ids:
             raise UserError("empty_message", "请写下你想做的事")
-        return {"run_id": await app.state.engine.submit(session_id, body.text.strip(), body.mode)}
+        attachments = await attachment_info(app.state.store, config, request.state.user["id"], session_id, body.file_ids)
+        return {"run_id": await app.state.engine.submit(session_id, body.text.strip(), body.mode, attachments)}
 
     @app.post("/api/sessions/{session_id}/stop")
     async def stop(session_id: str, request: Request):
@@ -241,31 +264,35 @@ def create_app(config: Config | None = None):
             def encode(event):
                 return f"id: {event['seq']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
             try:
-                while True:
+                idle_ticks = 0
+                while not await request.is_disconnected():
+                    if not await app.state.auth.current(request.cookies.get(COOKIE)):
+                        return
+                    # Queues only wake the reader. Always catch up from the log so
+                    # transactional events from preferences/registries cannot be skipped.
                     rows = await app.state.store.rows("SELECT * FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 500", (session_id, cursor))
                     for row in rows:
                         row["payload"] = json.loads(row["payload"])
                         cursor = row["seq"]
                         yield encode(row)
-                    if len(rows) < 500:
-                        break
-                while not await request.is_disconnected():
-                    if not await app.state.auth.current(request.cookies.get(COOKIE)):
-                        return
-                    try:
-                        event = await asyncio.wait_for(queue.get(), 15)
-                    except TimeoutError:
-                        yield ": keepalive\n\n"
+                    if len(rows) == 500:
                         continue
-                    if event is None:
-                        return
-                    if event["seq"] > cursor:
-                        cursor = event["seq"]
-                        yield encode(event)
+                    try:
+                        event = await asyncio.wait_for(queue.get(), 1)
+                        if event is None:
+                            return
+                        idle_ticks = 0
+                    except TimeoutError:
+                        idle_ticks += 1
+                        if idle_ticks >= 15:
+                            yield ": keepalive\n\n"
+                            idle_ticks = 0
             finally:
                 engine.listeners.get(session_id, set()).discard(queue)
         return StreamingResponse(generate(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
+    register_file_routes(app)
+    register_account_routes(app)
     dist = config.repo_dir / "dist"
     if (dist / "assets").exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")

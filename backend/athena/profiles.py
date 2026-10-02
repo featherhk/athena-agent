@@ -20,6 +20,8 @@ class Profile:
     max_output_tokens: int = 16384
     # Character guard, deliberately not advertised as a tokenizer measurement.
     context_chars: int = 180000
+    context_window_tokens: int | None = None
+    context_window_source: str | None = None
     options: dict = field(default_factory=dict)
 
     def __post_init__(self):
@@ -37,6 +39,8 @@ class Profile:
             raise ValueError("Unsupported Chat Completions profile convention")
         if not 1024 <= self.context_chars <= 2_000_000 or not 1 <= self.max_output_tokens <= 131072:
             raise ValueError("Invalid model limits")
+        if self.context_window_tokens is not None and (type(self.context_window_tokens) is not int or self.context_window_tokens < 1024):
+            raise ValueError("Invalid documented context window")
         allowed = {"thinking", "reasoning_effort", "temperature", "top_p"}
         if not isinstance(self.options, dict) or self.options.keys() - allowed:
             raise ValueError("Unsupported generation option; credentials and request fields cannot be overridden")
@@ -57,6 +61,8 @@ class Models:
         profile = Profile(id="default", provider="DeepSeek", model=self.config.model,
                           base_model="DeepSeek V4.1 Flash", api_base=self.config.api_base,
                           preserve_reasoning=True, context_chars=1_200_000,
+                          context_window_tokens=1_000_000 if self.config.model == "deepseek-flash" and self.config.api_base.rstrip("/") in ("https://api.deepseek.com", "https://api.deepseek.com/v1") else None,
+                          context_window_source="https://api-docs.deepseek.com/quick_start/pricing/",
                           options={"thinking": {"type": "enabled"}, "reasoning_effort": "low"})
         await self.store.execute("INSERT OR IGNORE INTO model_profiles VALUES (?,?,1,?)", (profile.id, json.dumps(profile.snapshot()), now()))
 
@@ -65,7 +71,13 @@ class Models:
         rows = await self.store.rows("SELECT definition FROM model_profiles WHERE id=? AND enabled=1", (profile_id,))
         if not rows:
             raise ServiceError("model_unavailable", "这段对话使用的服务暂不可用，请稍后再试。")
-        return Profile(**json.loads(rows[0]["definition"]))
+        definition = json.loads(rows[0]["definition"])
+        # Add only documented metadata to older default profiles; generation
+        # settings and existing request snapshots remain immutable.
+        if (definition.get("model") == "deepseek-flash" and definition.get("api_base", "").rstrip("/") in ("https://api.deepseek.com", "https://api.deepseek.com/v1") and "context_window_tokens" not in definition):
+            definition["context_window_tokens"] = 1_000_000
+            definition["context_window_source"] = "https://api-docs.deepseek.com/quick_start/pricing/"
+        return Profile(**definition)
 
     async def selected(self, session_id=None):
         if not session_id:

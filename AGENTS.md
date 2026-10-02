@@ -15,3 +15,10 @@
 - The prototype deliberately has no per-action approval workflow; do not add one without discussing the product change.
 - Run meaningful tests for concurrency, persistence and protocol changes. Run `npm run check` before publishing code; check staged paths with `node scripts/check-repository.mjs --staged`.
 - Document unfinished features honestly; do not claim integrated computer use, system notifications or model switching until actually implemented and verified.
+
+## Product principles to preserve
+
+- The harness is Athena's adaptable instrument. Target replaceable service providers throughout the harness, not a permanently fixed list of policy hooks. The current implementation status is documented honestly in docs/plugin-architecture.md.
+- The frontend is a flexible communication/work surface. Its form may change to serve the task, while independent stop/recovery remain reachable.
+- Task success and user comfort outrank self-modification. Do not spend tokens on decorative changes when the user's actual objective remains undone.
+- Acceptance is requirement-driven: assert effects through runtime operations and durable state, including Codex-like session/context controls and real personal-assistant scenarios. Merely explaining an operation or claiming success does not pass.

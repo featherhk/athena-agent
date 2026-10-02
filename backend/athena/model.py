@@ -4,7 +4,7 @@ import httpx
 from .errors import ServiceError
 
 
-async def complete(client: httpx.AsyncClient, api_base: str, api_key: str, payload: dict, on_text: Callable[[str], Awaitable[None]]) -> dict:
+async def complete(client: httpx.AsyncClient, api_base: str, api_key: str, payload: dict, on_text: Callable[[str], Awaitable[None]], on_reasoning: Callable[[str], Awaitable[None]] | None = None) -> dict:
     content, reasoning, calls, usage, response_model = "", "", {}, {}, None
     finished = False
     async with client.stream("POST", api_base.rstrip("/") + "/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json=payload) as response:
@@ -31,7 +31,10 @@ async def complete(client: httpx.AsyncClient, api_base: str, api_key: str, paylo
                 if delta.get("content"):
                     content += delta["content"]
                     await on_text(delta["content"])
-                reasoning += delta.get("reasoning_content") or ""
+                if delta.get("reasoning_content"):
+                    reasoning += delta["reasoning_content"]
+                    if on_reasoning:
+                        await on_reasoning(delta["reasoning_content"])
                 for fragment in delta.get("tool_calls") or []:
                     index = fragment["index"]
                     item = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})

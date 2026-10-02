@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 export function prohibitedPath(path) {
   const parts = path.toLowerCase().split('/');
   const base = parts.at(-1);
-  return parts.some(p => ['node_modules', '.venv', '__pycache__', '.uv-cache', 'dist', '.athena', '.data', 'data', 'runtime', 'storage', 'artifacts', 'uploads', 'downloads', 'backups', 'logs', 'sessions', 'browser-profiles', 'profiles', '.auth', '.codex'].includes(p))
+  return parts.some(p => ['node_modules', '.venv', '__pycache__', '.uv-cache', 'dist', '.athena', '.data', 'data', 'runtime', 'storage', 'artifacts', 'account-avatars', 'uploads', 'downloads', 'backups', 'logs', 'sessions', 'browser-profiles', 'profiles', '.auth', '.codex'].includes(p))
     || (base !== '.env.example' && /^\.env(?:\.|$)/i.test(base))
     || ['.npmrc', '.pypirc', '.envrc'].includes(base)
     || /\.(db|sqlite|sqlite3)(?:-.*)?$/i.test(base)

@@ -24,6 +24,8 @@ def main():
     profile.add_argument("--instruction-role", choices=["system", "developer"], default="system")
     profile.add_argument("--output-parameter", choices=["max_tokens", "max_completion_tokens"], default="max_tokens")
     profile.add_argument("--max-output-tokens", type=int, default=16384)
+    profile.add_argument("--context-window-tokens", type=int)
+    profile.add_argument("--context-window-source")
     profile.add_argument("--context-chars", type=int, default=180000)
     profile.add_argument("--preserve-reasoning", action="store_true")
     profile.add_argument("--options", default="{}", help="JSON generation options; no credentials")
@@ -49,7 +51,7 @@ def main():
             value = Profile(id=args.id, provider=args.provider, model=args.model, base_model=args.base_model,
                             api_base=args.api_base, instruction_role=args.instruction_role,
                             output_parameter=args.output_parameter, max_output_tokens=args.max_output_tokens,
-                            context_chars=args.context_chars, preserve_reasoning=args.preserve_reasoning,
+                            context_chars=args.context_chars, context_window_tokens=args.context_window_tokens, context_window_source=args.context_window_source, preserve_reasoning=args.preserve_reasoning,
                             options=json.loads(args.options))
             try:
                 db.execute("INSERT INTO model_profiles VALUES (?,?,1,?)", (value.id, json.dumps(value.snapshot()), now()))

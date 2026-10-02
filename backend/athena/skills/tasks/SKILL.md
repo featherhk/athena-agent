@@ -1,3 +1,8 @@
+---
+name: tasks
+description: "安排定时任务与后台唤醒"
+---
+
 # 后台任务
 
 runtime 的 schedule 操作接受 title、prompt、due_at（带时区的 ISO 8601 时间）、可选 interval_seconds（不少于 60 秒）。执行前把用户相对时间转换成绝对时间；可通过 exec 查询本机当前时间和时区。
@@ -9,3 +14,5 @@ runtime 的 schedule 操作接受 title、prompt、due_at（带时区的 ISO 860
 检查过程不调用模型、不消耗 token，完整命令输出和检查历史均保存。检查失败会记录错误后重试。条件满足后只唤醒一次并结束监听，避免条件持续为真导致重复发送；需要再次监听时重新登记。复合条件可在脚本中实现；需要跨检查保存状态时写入工作目录的 SQLite 数据库。初版没有 webhook、文件监听或跨设备唤醒。
 
 runtime 的 tasks 列出当前会话任务；cancel_task 接受 task_id 暂停任务。没有密钥时到期任务仍入队，连接密钥后处理。不要承诺电脑睡眠时仍能准时执行，或消息发送等外部动作能保证 exactly-once。
+
+需要编写与验证条件脚本时，按需读取本包的 [文件出现条件示例](references/condition-check.md)。该资源不会默认加入上下文。

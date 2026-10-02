@@ -136,7 +136,7 @@ async def test_timers_deduplicate_and_condition_checks_do_not_call_model(engine,
 async def test_interrupt_preserves_partial_and_processes_new_input(engine, store, monkeypatch):
     started = asyncio.Event()
     count = 0
-    async def provider(client, base, key, payload, on_text):
+    async def provider(client, base, key, payload, on_text, on_reasoning=None):
         nonlocal count
         count += 1
         if count == 1:

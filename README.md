@@ -8,16 +8,20 @@ The current release is a **local macOS / web prototype**, built with Python 3.14
 
 ## What works today
 
-- Accounts and server-managed model credentials. Provider configuration stays out of the normal user experience.
-- Nine interface languages: Arabic, English, Spanish, French, Japanese, Korean, Portuguese, Simplified Chinese, and Traditional Chinese. Browser language preferences are matched automatically, with English as the fallback; the language picker uses native names without flags, ordered by BCP 47 tags. Arabic uses right-to-left layout, and motion can follow system preferences or be reduced manually.
-- Streaming conversations with durable events. Changing conversations or closing a browser does not stop a running task; reconnecting replays persisted updates.
-- Queued messages, interruption, stop, and conversation forks. Forks inherit a fixed history boundary and copy background tasks in a paused state.
-- Three core OpenAI-format tools: `exec`, `update_frontend`, and `runtime`. Short instructions reference skills loaded only when needed.
-- Registered frontend components and Python backend tools, versioned outside the source checkout. Reset stops current work, disables custom extensions, and pauses background tasks while preserving chats, files, and memories.
+- Accounts with display names and avatars, plus a fixed password-change form that keeps passwords out of model messages and tools. Provider credentials remain server-managed.
+- Nine interface languages: Arabic, English, Spanish, French, Japanese, Korean, Portuguese, Simplified Chinese, and Traditional Chinese. Browser preferences are matched automatically with English fallback; native language names appear without flags, ordered by BCP 47 tags. Arabic uses right-to-left layout. Interface language, font, palette, and reduced motion are saved separately from reply preferences.
+- Streaming chat with safe Markdown rendering, separately collapsible reasoning actually returned by the provider, and distinct thinking, replying, and execution states. Durable events restore updates after reconnecting; closing the browser does not stop a task.
+- File attachments and generated outputs associated with their conversation. Owned files can be downloaded or previewed as Markdown, isolated HTML, images, or bounded XLSX cells and cached values.
+- Message queues, interruption, stop, and conversation forks. Forks inherit a fixed history boundary and copy background tasks in a paused state.
+- Through `runtime`, Athena can find/read other conversations in the same account, create or rename them, and fork idle conversations. Completed runs can be excluded from the current model context and restored; original chats remain intact. Returning a session ID does not automatically navigate the browser.
+- Three core OpenAI-format tools: `exec`, `update_frontend`, and `runtime`. The runtime uses a small `{op, args}` envelope. Skills are directory packages with `SKILL.md` metadata and optional scripts, references, templates, or other resources; bodies and resources load on demand.
+- Versioned tools, components, skills, and policy providers outside the source checkout. Restoring a previous registration creates a new version. Frontend contributions can appear inline, as a banner, or in a workspace; the fixed shell retains input, stop, navigation, and reset.
+- Three connected policy hooks: context compression, memory recall, and command preparation. Plugins run in bounded subprocesses; errors, timeouts, or invalid results fall back to the default. Service IDs are open, but a registration without a consumer is reported as waiting and does not change behavior.
 - Timers, recurring tasks, and script-based conditions. Checks run without an LLM; a match queues work in the original conversation.
-- Recoverable tool-output clipping and explicit user, project, and conversation memories. Original messages and output artifacts remain available.
-- Optional developer telemetry: reported token usage, cache hits, request status, and clearly labeled cost estimates. Missing usage is not treated as zero cost.
-- Operator-registered Chat Completions model profiles. Athena can switch to a configured profile at the next model request; its stable instructions identify Athena and the configured underlying model. Switches create an audited context version.
+- Explicit user, project, and conversation memories; recoverable tool-output clipping; and runtime inspection of usage, cache hits, cost estimates, and context. Requested compaction can target an estimated token budget while preserving original messages, reasoning, and tool-call pairing. Missing usage and unknown model limits remain unknown.
+- Optional developer telemetry and operator-registered Chat Completions model profiles. Athena can switch profiles at the next request, creating an audited context version while keeping its product identity. Reset stops work, restores defaults, disables extensions, and pauses tasks while retaining chats, files, memories, and historical versions.
+
+See the [acceptance criteria](docs/acceptance.md), [command-derived minimum suite](docs/command-acceptance.md), and [plugin architecture](docs/plugin-architecture.md) for observable checks, implemented boundaries, and the service-host roadmap.
 
 ## Run locally
 
@@ -96,7 +100,9 @@ Scheduled work requires the local service and computer to be running. Missed rec
 
 The macOS command runner uses Seatbelt to prevent writes to application source and restrict access to Athena's runtime data. Registered code lives in the user file area. This is not a complete sandbox for hostile tenants: other host resources remain within the local user's reach. Command execution is disabled on platforms without the protection adapter. Keep this prototype on loopback; it is not a ready-to-host public service.
 
-Still to build: integrated browser and desktop control, OS notifications, packaged resident execution nodes, hosted accounts, a balance/payment ledger, native mobile/Windows clients, voice, subagents, and broader task-quality evaluation. Current login and cost estimates do not constitute production identity or billing infrastructure. There is deliberately no per-action approval workflow in this prototype.
+The current Engine and Store still implement the agent loop and persistence directly. They are not replaceable providers behind a service host yet. Existing policy hooks do not make the model transport, scheduler, authentication, or entire frontend interchangeable; registering an unused service ID cannot activate a missing integration. Core application updates still require a controlled restart.
+
+Still to build: integrated browser and desktop control, OS notifications, packaged resident execution nodes, hosted accounts, a balance/payment ledger, native mobile/Windows clients, voice, subagents, and broader task-quality evaluation. Current login and cost estimates do not constitute production identity or billing infrastructure. XLSX previews are bounded readers, not a spreadsheet calculation engine. There is deliberately no per-action approval workflow in this prototype.
 
 ## Verify
 
@@ -105,6 +111,12 @@ npm run check
 node scripts/check-repository.mjs --staged
 ```
 
-Automated tests use mocked model responses and do not consume API credit. They cover database transactions, concurrent claims, streaming tool calls, reasoning continuity, interruption, forks, recoverable clipping, restart handling, conditional wake-ups, account boundaries, extension reset, model switching, locale matching and fallback, and repository hygiene. TypeScript checks and the production build run in the same check command.
+Automated tests use mocked model responses and do not consume API credit. They check observable state changes: account and file ownership, settings versus reply preferences, streaming and interruption, recovery and forks, registration versions and restoration, skill resources, policy fallback, usage and compaction, locale matching, and repository hygiene. TypeScript checks and the production build run in the same command. These checks are not a substitute for browser visual verification, which remains pending.
 
-A live DeepSeek request and an isolated account-registration-to-reply smoke test have also been verified. This does not imply broad task-success, browser-control, or cross-provider validation.
+An optional real-provider evaluation runs against a temporary account and database, without using existing customer conversations:
+
+```sh
+uv run --directory backend python ../scripts/evaluate_requirements.py --key-file /path/to/operator-key
+```
+
+This check consumes API credit, is excluded from CI, and prints aggregate verdicts and usage rather than credentials or conversation recordings. Temporary data is removed after the run. Use repeatable `--case NAME` flags to rerun selected cases. Live DeepSeek checks have passed for interface language, appearance, persistent reply preferences, display name, registering and executing a new tool, usage/context inspection, reading another conversation, recoverable compaction, and excluding a completed run from context. Compaction success means a shorter recoverable projection, not a guaranteed exact token target. Those results do not establish broad task success, browser-control readiness, or cross-provider compatibility.

@@ -26,6 +26,15 @@ def token_hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def public_user(user):
+    """One allowlist for account responses; paths and hashes stay on the server."""
+    result = {key: user[key] for key in ('id', 'username', 'role', 'developer_mode')}
+    result['display_name'] = user.get('display_name', '')
+    result['profile_version'] = user.get('profile_version', 0)
+    result['avatar_url'] = f"/api/account/avatar?owner={user['id']}&version={result['profile_version']}" if user.get('avatar_path') else None
+    return result
+
+
 class Auth:
     def __init__(self, store):
         self.store = store
@@ -47,7 +56,7 @@ class Auth:
                 db.execute("UPDATE memories SET owner_id=? WHERE owner_id='personal'", (project,))
             return user
         user = await self.store.call(insert)
-        return user, await self.issue(user["id"])
+        return public_user(user), await self.issue(user["id"])
 
     async def login(self, username, password):
         username = username.strip()
@@ -68,8 +77,7 @@ class Auth:
         if not user or not valid:
             raise UserError("invalid_credentials", "用户名或密码不正确")
         await self.store.execute("DELETE FROM auth_attempts WHERE username=?", (attempt_key,))
-        user.pop("password_hash")
-        return user, await self.issue(user["id"])
+        return public_user(user), await self.issue(user["id"])
 
     async def issue(self, user_id):
         token = secrets.token_urlsafe(32)
@@ -80,5 +88,5 @@ class Auth:
     async def current(self, token):
         if not token or len(token) > 256:
             return None
-        rows = await self.store.rows("SELECT u.id,u.username,u.role,u.developer_mode FROM users u JOIN auth_sessions a ON a.user_id=u.id WHERE a.token_hash=? AND a.expires_at>?", (token_hash(token), now()))
-        return rows[0] if rows else None
+        rows = await self.store.rows("SELECT u.* FROM users u JOIN auth_sessions a ON a.user_id=u.id WHERE a.token_hash=? AND a.expires_at>?", (token_hash(token), now()))
+        return public_user(rows[0]) if rows else None

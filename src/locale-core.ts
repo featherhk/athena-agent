@@ -24,6 +24,8 @@ export function resolveLocale(preferences: readonly string[]): Locale {
 }
 
 export const errorKeys: Record<string, string> = {
+  invalid_avatar: 'error.avatar', invalid_password: 'error.password',
+  file_not_found: 'error.file_not_found', file_too_large: 'error.file_too_large', invalid_filename: 'error.invalid_filename', file_preview_unavailable: 'error.file_preview_unavailable',
   provider_not_configured: 'error.service', model_unavailable: 'error.provider',
   provider_auth_failed: 'error.provider', provider_access_denied: 'error.provider',
   provider_balance_insufficient: 'error.provider', provider_rate_limited: 'error.provider',

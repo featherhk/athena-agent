@@ -1,3 +1,8 @@
+---
+name: interface
+description: "创建或修改用户需要的交互组件"
+---
+
 # 按需交互
 
 update_frontend 的 upsert 操作接受 id、title、html。重复使用 id 更新原组件；remove 接受 id 移除组件。源码版本保存在用户文件区，登记和审计保存在数据库。不要修改 React 源码，不要为了普通文字回答创建组件。
@@ -5,3 +10,5 @@ update_frontend 的 upsert 操作接受 id、title、html。重复使用 id 更�
 html 是独立页面的主体或完整 HTML，运行在隔离 iframe。内联 CSS 和 JavaScript 可用；外部脚本、fetch、顶层导航、访问父页面和本地文件不可用。无需 React 或外部依赖。用大字体、清楚的中文和足够大的按钮适配手机。保持浅色背景，少装饰，不暴露编程术语。
 
 用 Athena.submit("用户点击按钮后希望发送的文字") 将一次显式用户操作交给助手。不要在加载时自动发送。用 Athena.resize(高度) 调整组件高度，限制为 120–900 像素。当前版本组件浏览器内部状态在重新加载时重置，重要内容需作为正常用户消息保存；不要把持久编辑器状态只放在 iframe 中。
+
+布局 placement 可为 inline（默认聊天卡片）、workspace（主要工作区，例如表格/编辑器）、banner（重要提醒）。界面变化服务于当前目标；简单问答或查询不需要装饰性重排。workspace 保留外层输入、停止、菜单和恢复，用户可返回对话。每次注册新版本即刷新对应frame，不刷新整个应用。HTML脚本在隔离frame内，无法读取账号或改父页面；需要应用状态操作让 Athena.submit 发起明确请求。视频/外部嵌入的能力不要假设已支持，当前CSP不允许外部资源。

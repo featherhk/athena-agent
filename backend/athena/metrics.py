@@ -2,26 +2,45 @@
 import json
 
 PRICING_URL = "https://api-docs.deepseek.com/quick_start/pricing/"
-PRICING_DATE = "2026-10-02"
+PRICING_DATE = "2026-10-03"
+
+
+def _object(value):
+    """Provider metadata is optional and must not take down the usage endpoint."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def usage_metrics(row):
-    raw = json.loads(row["usage"]) if row.get("usage") else {}
+    raw = _object(row.get("usage"))
     def number(value):
-        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        # Counts outside the client's exact integer range are invalid telemetry.
+        return value if type(value) is int and 0 <= value <= 2**53 - 1 else None
     prompt = number(raw.get("prompt_tokens"))
     completion = number(raw.get("completion_tokens"))
     hit = number(raw.get("prompt_cache_hit_tokens"))
     miss = number(raw.get("prompt_cache_miss_tokens"))
     if hit is None:
-        hit = number((raw.get("prompt_tokens_details") or {}).get("cached_tokens"))
+        details = raw.get("prompt_tokens_details")
+        hit = number(details.get("cached_tokens")) if isinstance(details, dict) else None
     if miss is None and prompt is not None and hit is not None and hit <= prompt:
         miss = prompt - hit
     if prompt is not None and hit is not None and (hit > prompt or miss is not None and hit + miss != prompt):
         hit = miss = None
     cost = None
-    profile = json.loads(row["profile_snapshot"]) if row.get("profile_snapshot") else {}
-    official = profile.get("api_base", "https://api.deepseek.com").rstrip("/") in ("https://api.deepseek.com", "https://api.deepseek.com/v1")
+    saved_profile = row.get("profile_snapshot")
+    profile = _object(saved_profile)
+    # Rows predating profile snapshots used the original official endpoint.
+    # A present but malformed snapshot supplies no trustworthy pricing source.
+    api_base = profile.get("api_base") if saved_profile else "https://api.deepseek.com"
+    official = isinstance(api_base, str) and api_base.rstrip("/") in ("https://api.deepseek.com", "https://api.deepseek.com/v1")
     if official and row["model"] == "deepseek-flash" and None not in (hit, miss, completion):
         cost = (hit * .003 + miss * .15 + completion * .6) / 1_000_000
     return {"id": row["id"], "model": row["model"], "status": row["status"], "input_tokens": prompt,
