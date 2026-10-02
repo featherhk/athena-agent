@@ -69,3 +69,16 @@ def test_cloud_bundle_configuration_is_https_only(tmp_path, monkeypatch):
     path.write_text('{"cloud_url": ""}')
     with pytest.raises(ValueError):
         configure(tmp_path)
+
+
+def test_bundle_browser_payload_contains_only_native_runtime_and_license(tmp_path):
+    import runpy
+    import platform
+    root = Path(__file__).resolve().parents[1]
+    copy = runpy.run_path(str(root / 'scripts/build-macos.py'))['copy_browser_runtime']
+    copy(tmp_path, platform.machine())
+    payload = tmp_path / 'app/browser-runtime'
+    assert {path.name for path in payload.iterdir()} == {'agent-browser', 'LICENSE-agent-browser', 'version.txt'}
+    assert (payload / 'version.txt').read_text().strip() == '0.38.2'
+    assert (payload / 'agent-browser').stat().st_size > 1000000
+    assert 'Apache License' in (payload / 'LICENSE-agent-browser').read_text()

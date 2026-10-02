@@ -41,6 +41,21 @@ def validated_cloud_url(value):
     return value.rstrip("/")
 
 
+def copy_browser_runtime(resources, arch):
+    """Only the pinned native executable/license, never node_modules or profiles."""
+    package = ROOT / 'node_modules' / 'agent-browser'
+    expected = json.loads((ROOT / 'package.json').read_text())['dependencies']['agent-browser']
+    if json.loads((package / 'package.json').read_text())['version'] != expected:
+        raise RuntimeError('Install the locked browser executor with npm ci before packaging')
+    suffix = {'arm64': 'arm64', 'x86_64': 'x64'}[arch]
+    target = resources / 'app' / 'browser-runtime'
+    target.mkdir(parents=True)
+    shutil.copy2(package / 'bin' / f'agent-browser-darwin-{suffix}', target / 'agent-browser')
+    (target / 'agent-browser').chmod(0o755)
+    shutil.copy2(package / 'LICENSE', target / 'LICENSE-agent-browser')
+    (target / 'version.txt').write_text(expected + '\n')
+
+
 def verify_payload(app):
     resources = app / "Contents" / "Resources"
     for path in resources.rglob("*"):
@@ -57,6 +72,7 @@ def verify_payload(app):
     python = resources / "python" / "bin" / "python3.14t"
     check = "import sys;sys.path.insert(0,sys.argv[1]);from athena.doctor import main;main()"
     run(python, "-I", "-B", "-c", check, resources / "app" / "backend")
+    run(resources / 'app' / 'browser-runtime' / 'agent-browser', '--version')
 
 
 def main():
@@ -103,6 +119,7 @@ def main():
         (resources / "app" / "backend").mkdir(parents=True)
         clean_copy(ROOT / "backend" / "athena", resources / "app" / "backend" / "athena")
         clean_copy(ROOT / "dist", resources / "app" / "dist")
+        copy_browser_runtime(resources, arch)
         shutil.copy2(SOURCE / "launcher.py", resources / "launcher.py")
         (resources / "bundle-config.json").write_text(json.dumps({"version": 1, "cloud_url": cloud_url}, indent=2) + "\n")
         shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")

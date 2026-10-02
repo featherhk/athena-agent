@@ -53,6 +53,8 @@ class ToolRunner:
         self.models = Models(config, store)
         self.registry = Registry(config, store)
         self.introspection = Introspection(store, self.models)
+        from .browser import BrowserHost
+        self.browser = BrowserHost(config, store)
 
     async def owner(self, session_id):
         rows = await self.store.rows("SELECT user_id,project_id FROM sessions WHERE id=?", (session_id,))
@@ -187,6 +189,8 @@ class ToolRunner:
         op = args["op"]
         owner = await self.owner(session_id)
         user = owner["user_id"]
+        if op == "browser":
+            return await self.browser.operate(args, session_id, run_id)
         if op == "registry":
             return await self.registry.operate(args, session_id)
         if op == "app":

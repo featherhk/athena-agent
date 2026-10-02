@@ -1,0 +1,133 @@
+"""Opt-in native integration: disposable profile and synthetic loopback pages only.
+
+ATHENA_TEST_BROWSER=1 uv run pytest tests/test_browser_native.py -q
+No provider calls, personal browser profile or external website is used.
+"""
+import asyncio
+import json
+from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
+from pathlib import Path
+import re
+import sys
+import threading
+
+import pytest
+
+from athena.auth import Auth
+from athena.browser import BrowserHost
+from athena.browser_driver import NativeBrowserDriver
+from athena.files import initialize_files, _open_file
+
+pytestmark = pytest.mark.skipif(sys.platform != 'darwin' or os.environ.get('ATHENA_TEST_BROWSER') != '1',
+    reason='Opt-in local macOS native browser integration')
+
+
+@pytest.fixture
+def page_server():
+    lock, receipts = threading.Lock(), []
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path == '/statement.csv':
+                body = b'item,amount\ntest,2\n'
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/csv')
+                self.send_header('Content-Disposition', 'attachment; filename=statement.csv')
+            else:
+                remembered = 'Remembered account' if 'athena_fixture=1' in self.headers.get('Cookie', '') else 'Guest'
+                body = f'''<!doctype html><title>Athena browser fixture</title>
+                <h1>{remembered}</h1><label>Name<input id="name"></label>
+                <button onclick="fetch('/submit',{{method:'POST',body:document.querySelector('#name').value}}).then(()=>document.querySelector('#result').textContent='Submitted once')">Submit</button>
+                <a href="/statement.csv" download>Download statement</a><p id="result">Ready</p>
+                <label>Password<input type="password"></label>'''.encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            data = self.rfile.read(int(self.headers['Content-Length'])).decode()
+            with lock:
+                receipts.append(data)
+            self.send_response(200)
+            self.send_header('Set-Cookie', 'athena_fixture=1; Max-Age=3600; Path=/; HttpOnly; SameSite=Lax')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    yield f'http://127.0.0.1:{server.server_port}/', receipts, lock
+    server.shutdown()
+    thread.join()
+    server.server_close()
+
+
+def ref(page, name):
+    line = next(line for line in page['text'].splitlines() if f'"{name}"' in line and '[ref=' in line)
+    return '@' + re.search(r'\[ref=(e\d+)\]', line).group(1)
+
+
+async def test_native_form_download_screenshot_and_persistent_login(config, store, page_server):
+    config = replace(config, repo_dir=Path(__file__).resolve().parents[1])
+    driver = NativeBrowserDriver(config, headed=False)
+    assert driver.available(), 'npm ci must install the pinned native driver'
+    host = BrowserHost(config, store, driver)
+    await initialize_files(store)
+    user, _ = await Auth(store).register('native-fixture', 'synthetic-password')
+    session = await store.session(user_id=user['id'])
+    url, receipts, lock = page_server
+    page = None
+
+    async def operate(action, **fields):
+        nonlocal page
+        args = {'action': action, **fields}
+        if page and action != 'open':
+            args.update(tab_id=page['tab_id'], observation_id=page['observation_id'])
+        value = await host.operate(args, session, None)
+        assert value.get('ok'), json.dumps(value, ensure_ascii=False)
+        page = value
+        return value
+
+    try:
+        await operate('open', url=url)
+        assert 'Guest' in page['text']
+        await operate('fill', ref=ref(page, 'Name'), text='--profile is literal\nUnicode: 雅典娜')
+        await operate('click', ref=ref(page, 'Submit'))
+        for _ in range(15):
+            if 'Submitted once' in page['text']:
+                break
+            await asyncio.sleep(0.05)
+            await operate('snapshot')
+        assert 'Submitted once' in page['text']
+        with lock:
+            assert len(receipts) == 1 and receipts[0].startswith('--profile is literal')
+        downloaded = await operate('download', ref=ref(page, 'Download statement'), name='statement.csv')
+        record = (await store.rows('SELECT * FROM file_entries WHERE id=?', (downloaded['file']['id'],)))[0]
+        handle, _ = _open_file(config, record)
+        with handle:
+            assert handle.read() == b'item,amount\ntest,2\n'
+        captured = await operate('screenshot')
+        record = (await store.rows('SELECT * FROM file_entries WHERE id=?', (captured['file']['id'],)))[0]
+        handle, _ = _open_file(config, record)
+        with handle:
+            assert handle.read(8) == b'\x89PNG\r\n\x1a\n'
+        await driver.close(user['id'])
+        page = None
+        # Wait for the owned daemon to leave, never repeat a webpage operation.
+        for _ in range(30):
+            if not await driver.identity(user['id']):
+                break
+            await asyncio.sleep(0.05)
+        await operate('open', url=url)
+        assert 'Remembered account' in page['text']
+        tabs = await host.operate({'action': 'list'}, session, None)
+        assert [tab['status'] for tab in tabs['tabs']] == ['closed', 'open']
+        with lock:
+            assert len(receipts) == 1
+    finally:
+        await host.close()

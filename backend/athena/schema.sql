@@ -80,6 +80,21 @@ CREATE TABLE IF NOT EXISTS memory_revisions (
  source_version INTEGER, created_at TEXT NOT NULL,
  PRIMARY KEY(memory_id,version)
 );
+CREATE TABLE IF NOT EXISTS browser_instances (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), identity TEXT, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS browser_tabs (
+ id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+ session_id TEXT NOT NULL REFERENCES sessions(id), target_id TEXT NOT NULL,
+ status TEXT NOT NULL, url TEXT NOT NULL, observation_id TEXT,
+ refs TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS browser_actions (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+ run_id TEXT REFERENCES runs(id), tab_id TEXT REFERENCES browser_tabs(id),
+ action TEXT NOT NULL, arguments TEXT NOT NULL, status TEXT NOT NULL,
+ result TEXT, error_code TEXT, created_at TEXT NOT NULL, finished_at TEXT
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS context_clips (
  session_id TEXT NOT NULL REFERENCES sessions(id), message_id TEXT NOT NULL REFERENCES messages(id),

@@ -58,3 +58,22 @@ RUNTIME_PROPERTIES = {
     }
 
 RUNTIME_SCHEMA = {"type": "object", "properties": RUNTIME_PROPERTIES, "required": ["op"], "additionalProperties": False}
+
+# Browser contracts are discovered through its skill, not expanded in the stable
+# model-facing runtime envelope. Individual operations validate allowed fields.
+RUNTIME_PROPERTIES['op']['enum'].append('browser')
+for action in ('status', 'snapshot', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
+               'scroll', 'back', 'forward', 'reload', 'screenshot', 'handoff'):
+    if action not in RUNTIME_PROPERTIES['action']['enum']:
+        RUNTIME_PROPERTIES['action']['enum'].append(action)
+RUNTIME_PROPERTIES.update({
+    'tab_id': {'type': 'string', 'maxLength': 64},
+    'observation_id': {'type': 'string', 'maxLength': 64},
+    'url': {'type': 'string', 'maxLength': 4096},
+    'ref': {'type': 'string', 'pattern': '^@e[0-9]+$'},
+    'text': {'type': 'string', 'maxLength': 10000},
+    'value': {'type': 'string', 'maxLength': 1000},
+    'key': {'type': 'string', 'maxLength': 60},
+    'direction': {'enum': ['up', 'down', 'left', 'right']},
+    'pixels': {'type': 'integer', 'minimum': 1, 'maximum': 3000},
+})

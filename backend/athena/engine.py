@@ -468,4 +468,5 @@ class Engine:
         for task in self.active_runs.values():
             task.cancel()
         await asyncio.gather(*self.actors.values(), return_exceptions=True)
+        await self.tools.browser.close()
         await self.client.aclose()

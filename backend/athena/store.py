@@ -76,13 +76,15 @@ class Store:
                 backfill_help_replies(db)
             from .memory import migrate_memories
             migrate_memories(db)
-            db.execute("PRAGMA user_version=8")
+            db.execute("PRAGMA user_version=9")
         await self.call(migrate)
         from .context_controls import initialize_context_controls
         await initialize_context_controls(self)
         self.path.chmod(0o600)
         # Never replay a possibly side-effecting interrupted run automatically.
         def recover(db):
+            from .browser import recover_browser_actions
+            recover_browser_actions(db)
             db.execute("UPDATE tasks SET status='active' WHERE status='checking'")
             db.execute("UPDATE task_checks SET status='interrupted',finished_at=? WHERE status='running'", (now(),))
             interrupted = db.execute("SELECT id,session_id FROM runs WHERE status='running'").fetchall()

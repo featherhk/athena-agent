@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "dev": "concurrently -k -n server,web \"uv run --directory backend python -m athena\" \"vite --host 127.0.0.1\"",
@@ -16,6 +16,7 @@
     "prepare": "node scripts/install-hooks.mjs"
   },
   "dependencies": {
+    "agent-browser": "0.38.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",

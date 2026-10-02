@@ -14,6 +14,7 @@ The current preview also includes a separate account/model gateway with zero-cre
 - Nine interface languages: Arabic, English, Spanish, French, Japanese, Korean, Portuguese, Simplified Chinese, and Traditional Chinese. Browser preferences are matched automatically with English fallback; native language names appear without flags, ordered by BCP 47 tags. Arabic uses right-to-left layout. Interface language, font, palette, and reduced motion are saved separately from reply preferences.
 - Streaming chat with safe Markdown rendering, separately collapsible reasoning actually returned by the provider, and distinct thinking, replying, and execution states. Durable events restore updates after reconnecting; closing the browser does not stop a task.
 - File attachments and generated outputs associated with their conversation. Owned files can be downloaded or previewed as Markdown, isolated HTML, images, or bounded XLSX cells and cached values.
+- Managed browsing through the same runtime tool on macOS with Chrome/Chromium: isolated persistent account profiles, conversation-owned tabs, semantic observations, forms, downloads and screenshots. Actions have durable receipts and are not automatically resent after a lost response. [Browser execution](docs/browser-execution.md) describes verification and remaining limits.
 - Message queues, interruption, stop, and conversation forks. Forks inherit a fixed history boundary and copy background tasks in a paused state.
 - Through `runtime`, Athena can find/read other conversations in the same account, create or rename them, and fork idle conversations. Completed runs can be excluded from the current model context and restored; original chats remain intact. Browser navigation and other shell actions use durable claims and acknowledgements; returning a session ID alone does not navigate.
 - Three core OpenAI-format tools: `exec`, `update_frontend`, and `runtime`. The runtime uses a small `{op, args}` envelope. Skills are directory packages with `SKILL.md` metadata and optional scripts, references, templates, or other resources; bodies and resources load on demand.
@@ -29,7 +30,7 @@ See the [acceptance criteria](docs/acceptance.md), [command-derived minimum suit
 
 These instructions are for developers and operators. End users register an Athena account and send a message; they do not configure a provider.
 
-Requirements: macOS, `uv >= 0.9`, Node.js `>= 22.12`, and npm.
+Requirements: macOS, `uv >= 0.9`, Node.js `>= 24`, and npm. Managed browsing additionally requires installed Google Chrome or Chromium.
 
 ```sh
 uv python install 3.14t
@@ -90,7 +91,7 @@ State is stored outside the checkout:
 | Windows | `%LOCALAPPDATA%/Athena` |
 | Linux | `$XDG_DATA_HOME/athena`, or `~/.local/share/athena` |
 
-`ATHENA_DATA_DIR` can override this location, but it must remain outside the source repository. The directory contains `athena.sqlite3`, full output artifacts, user files, extension versions, and reserved browser-profile storage. Stop the service before backing up the complete data directory. Automatic backup and encryption are not implemented yet.
+`ATHENA_DATA_DIR` can override this location, but it must remain outside the source repository. The directory contains `athena.sqlite3`, full output artifacts, user files, extension versions, and private browser-profile storage. Stop the service before backing up the complete data directory. Automatic backup and encryption are not implemented yet.
 
 Messages, requests, tool results, task checks, wake-ups, model switches, and clipping records are auditable. Events are persisted before broadcast. After a backend restart, unfinished work is marked interrupted rather than automatically replaying a potentially side-effecting operation. A disconnected client and a crashed backend have different recovery guarantees.
 
@@ -104,7 +105,7 @@ The macOS command runner uses Seatbelt to prevent writes to application source a
 
 The current Engine and Store still implement the agent loop and persistence directly. They are not replaceable providers behind a service host yet. Existing policy hooks do not make the model transport, scheduler, authentication, or entire frontend interchangeable; registering an unused service ID cannot activate a missing integration. Core application updates still require a controlled restart.
 
-Still to build or validate: integrated browser and desktop control, OS notifications, production execution isolation, signed/notarized distribution, native mobile/Windows clients, real audio calls, subagents, and broader task-quality evaluation. Central accounts and a reservation/settlement ledger exist; payment collection, account recovery and production reconciliation remain out of scope. XLSX previews are bounded readers, not a spreadsheet calculation engine. There is deliberately no per-action approval workflow in this prototype.
+Still to build or validate: browser vision input, uploads/popup workflows, desktop control, OS notifications, production execution isolation, signed/notarized distribution, native mobile/Windows clients, real audio calls, subagents, and broader task-quality evaluation. Central accounts and a reservation/settlement ledger exist; payment collection, account recovery and production reconciliation remain out of scope. XLSX previews are bounded readers, not a spreadsheet calculation engine. There is deliberately no per-action approval workflow in this prototype.
 
 ## Verify
 
