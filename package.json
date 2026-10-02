@@ -1,0 +1,18 @@
+{
+  "name": "athena",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "concurrently -k -n server,web \"uv run --directory backend python -m athena\" \"vite --host 127.0.0.1\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "uv run --directory backend python -m athena",
+    "test": "uv run pytest && node --experimental-strip-types --test tests/*.test.mjs",
+    "check:repo": "node scripts/check-repository.mjs",
+    "check": "npm run check:repo && npm test && npm run build",
+    "prepare": "node scripts/install-hooks.mjs"
+  },
+  "dependencies": { "react": "^19.2.0", "react-dom": "^19.2.0" },
+  "devDependencies": { "@types/node": "^24.0.0", "@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "@vitejs/plugin-react": "^5.1.0", "concurrently": "^9.2.0", "typescript": "^5.9.0", "vite": "^7.2.0" }
+}

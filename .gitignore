@@ -1,3 +1,4 @@
+# Original Python template from the repository's initial commit
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +217,70 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Athena-specific exclusions
+# Dependencies and generated code
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+
+# Runtime state must live outside this checkout. These are defense in depth.
+.athena/
+.data/
+data/
+runtime/
+storage/
+artifacts/
+uploads/
+downloads/
+backups/
+logs/
+sessions/
+browser-profiles/
+profiles/
+playwright/.auth/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+*.jsonl
+*.har
+cookies*.json
+*storage-state*.json
+auth.json
+credentials.json
+secrets.json
+
+# Local tooling and OS files
+.DS_Store
+.idea/
+.vscode/
+.codex/
+.agents/
+tmp/
+temp/
+test-results/
+playwright-report/
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

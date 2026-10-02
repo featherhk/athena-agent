@@ -1,0 +1,24 @@
+name: Check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.14t'
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --directory backend python -m athena.doctor
+      - run: npm ci
+      - run: node scripts/check-repository.mjs --history
+      - run: npm run check
