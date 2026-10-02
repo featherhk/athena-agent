@@ -92,7 +92,7 @@ uv run --directory backend python -m athena.admin provider-key --profile second-
 | Windows | `%LOCALAPPDATA%/Athena` |
 | Linux | `$XDG_DATA_HOME/athena`，默认 `~/.local/share/athena` |
 
-可通过 `ATHENA_DATA_DIR` 覆盖路径，但必须位于源码仓库外。目录中包含 `athena.sqlite3`、完整输出、用户文件、扩展版本，以及私有的浏览器 profile 存储。备份时先停止服务，再备份整个数据目录。自动备份与加密尚未实现。
+可通过 `ATHENA_DATA_DIR` 覆盖路径，但必须位于源码仓库外。目录中包含 `athena.sqlite3`、完整输出、用户文件、扩展版本，以及私有的浏览器 profile 存储。备份时先停止服务，再备份整个数据目录。[事件无损归档](docs/event-storage.md)会在维护前创建数据库备份；定期备份与加密尚未实现。
 
 消息、模型请求、工具结果、条件检查、唤醒、模型切换和裁剪记录均可审计。事件先落库再广播。后端重启后，未结束的工作标记为中断，不自动重放可能有副作用的操作。客户端断线与后端崩溃具有不同的恢复保证。
 

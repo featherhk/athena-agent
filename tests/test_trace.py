@@ -51,8 +51,8 @@ async def test_all_streamed_rounds_reasoning_and_tools_remain_readable(config):
             assert "profile_snapshot" not in response.text and "instruction_role" not in response.text
             snapshot = (await client.get(f"/api/sessions/{session}")).json()
             assert all(message["run_id"] == run for message in snapshot["messages"])
-            events = await app.state.store.rows("SELECT payload FROM events WHERE session_id=? AND type='message' ORDER BY seq", (session,))
-            assert "先确认" in [json.loads(event["payload"])["reasoning"] for event in events]
+            events = await app.state.store.events(session)
+            assert "先确认" in [event['payload']['reasoning'] for event in events if event['type'] == 'message']
             # A new reader can page back to the exact saved provider fields.
             restored = (await client.get(path + f"/{first['id']}?field=reasoning&offset=3&limit=4")).json()
             assert restored["content"] == first["reasoning"][3:7]

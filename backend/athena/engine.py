@@ -39,6 +39,11 @@ class Engine:
     async def emit(self, session_id, kind, payload):
         self.check_owner()
         event = await self.store.event(session_id, kind, payload)
+        self.broadcast(session_id, event)
+        return event
+
+    def broadcast(self, session_id, event):
+        self.check_owner()
         for queue in tuple(self.listeners.get(session_id, ())):
             if queue.full():
                 # Disconnect slow consumers; they recover from the durable sequence.
@@ -48,7 +53,6 @@ class Engine:
                 self.listeners[session_id].discard(queue)
             else:
                 queue.put_nowait(event)
-        return event
 
     async def api_key(self):
         profile, _ = await self.models.selected()
@@ -238,24 +242,22 @@ class Engine:
                 await self.store.execute("INSERT INTO requests(id,run_id,model,input,status,created_at,profile_snapshot,context_epoch) VALUES (?,?,?,?,'running',?,?,?)", (request_id, run_id, profile.model, encoded, now(), json.dumps(profile.snapshot()), epoch))
                 await self.store.execute("UPDATE requests SET tool_versions=? WHERE id=?", (json.dumps({name: row["version"] for name, row in bindings.items()}), request_id))
                 message_id = await self.store.message(session_id, run_id, "assistant", status="streaming")
-                content, reasoning = "", ""
-                async def publish():
-                    await self.store.execute("UPDATE messages SET content=?,reasoning=? WHERE id=?", (content, reasoning, message_id))
-                    await self.emit(session_id, "message", {"id": message_id, "role": "assistant", "content": content, "reasoning": reasoning, "status": "streaming", "run_id": run_id})
+                from .streaming import StreamingMessage
+                stream = StreamingMessage(self.store, session_id, run_id, message_id,
+                                          lambda event: self.broadcast(session_id, event))
                 async def on_text(delta):
-                    nonlocal content
-                    if not content:
+                    if not stream.content:
                         await self.phase(session_id, run_id, "responding")
-                    content += delta
-                    await publish()
+                    await stream.append('content', delta)
                 async def on_reasoning(delta):
-                    nonlocal reasoning
-                    reasoning += delta
-                    await publish()
-                if self.cloud:
-                    result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning, request_id=request_id)
-                else:
-                    result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning)
+                    await stream.append('reasoning', delta)
+                try:
+                    if self.cloud:
+                        result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning, request_id=request_id)
+                    else:
+                        result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning)
+                finally:
+                    await stream.close()
                 assistant = result["message"]
                 outstanding = assistant.get("tool_calls", []).copy()
                 await self.store.execute("UPDATE messages SET content=?,reasoning=?,tool_calls=?,status='complete' WHERE id=?", (assistant["content"], assistant["reasoning_content"], json.dumps(outstanding) if outstanding else None, message_id))

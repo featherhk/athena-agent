@@ -34,7 +34,13 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 CREATE TABLE IF NOT EXISTS events (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id),
- type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+ type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL,
+ encoding TEXT NOT NULL DEFAULT 'json', base_seq INTEGER REFERENCES events(seq)
+);
+CREATE TABLE IF NOT EXISTS message_event_heads (
+ session_id TEXT NOT NULL REFERENCES sessions(id), stream_id TEXT NOT NULL,
+ seq INTEGER NOT NULL REFERENCES events(seq), payload TEXT NOT NULL, depth INTEGER NOT NULL,
+ PRIMARY KEY(session_id,stream_id)
 );
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id, seq);
 CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, seq);

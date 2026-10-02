@@ -325,12 +325,11 @@ def create_app(config: Config | None = None):
                         return
                     # Queues only wake the reader. Always catch up from the log so
                     # transactional events from preferences/registries cannot be skipped.
-                    rows = await app.state.store.rows("SELECT * FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 500", (session_id, cursor))
+                    rows = await app.state.store.events(session_id, cursor)
                     for row in rows:
-                        row["payload"] = json.loads(row["payload"])
                         cursor = row["seq"]
                         yield encode(row)
-                    if len(rows) == 500:
+                    if rows:
                         continue
                     try:
                         event = await asyncio.wait_for(queue.get(), 1)

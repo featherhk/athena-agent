@@ -49,6 +49,8 @@ class Store:
     async def initialize(self):
         schema = Path(__file__).with_name("schema.sql").read_text()
         def migrate(db):
+            if db.execute('PRAGMA user_version').fetchone()[0] > 10:
+                raise ValueError('This database requires a newer Athena version')
             db.executescript(schema)
             # Additive v1 -> v2 migration: retain all pre-login local data.
             for table, column, definition in (
@@ -64,6 +66,8 @@ class Store:
                 ("messages", "context_note", "TEXT NOT NULL DEFAULT ''"),
                 ("messages", "help_reply", "TEXT"),
                 ("requests", "tool_versions", "TEXT"),
+                ("events", "encoding", "TEXT NOT NULL DEFAULT 'json'"),
+                ("events", "base_seq", "INTEGER REFERENCES events(seq)"),
             ):
                 if column not in {row[1] for row in db.execute(f"PRAGMA table_info({table})")}:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
@@ -76,7 +80,8 @@ class Store:
                 backfill_help_replies(db)
             from .memory import migrate_memories
             migrate_memories(db)
-            db.execute("PRAGMA user_version=9")
+            db.execute('CREATE INDEX IF NOT EXISTS events_archive ON events(type,encoding,seq)')
+            db.execute("PRAGMA user_version=10")
         await self.call(migrate)
         from .context_controls import initialize_context_controls
         await initialize_context_controls(self)
@@ -224,11 +229,22 @@ class Store:
         return await self.call(fork)
 
     async def event(self, session_id, kind, payload):
-        def add(db):
-            stamp = now()
-            cursor = db.execute("INSERT INTO events(session_id,type,payload,created_at) VALUES (?,?,?,?)", (session_id, kind, json.dumps(payload, ensure_ascii=False), stamp))
-            return {"seq": cursor.lastrowid, "type": kind, "payload": payload, "created_at": stamp}
-        return await self.call(add)
+        from .event_log import append_event
+        return await self.call(lambda db: append_event(db, session_id, kind, payload, now()))
+
+    async def stream_message(self, session_id, payload):
+        from .event_log import append_event
+        def write(db):
+            changed = db.execute("UPDATE messages SET content=?,reasoning=? WHERE id=? AND session_id=? AND status='streaming'",
+                                 (payload['content'], payload['reasoning'], payload['id'], session_id)).rowcount
+            if changed != 1:
+                raise ValueError('Message stream is no longer active in this conversation')
+            return append_event(db, session_id, 'message', payload, now())
+        return await self.call(write)
+
+    async def events(self, session_id, after=0, limit=500):
+        from .event_log import read_events
+        return await self.call(lambda db: read_events(db, session_id, after, limit))
 
     async def components(self, session_id):
         from .component_views import active_components

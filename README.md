@@ -91,7 +91,7 @@ State is stored outside the checkout:
 | Windows | `%LOCALAPPDATA%/Athena` |
 | Linux | `$XDG_DATA_HOME/athena`, or `~/.local/share/athena` |
 
-`ATHENA_DATA_DIR` can override this location, but it must remain outside the source repository. The directory contains `athena.sqlite3`, full output artifacts, user files, extension versions, and private browser-profile storage. Stop the service before backing up the complete data directory. Automatic backup and encryption are not implemented yet.
+`ATHENA_DATA_DIR` can override this location, but it must remain outside the source repository. The directory contains `athena.sqlite3`, full output artifacts, user files, extension versions, and private browser-profile storage. Stop the service before backing up the complete data directory. [Lossless event archival](docs/event-storage.md) creates a database backup before maintenance; scheduled backups and encryption are not implemented yet.
 
 Messages, requests, tool results, task checks, wake-ups, model switches, and clipping records are auditable. Events are persisted before broadcast. After a backend restart, unfinished work is marked interrupted rather than automatically replaying a potentially side-effecting operation. A disconnected client and a crashed backend have different recovery guarantees.
 

@@ -114,8 +114,8 @@ async def test_zero_credit_blocks_send_then_grant_streams_persists_and_settles(t
 
         # Persisted deltas show real progressive streaming rather than only a
         # final synthesized response, and a fresh snapshot restores the result.
-        events = await app.state.store.rows("SELECT payload FROM events WHERE session_id=? AND type='message' ORDER BY seq", (session,))
-        contents = [json.loads(row['payload']).get('content') for row in events]
+        events = await app.state.store.events(session)
+        contents = [row['payload'].get('content') for row in events if row['type'] == 'message']
         assert 'Hello ' in contents and 'Hello from Athena.' in contents
         assert (await browser.post('/api/auth/logout', json={})).status_code == 200
         assert (await browser.get('/api/auth/me')).json()['user'] is None

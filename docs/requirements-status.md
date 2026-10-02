@@ -103,6 +103,14 @@ A pinned native browser adapter is connected to the universal runtime tool. Acco
 
 Validation: `npm run check` passed 357 Python tests and 50 frontend tests, TypeScript and production build. The GIL remains disabled on Python 3.14.8T. A separate 20-test run included real Chrome with a disposable profile and synthetic loopback site: one submitted form, resulting page text, exact downloaded CSV bytes, PNG screenshot and login-cookie persistence after shutdown/restart, plus the native bundle allowlist. This is local/headless executor verification, not live external login, complete computer use or a newly built/released DMG. Source and package instructions now include the pinned native binary/license; clean-machine browser installation is still missing.
 
+## Event-storage follow-up
+
+Repeated full snapshots were the main source of local database growth. Message writes now coalesce over a 50 ms interval, with immediate first reasoning/answer chunks and a final flush on completion, provider error or stop. Message updates and event insertion are atomic. The public stream/cursor contract is unchanged; checkpoints and exact prefix deltas are decoded on the server. Original messages, thinking, tool results and request inputs are retained.
+
+An offline archive command uses the same exclusive lock as the runtime, creates a private backup and verifies each recovered old payload before committing a batch. On a private copy, 103,865 original events and 33 other tables remained identical; the active database file shrank from 1,012,076,544 to 93,134,848 bytes (90.8%). Backup copies occupy additional space. See [event storage and recovery](event-storage.md). Abrupt process failure can still lose the unflushed tail; normal stop/error flushing is separately tested.
+
+Validation: 370 Python tests and 50 frontend tests passed, along with TypeScript, the production build and the Python 3.14.8T free-threading doctor. The opt-in native-browser test was not rerun for this storage-only change; its separate prior acceptance remains documented above.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.
