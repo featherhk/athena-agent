@@ -70,7 +70,7 @@ class Store:
                 session_id TEXT NOT NULL REFERENCES sessions(id), epoch INTEGER NOT NULL,
                 boundary INTEGER NOT NULL, prompt TEXT NOT NULL, created_at TEXT NOT NULL,
                 PRIMARY KEY(session_id,epoch,boundary))""")
-            db.execute("PRAGMA user_version=5")
+            db.execute("PRAGMA user_version=6")
         await self.call(migrate)
         from .context_controls import initialize_context_controls
         await initialize_context_controls(self)
@@ -88,6 +88,9 @@ class Store:
                     for tool in json.loads(message[0]):
                         if not db.execute("SELECT 1 FROM messages WHERE run_id=? AND tool_call_id=?", (run["id"], tool["id"])).fetchone():
                             self._message(db, run["session_id"], run["id"], "tool", '{"status":"unknown_after_restart","message":"Check actual state before retrying."}', "complete", tool_call_id=tool["id"])
+            # Only a fully committed waiting transition is resumable. A crash while
+            # preparing a question must not strand an invisible, unanswered form.
+            db.execute("UPDATE user_help SET status='cancelled',resolved_at=? WHERE status='preparing'", (now(),))
         await self.call(recover)
 
     async def close(self):
@@ -146,7 +149,7 @@ class Store:
 
     async def claim(self, session_id):
         def claim(db):
-            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status='running'", (session_id,)).fetchone():
+            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','waiting_user')", (session_id,)).fetchone():
                 return None
             row = db.execute("SELECT id FROM runs WHERE session_id=? AND status='queued' ORDER BY rowid LIMIT 1", (session_id,)).fetchone()
             if not row:
@@ -192,7 +195,7 @@ class Store:
 
     async def fork(self, session_id):
         def fork(db):
-            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','queued')", (session_id,)).fetchone():
+            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','queued','waiting_user')", (session_id,)).fetchone():
                 raise UserError("fork_busy", "请先停下当前任务，再从这里另开对话。")
             history = self._history(db, session_id)
             original = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()

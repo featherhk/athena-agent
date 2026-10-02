@@ -23,6 +23,11 @@ from .registry import initialize_registry
 from .accounts import initialize_accounts, register_account_routes, pending_account_action
 from .preferences import read_preferences, update_preferences, preference_schema
 from .files import initialize_files, register_file_routes, attachment_info, list_session_files, list_files
+from .user_help import list_help
+from .component_feedback import register_component_routes
+from .trace import register_trace_routes
+from .client_version import register_client_version_route
+from .app_controls import initialize_app_controls, list_app_actions, register_app_control_routes
 
 
 class Input(BaseModel):
@@ -38,6 +43,11 @@ class Credentials(BaseModel):
 
 class DeveloperInput(BaseModel):
     enabled: bool
+
+
+class HelpAnswer(BaseModel):
+    answers: dict[str, str]
+    file_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 def public_message(message):
@@ -60,6 +70,7 @@ def create_app(config: Config | None = None):
         await initialize_files(store)
         await initialize_registry(store)
         await initialize_accounts(store)
+        await initialize_app_controls(store)
         engine = Engine(config, store)
         await engine.models.ensure_default()
         app.state.engine, app.state.store = engine, store
@@ -148,7 +159,7 @@ def create_app(config: Config | None = None):
 
     @app.post("/api/settings/developer")
     async def developer(request: Request, body: DeveloperInput):
-        await app.state.store.execute("UPDATE users SET developer_mode=? WHERE id=?", (int(body.enabled), request.state.user["id"]))
+        await update_preferences(app.state.store, request.state.user["id"], {"developer_mode": body.enabled})
         return {"enabled": body.enabled}
 
     @app.get("/api/settings/preferences")
@@ -199,7 +210,7 @@ def create_app(config: Config | None = None):
 
     @app.get("/api/sessions")
     async def sessions(request: Request):
-        return await app.state.store.rows("SELECT s.*,(SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running')) AS pending FROM sessions s WHERE s.user_id=? ORDER BY created_at DESC", (request.state.user["id"],))
+        return await app.state.store.rows("SELECT s.*,(SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','waiting_user')) AS pending FROM sessions s WHERE s.user_id=? ORDER BY created_at DESC", (request.state.user["id"],))
 
     @app.post("/api/sessions")
     async def new_session(request: Request):
@@ -211,7 +222,7 @@ def create_app(config: Config | None = None):
         def snapshot(db):
             history = Store._history(db, session_id)
             return {
-                "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant") and (row["content"] or row["reasoning"] or row.get("attachments", "[]") != "[]")],
+                "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant")],
                 "runs": [dict(row) for row in db.execute("SELECT * FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 50", (session_id,))],
                 "components": [dict(row) for row in db.execute("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1", (session_id,))],
                 "tasks": [dict(row) for row in db.execute("SELECT * FROM tasks WHERE session_id=? AND status!='done' ORDER BY due_at", (session_id,))],
@@ -221,7 +232,15 @@ def create_app(config: Config | None = None):
         result["account_action"] = await pending_account_action(app.state.store, request.state.user["id"])
         result["preferences"] = await read_preferences(app.state.store, request.state.user["id"])
         result["files"] = await list_session_files(app.state.store, config, request.state.user["id"], session_id)
+        result["help_requests"] = await list_help(app.state.store, session_id, request.state.user["id"])
+        result["app_actions"] = await list_app_actions(app.state.store, session_id, request.state.user["id"])
         return result
+
+    @app.post("/api/sessions/{session_id}/help/{help_id}/answer")
+    async def answer_help(session_id: str, help_id: str, body: HelpAnswer, request: Request):
+        await exists(session_id, request)
+        attachments = await attachment_info(app.state.store, config, request.state.user["id"], session_id, body.file_ids)
+        return await app.state.engine.answer_help(session_id, request.state.user["id"], help_id, body.answers, attachments)
 
     @app.post("/api/sessions/{session_id}/messages")
     async def submit(session_id: str, body: Input, request: Request):
@@ -293,6 +312,10 @@ def create_app(config: Config | None = None):
 
     register_file_routes(app)
     register_account_routes(app)
+    register_component_routes(app, exists)
+    register_trace_routes(app, exists)
+    register_client_version_route(app, config)
+    register_app_control_routes(app, exists)
     dist = config.repo_dir / "dist"
     if (dist / "assets").exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")

@@ -1,14 +1,19 @@
 ---
 name: application
-description: "发现与修改 Athena 设置；区分应用、扩展与回复偏好"
+description: "操作 Athena 界面、切换会话与修改设置；区分应用、扩展与回复偏好"
 ---
 
 # Athena 应用设置
 
 先查看实际能力，再选择已有设置或注册扩展。现有设置不是用户需求的边界；未预先设计的需求也可以组合已有能力、编写扩展并验证结果。
 
+操作界面（切换会话、打开面板、预览文件等）先用 `runtime {"op":"app","args":{"action":"list"}}` 查看真实目录；详细参数与回执含义见 [references/controls.md](references/controls.md)。切换会话是 `app navigate`，不只是读取历史。既有按钮能完成的事，优先用对应接口实际执行。
+
 - 查看：`runtime {"op":"app_settings"}` 返回 `settings` 当前值和 `schema`，后者列出字段、选项、默认值与用途。
-- 修改：`runtime {"op":"app_settings","settings":{"ui_language":"zh-Hans","ui_font":"serif"}}`。只传需要修改的字段，其他设置保留。简体用 `zh-Hans`，繁体用 `zh-Hant`；语言的 `system` 跟随设备，不支持时回退英语。当前也提供字体 `ui_font`、配色 `ui_palette`、减少动效 `reduced_motion`；选项以 schema 为准。
+- 修改：`runtime {"op":"app_settings","settings":{"ui_language":"zh-Hans","ui_font":"serif"}}`。只传需要修改的字段，其他设置保留。简体用 `zh-Hans`，繁体用 `zh-Hant`；语言的 `system` 跟随设备，不支持时回退英语。当前也提供字体 `ui_font`、配色 `ui_palette`、减少动效 `reduced_motion`；能力以 schema 为准。
+- 配色预设是快捷方式，不是限制。`ui_palette` 也接受任意 `#RGB` / `#RRGGBB` 背景色，界面自动生成可读的文字和控件颜色。黑色用 `{"ui_palette":"#000000"}`，深蓝用 `{"ui_palette":"#101b35"}`；明确的颜色要求直接落实，不因没有同名预设而拒绝，也无需创建组件。返回规范化的十六进制颜色可确认设置已持久化；恢复默认用 `dream`。
+- 顶部标识的大小用 `presence_size`（整数 32–240 像素，默认 84），例如 `{"presence_size":48}`。阅读长对话时它自动收起。任意形状、图案或动效可通过 `update_frontend` 注册 `placement="presence"` 的组件，替换表达区域；固定状态提示和停止入口保留。先读取 interface skill，并用组件实际渲染回执验收。
+- 用户要求“打开开发者模式”时，设置 `{"developer_mode":true}`；关闭用 `false`。这是 Athena 自带的 token、费用、缓存率浮窗，账户设置中也能开启。不要误以为是打开浏览器开发者工具，也不要声称功能不存在。凭据仍不会进入模型或浮窗。
 - 成功结果中的 `settings` 是已持久化的完整设置，客户端通过事件同步。核对返回值，必要时重新读取；这不等于已目视验证渲染。失败时不能宣称已切换。界面设置不会翻译已有聊天或文件，也不会设置回复语言。模型选择走 models skill，不能在此设置供应商、地址或凭据。
 
 根据上下文判断用户指的是界面、回复还是外部内容。例如在设置或界面语境中，“文字设为简体”指向界面语言，应直接调用上述接口；不要只承诺以后用简体回复，也不要擅自将其当成文件转换。“以后用英语回复”是回复偏好，使用 memory skill 保存，不改变界面。明确要求翻译文件则处理指定文件。缺乏上下文且确有歧义时，只问一句“是改界面语言，还是以后回复用这门语言？”

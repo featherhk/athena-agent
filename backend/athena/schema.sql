@@ -94,3 +94,12 @@ CREATE TABLE IF NOT EXISTS model_switches (
  from_profile TEXT NOT NULL, to_profile TEXT NOT NULL, context_epoch INTEGER NOT NULL,
  reason TEXT NOT NULL, profile_snapshot TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_help (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+ run_id TEXT NOT NULL REFERENCES runs(id), status TEXT NOT NULL,
+ questions TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', answers TEXT,
+ attachments TEXT NOT NULL DEFAULT '[]',
+ created_at TEXT NOT NULL, resolved_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_help_open_session
+ ON user_help(session_id) WHERE status IN ('preparing','pending');

@@ -24,6 +24,8 @@ POLICY_CONSUMERS = (
 )
 NAME = re.compile(r"user_[a-z][a-z0-9_]{0,47}\Z")
 COMPONENT_ID = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
+COMPONENT_PLACEMENTS = ("inline", "workspace", "banner", "top-start", "top-end", "bottom-start", "bottom-end", "overlay", "fullscreen", "presence", "sidebar-start", "sidebar-end")
+COMPONENT_ERRORS = ("script_error", "unhandled_rejection", "blocked_resource", "empty_document", "load_timeout")
 MAX_FILES, MAX_PACKAGE_BYTES = 64, 4 * 1024 * 1024
 
 
@@ -34,6 +36,13 @@ def policy_state(name, active=True, current=True):
 
 
 def _initialize(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS component_reports (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions(id), component_id TEXT NOT NULL,
+        version INTEGER NOT NULL, instance TEXT NOT NULL,
+        state TEXT NOT NULL, has_content INTEGER NOT NULL, in_view INTEGER NOT NULL,
+        error_code TEXT, created_at TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS component_reports_version ON component_reports(session_id,component_id,version,seq)")
     db.execute("""CREATE TABLE IF NOT EXISTS user_skills (
         user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL,
         version INTEGER NOT NULL, description TEXT NOT NULL,
@@ -146,6 +155,44 @@ class Registry:
     def __init__(self, config, store):
         self.config, self.store = config, store
 
+    @staticmethod
+    def _render_status(db, session_id, component_id, version):
+        report = db.execute("SELECT state,has_content,in_view,error_code,created_at FROM component_reports "
+                            "WHERE session_id=? AND component_id=? AND version=? ORDER BY seq DESC LIMIT 1",
+                            (session_id, component_id, version)).fetchone()
+        result = {"state": "unobserved", "functional_verification": "not_performed"}
+        if report:
+            result.update(state=report["state"], has_content=bool(report["has_content"]),
+                          in_view=bool(report["in_view"]), error_code=report["error_code"],
+                          observed_at=report["created_at"])
+        return result
+
+    async def report_component(self, session_id, component_id, version, instance, state,
+                               has_content, in_view, error_code=None):
+        """Record browser observations, never infer functional success from registration."""
+        if (not isinstance(component_id, str) or not COMPONENT_ID.fullmatch(component_id)
+                or type(version) is not int or version < 1
+                or not isinstance(instance, str) or not COMPONENT_ID.fullmatch(instance)
+                or state not in ("mounted", "failed")
+                or type(has_content) is not bool or type(in_view) is not bool
+                or error_code not in (None, *COMPONENT_ERRORS)
+                or (state == "failed") != (error_code is not None)):
+            raise ValueError("Invalid component observation")
+        await initialize_registry(self.store)
+        def record(db):
+            current = self._record(db, "component", session_id, component_id)
+            if current["version"] != version or not current["active"]:
+                return {"accepted": False, "reason": "obsolete_version"}
+            previous = db.execute("SELECT state,has_content,in_view,error_code FROM component_reports "
+                                  "WHERE session_id=? AND component_id=? AND version=? AND instance=? ORDER BY seq DESC LIMIT 1",
+                                  (session_id, component_id, version, instance)).fetchone()
+            fields = (state, int(has_content), int(in_view), error_code)
+            if previous is None or tuple(previous) != fields:
+                db.execute("INSERT INTO component_reports(session_id,component_id,version,instance,state,has_content,in_view,error_code,created_at) "
+                           "VALUES (?,?,?,?,?,?,?,?,?)", (session_id, component_id, version, instance, *fields, now()))
+            return {"accepted": True, "render": self._render_status(db, session_id, component_id, version)}
+        return await self.store.call(record)
+
     async def skill_catalog(self, session_id):
         await initialize_registry(self.store)
         rows = await self.store.rows("SELECT user_id FROM sessions WHERE id=?", (session_id,))
@@ -238,6 +285,7 @@ class Registry:
                 item["enabled"] = bool(row["active"] and row["current"])
                 if kind == "component":
                     item["placement"] = row.get("placement", "inline")
+                    item["render"] = await self.store.call(lambda db, row=row: self._render_status(db, owner, row["id"], row["version"]))
                 elif kind == "policy":
                     item.update(policy_state(name=row["name"], active=row["active"], current=row["current"]))
                 items.append(item)
@@ -252,7 +300,10 @@ class Registry:
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 result.update(policy_state(name, row["active"], latest["version"] == row["version"]))
             if kind == "component":
-                return {**result, "title": row["title"], "source": row["html"], "placement": row.get("placement", "inline")}
+                latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
+                render = await self.store.call(lambda db: self._render_status(db, owner, name, row["version"]))
+                return {**result, "enabled": bool(row["active"] and row["version"] == latest["version"]),
+                        "title": row["title"], "source": row["html"], "placement": row.get("placement", "inline"), "render": render}
             result["description"] = row["description"]
             if kind in ("tool", "policy"):
                 source = await asyncio.to_thread(self._path(row, user).read_text, encoding="utf-8")
@@ -278,6 +329,8 @@ class Registry:
                 if not row["active"]:
                     return {"kind": kind, key: name, "version": row["version"], "status": "disabled"}
                 self._insert(db, kind, owner, name, row["version"] + 1, row, active=False)
+                if kind == "component":
+                    self._component_event(db, owner, name, row["version"] + 1, "remove", row.get("placement", "inline"))
                 return {"kind": kind, key: name, "version": row["version"] + 1, "status": "disabled"}
             result = await self.store.call(remove)
             return {**result, **policy_state(name, active=False)} if kind == "policy" else result
@@ -304,6 +357,14 @@ class Registry:
                     return resources
                 args = {**args, "files": await asyncio.to_thread(read_package)}
         return await self._register(args, kind, user, owner, name, action)
+
+    @staticmethod
+    def _component_event(db, session_id, component_id, version, action, placement):
+        # Commit the refresh signal with the version; reconnecting clients recover it.
+        payload = {"kind": "component", "id": component_id, "version": version,
+                   "action": action, "placement": placement, "enabled": action != "remove"}
+        db.execute("INSERT INTO events(session_id,type,payload,created_at) VALUES (?,?,?,?)",
+                   (session_id, "registry_changed", json.dumps(payload), now()))
 
     @staticmethod
     def _insert(db, kind, owner, name, version, record, active=True):
@@ -338,8 +399,8 @@ class Registry:
                 old = await self.store.rows("SELECT title,placement FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (owner, name))
                 title = args.get("title", old[0]["title"] if old else "小工具")
                 placement = args.get("placement", old[0]["placement"] if old else "inline")
-                if placement not in ("inline", "workspace", "banner"):
-                    raise ValueError("Component placement must be inline, workspace or banner")
+                if placement not in COMPONENT_PLACEMENTS:
+                    raise ValueError("Use a supported component placement: " + ", ".join(COMPONENT_PLACEMENTS))
                 if not isinstance(title, str) or len(title) > 80:
                     raise ValueError("Component title must be at most 80 characters")
                 record.update(title=title, html=source, placement=placement)
@@ -371,6 +432,9 @@ class Registry:
             version = db.execute(f"SELECT COALESCE(MAX(version),0)+1 FROM {table} WHERE {column}=? AND {key}=?", (owner, name)).fetchone()[0]
             self._insert(db, kind, owner, name, version, record)
             result = {"kind": kind, key: name, "version": version, "status": "restored" if action == "restore" else "registered"}
+            if kind == "component":
+                self._component_event(db, owner, name, version, action, record["placement"])
+                result.update(enabled=True, placement=record["placement"], render=self._render_status(db, owner, name, version))
             return {**result, **policy_state(name)} if kind == "policy" else result
         try:
             return await self.store.call(register)

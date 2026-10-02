@@ -82,21 +82,39 @@ class Engine:
         self.kick(session_id)
         return run_id
 
-    async def stop(self, session_id):
+    async def stop(self, session_id, *, app_action_reason="interrupted"):
         self.check_owner()
         async with self.controls.setdefault(session_id, asyncio.Lock()):
-            await self._stop(session_id)
+            await self._stop(session_id, app_action_reason=app_action_reason)
         await self.emit(session_id, "refresh", {})
 
-    async def _stop(self, session_id):
+    async def _stop(self, session_id, *, app_action_reason="interrupted"):
         def cancel_queue(db):
-            db.execute("UPDATE runs SET status='cancelled',finished_at=? WHERE session_id=? AND status='queued'", (now(), session_id))
+            from .user_help import cancel_help
+            from .app_controls import cancel_app_actions
+            cancel_help(db, session_id)
+            owner = db.execute("SELECT user_id FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if owner and owner["user_id"]:
+                cancel_app_actions(db, owner["user_id"], session_id=session_id, reason=app_action_reason)
+            db.execute("UPDATE runs SET status='cancelled',phase='stopped',finished_at=? WHERE session_id=? AND status IN ('queued','waiting_user')", (now(), session_id))
             db.execute("UPDATE messages SET status='cancelled' WHERE session_id=? AND status='queued'", (session_id,))
         await self.store.call(cancel_queue)
         task = self.active_runs.get(session_id)
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    async def answer_help(self, session_id, user_id, help_id, answers, attachments=None):
+        from .user_help import answer_help
+        self.check_owner()
+        async with self.controls.setdefault(session_id, asyncio.Lock()):
+            if user_id in self.resetting_users:
+                raise UserError("resetting", "Reset is in progress. Please try again shortly.")
+            request, changed = await answer_help(self.store, session_id, user_id, help_id, answers, attachments)
+        if changed:
+            await self.emit(session_id, "refresh", {})
+            self.kick(session_id)
+        return request
 
     async def _work(self, session_id):
         while not self.closing:
@@ -112,14 +130,34 @@ class Engine:
                     return
                 task = asyncio.create_task(self._run(session_id, run_id))
                 self.active_runs[session_id] = task
+            control = None
             try:
-                await task
+                control = await task
             except asyncio.CancelledError:
                 if self.closing:
                     return
             finally:
                 if self.active_runs.get(session_id) is task:
                     del self.active_runs[session_id]
+            if control in ("stop", "reset") and not self.closing:
+                # The model task and all of its tool-result slots have finished.
+                # Running reset/stop here means neither can await/cancel itself.
+                try:
+                    if control == "stop":
+                        await self.stop(session_id)
+                    else:
+                        await self.reset_user(owner["user_id"])
+                except UserError as exc:
+                    if exc.code == "resetting":
+                        return  # A concurrent reset already owns this account.
+                    await self.store.execute("UPDATE runs SET status='failed',phase='stopped',error=?,error_code=? WHERE id=?", (str(exc)[:1000], exc.code, run_id))
+                    await self.emit(session_id, "refresh", {})
+                except Exception as exc:
+                    await self.store.execute("UPDATE runs SET status='failed',phase='stopped',error=?,error_code='app_control_failed' WHERE id=?", (str(exc)[:1000], run_id))
+                    await self.emit(session_id, "refresh", {})
+                else:
+                    await self.emit(session_id, "app_control", {"action": control, "status": "applied", "run_id": run_id})
+                return
 
     async def context(self, session_id, profile=None, epoch=None):
         if profile is None:
@@ -194,8 +232,12 @@ class Engine:
         status, error, error_code = "complete", None, None
         outstanding = []
         try:
-            await self.prepare_memory(session_id, run_id)
-            for _ in range(self.config.max_steps):
+            # A user answer resumes this run, preserving its admitted memories and
+            # total step budget instead of repeating setup or completed tool calls.
+            prior_steps = (await self.store.rows("SELECT COUNT(*) AS count FROM requests WHERE run_id=?", (run_id,)))[0]["count"]
+            if not prior_steps:
+                await self.prepare_memory(session_id, run_id)
+            for _ in range(max(0, self.config.max_steps - prior_steps)):
                 await self.phase(session_id, run_id, "thinking")
                 # Tool outputs are clipped once at admission; previous messages stay stable.
                 # Freeze configuration for this request; switches affect only the next one.
@@ -236,14 +278,39 @@ class Engine:
                 while outstanding:
                     tool = outstanding[0]
                     await self.phase(session_id, run_id, "executing")
+                    arguments = {}
                     try:
-                        output = await self.tools.execute(tool["function"]["name"], json.loads(tool["function"]["arguments"]), session_id, run_id, bindings=bindings)
+                        arguments = json.loads(tool["function"]["arguments"])
+                        output = await self.tools.execute(tool["function"]["name"], arguments, session_id, run_id, bindings=bindings)
                     except (ValueError, KeyError, OSError, json.JSONDecodeError) as exc:
                         output = {"error": str(exc)[:1000]}
                     except Exception as exc:
                         output = {"error": f"工具执行失败：{type(exc).__name__}"}
                     await self.store.message(session_id, run_id, "tool", json.dumps(output, ensure_ascii=False), tool_call_id=tool["id"])
                     outstanding.pop(0)
+                    markers = output.get("control", {}) if isinstance(output, dict) and isinstance(output.get("control", {}), dict) else {}
+                    app_args = arguments.get("args", arguments) if isinstance(arguments, dict) else {}
+                    app_action = app_args.get("action") if isinstance(app_args, dict) else None
+                    if (tool["function"]["name"] == "runtime" and isinstance(arguments, dict) and arguments.get("op") == "app"
+                            and ((app_action == "stop" and markers.get("stop_run") is True)
+                                 or (app_action == "reset" and markers.get("reset_user") is True))):
+                        # Do not execute later calls in the same model response. They
+                        # still need explicit results to preserve provider pairing.
+                        def defer(db):
+                            for pending in outstanding:
+                                self.store._message(db, session_id, run_id, "tool", json.dumps({"status": "not_executed", "reason": f"Application {app_action} was requested before this action."}), "complete", tool_call_id=pending["id"])
+                        await self.store.call(defer)
+                        outstanding = []
+                        status = "interrupted" if app_action == "stop" else "complete"
+                        return app_action
+                    help_id = output.get("control", {}).get("wait_for_user") if isinstance(output, dict) and isinstance(output.get("control", {}), dict) else None
+                    if help_id:
+                        from .user_help import activate_help
+                        request = await activate_help(self.store, session_id, run_id, help_id, outstanding)
+                        outstanding = []
+                        status = "waiting_user"
+                        await self.emit(session_id, "user_help", request)
+                        return
                     await self.emit(session_id, "refresh", {})
             else:
                 raise UserError("step_limit", "这件事已经连续处理了很多步骤，先停在这里。你可以让我继续。")
@@ -259,7 +326,12 @@ class Engine:
                 await self.store.execute("UPDATE requests SET status=?,error=?,error_code=?,finished_at=? WHERE id=?", (status, error, error_code, now(), request_id))
             if message_id:
                 await self.store.execute("UPDATE messages SET status=? WHERE id=? AND tool_calls IS NULL", (status, message_id))
-            await self.store.execute("UPDATE runs SET status=?,phase=?,error=?,error_code=?,finished_at=? WHERE id=?", (status, "stopped" if status != "complete" else "idle", error, error_code, now(), run_id))
+            if status != "waiting_user":
+                def finish(db):
+                    from .user_help import cancel_help
+                    cancel_help(db, session_id, run_id)
+                    db.execute("UPDATE runs SET status=?,phase=?,error=?,error_code=?,finished_at=? WHERE id=?", (status, "stopped" if status != "complete" else "idle", error, error_code, now(), run_id))
+                await self.store.call(finish)
             await self.emit(session_id, "refresh", {})
 
     async def tick(self):
@@ -353,13 +425,15 @@ class Engine:
         try:
             sessions = await self.store.rows("SELECT id FROM sessions WHERE user_id=?", (user_id,))
             for session in sessions:
-                await self.stop(session["id"])
+                await self.stop(session["id"], app_action_reason="reset")
             tasks = await self.store.rows("SELECT t.id FROM tasks t JOIN sessions s ON s.id=t.session_id WHERE s.user_id=?", (user_id,))
             checks = [self.watchers[row["id"]] for row in tasks if row["id"] in self.watchers]
             for task in checks:
                 task.cancel()
             await asyncio.gather(*checks, return_exceptions=True)
             def reset(db):
+                from .app_controls import cancel_app_actions
+                cancel_app_actions(db, user_id)
                 for session in sessions:
                     sid = session["id"]
                     db.execute("UPDATE tasks SET status='paused' WHERE session_id=? AND status!='done'", (sid,))

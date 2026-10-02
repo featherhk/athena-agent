@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import type { Preferences } from './api';
+import { applyPalette } from './appearance';
 import en from './locales/en.json';
 import { errorKeys, isLocale, resolveLocale } from './locale-core';
 import type { Locale } from './locale-core';
@@ -22,7 +23,7 @@ export function errorMessage(code?: string): string {
   const key = errorKeys[code || ''] || (code?.startsWith('provider_') ? 'error.provider' : 'error.generic');
   return translate(key as Key);
 }
-const defaults: Preferences = { ui_language: 'system', ui_font: 'system', ui_palette: 'dream', reduced_motion: 'system' };
+const defaults: Preferences = { ui_language: 'system', ui_font: 'system', ui_palette: 'dream', reduced_motion: 'system', presence_size: 84, developer_mode: false };
 const Context = createContext({ preferences: defaults, applyPreferences: (_value: Partial<Preferences>) => {}, locale: 'en' as Locale, choice: 'system', setChoice: (_value: string) => {}, reduced: false, setReduced: (_value: boolean) => {}, t: translate });
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState<Preferences>(() => ({ ...defaults, ui_language: preference() }));
@@ -51,8 +52,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => { document.documentElement.dataset.reduceMotion = String(reduced); }, [reduced]);
   useEffect(() => {
     document.documentElement.dataset.font = preferences.ui_font;
-    document.documentElement.dataset.palette = preferences.ui_palette;
+    applyPalette(document.documentElement, preferences.ui_palette);
   }, [preferences.ui_font, preferences.ui_palette]);
+  useEffect(() => {
+    const size = Number.isInteger(preferences.presence_size) ? Math.max(32, Math.min(240, preferences.presence_size)) : 84;
+    document.documentElement.style.setProperty('--presence-size', `${size}px`);
+  }, [preferences.presence_size]);
   useEffect(() => {
     const change = () => { if (choice === 'system') setLocale(resolveLocale(navigator.languages)); };
     window.addEventListener('languagechange', change);

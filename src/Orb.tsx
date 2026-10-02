@@ -1,27 +1,31 @@
-import { useId } from 'react';
+export type Phase = 'idle' | 'thinking' | 'responding' | 'executing' | 'stopped' | 'waiting';
 
-export type Phase = 'idle' | 'thinking' | 'responding' | 'executing' | 'stopped';
+/** An original line emblem informed by the Attic owl, without a coin frame. */
+export function AthenaMark({ compact = false }: { compact?: boolean }) {
+  return <svg className={compact ? 'brand-mark' : 'presence-art'} viewBox="0 0 96 96" fill="none" aria-hidden="true">
+    <g className="presence-signature" stroke="currentColor" strokeWidth={compact ? 2.8 : 1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M24 29L34 32C42 29 54 29 62 32L72 29L68 44C72 60 63 76 48 77C33 76 24 62 28 45Z" />
+      <path d="M26 40C31 32 40 33 45 40C39 49 30 48 26 40ZM51 40C57 32 66 33 70 40C66 48 57 49 51 40Z" />
+      <circle cx="35.5" cy="40" r={compact ? 2.4 : 2} fill="currentColor" stroke="none" />
+      <circle cx="61" cy="40" r={compact ? 2.4 : 2} fill="currentColor" stroke="none" />
+      <path d="M44 47L48 54L52 47M35 76L32 81M43 78L42 82M53 78L54 82M60 76L63 81" />
+      {!compact && <>
+        <path d="M31 50C30 61 35 68 41 71M35 53C35 59 38 65 43 67M62 51C66 60 61 69 54 72M59 55C62 61 58 65 53 67" />
+        <path d="M47 60L49 62M47 67L49 69" />
+      </>}
+    </g>
+  </svg>;
+}
 
-// A folded ribbon, not a literal face. Shape and rhythm both encode state;
-// the fixed shell supplies a readable status when animation is reduced.
 export default function Orb({ phase }: { phase: Phase }) {
-  const id = useId().replaceAll(':', '');
   return <div className={`orb-scene ${phase}`} aria-hidden="true">
-    <div className="presence-glow" />
-    <svg className="presence-art" viewBox="0 0 200 160" fill="none">
-      <defs>
-        <linearGradient id={`${id}-silk`} x1="44" y1="20" x2="151" y2="132" gradientUnits="userSpaceOnUse"><stop stopColor="#ec9dbe" /><stop offset=".42" stopColor="#b58ce0" /><stop offset="1" stopColor="#777bdd" /></linearGradient>
-        <linearGradient id={`${id}-edge`} x1="46" y1="46" x2="130" y2="134" gradientUnits="userSpaceOnUse"><stop stopColor="#fff5ff" /><stop offset=".5" stopColor="#e6bfe8" /><stop offset="1" stopColor="#aea3f0" /></linearGradient>
-      </defs>
-      <g className="ribbon-orbit">
-        {[0, 1, 2, 3].map(index => <g key={index} className={`ribbon ribbon-${index}`}>
-          <path d="M99 80C61 84 39 61 51 44C62 27 93 42 103 65C112 86 102 110 81 117C54 126 39 103 57 87C70 75 84 76 99 80Z" fill={`url(#${id}-silk)`} fillOpacity=".36" stroke={`url(#${id}-silk)`} strokeWidth="1" />
-          <path d="M99 80C61 84 39 61 51 44C62 27 93 42 103 65" stroke={`url(#${id}-edge)`} strokeWidth="1.8" />
-        </g>)}
-      </g>
-      <g className="work-orbit"><ellipse cx="100" cy="80" rx="72" ry="43" stroke={`url(#${id}-silk)`} strokeWidth="1" strokeDasharray="3 7" /><circle cx="172" cy="80" r="4" fill="#a482d8" /></g>
-      <g className="voice-bars">{[0, 1, 2, 3, 4].map(index => <rect key={index} className={`voice-bar bar-${index}`} x={79 + index * 9} y={66 + Math.abs(index - 2) * 4} width="5" height={28 - Math.abs(index - 2) * 8} rx="2.5" fill={`url(#${id}-silk)`} />)}</g>
-      <g className="pause-mark"><path d="M94 74v12m12-12v12" stroke="#95869f" strokeWidth="3" strokeLinecap="round" /></g>
+    <AthenaMark />
+    <svg className="presence-state" viewBox="0 0 96 96" fill="none">
+      <g className="presence-trace"><path d="M22 48a26 26 0 0 1 43-20" /><path d="M74 48a26 26 0 0 1-43 20" /></g>
+      <g className="presence-work"><path d="M28 36h40M28 48h40M28 60h40" /></g>
+      <g className="presence-voice">{[0, 1, 2, 3, 4].map(index => <path key={index} className={`voice-bar bar-${index}`} d={`M${32 + index * 8} ${38 + Math.abs(index - 2) * 3}v${20 - Math.abs(index - 2) * 6}`} />)}</g>
+      <g className="presence-pause"><path d="M43 40v16M53 40v16" /></g>
+      <g className="presence-wait"><circle cx="48" cy="48" r="3" /><circle cx="34" cy="48" r="2" /><circle cx="62" cy="48" r="2" /></g>
     </svg>
   </div>;
 }

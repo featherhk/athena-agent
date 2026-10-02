@@ -1,0 +1,25 @@
+.run-trace { color: var(--muted); font-size: 12px; margin: 10px 0 14px; max-width: 100%; }
+.run-trace > summary { cursor: pointer; display: flex; align-items: center; gap: 7px; list-style: none; width: fit-content; padding: 4px 0; }
+.run-trace > summary::-webkit-details-marker { display: none; }
+.run-trace > summary::after { content: '⌄'; display: inline-block; margin-inline-start: 3px; transition: transform .18s; }
+.run-trace[open] > summary::after { transform: rotate(180deg); }
+.trace-indicator { width: 5px; height: 5px; border: 1px solid currentColor; border-radius: 50%; opacity: .65; }
+.trace-indicator.active { background: var(--accent); border-color: var(--accent); }
+.trace-live { font-size: 12px; }
+.trace-timeline { margin-top: 10px; padding-inline-start: 13px; border-inline-start: 1px solid color-mix(in srgb, var(--muted) 22%, transparent); }
+.trace-entry { position: relative; padding: 0 0 18px 6px; min-width: 0; }
+.trace-entry::before { position: absolute; content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); opacity: .35; inset-inline-start: -16px; top: 6px; }
+.trace-entry > header { display: flex; gap: 10px; font-size: 12px; letter-spacing: .03em; padding-bottom: 8px; }
+.trace-entry section + section { margin-top: 14px; }
+.trace-entry h4 { font-weight: 500; font-size: 12px; margin: 0 0 6px; }
+.trace-entry .markdown-body { font-size: 13px; line-height: 1.75; }
+.trace-field pre, .trace-original pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 10px 12px; max-height: 380px; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; border-radius: 6px; background: var(--wash); color: inherit; }
+.trace-link { appearance: none; border: 0; background: none; font: inherit; color: var(--accent); padding: 6px 0; cursor: pointer; text-align: start; }
+.trace-link:disabled { opacity: .5; cursor: default; }
+.trace-link:focus-visible, .run-trace summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.trace-original { margin-top: 9px; }
+.trace-original summary { cursor: pointer; margin-bottom: 8px; }
+.trace-error { overflow-wrap: anywhere; color: var(--muted); }
+.trace-error code { font-size: 12px; }
+.trace-empty { margin: 9px 0; }
+@media (prefers-reduced-motion: reduce) { .run-trace > summary::after { transition: none; } }

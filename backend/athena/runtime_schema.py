@@ -1,10 +1,23 @@
 """Internal validation; kept out of the model's always-present tool definition."""
 from .preferences import preference_schema
+from .registry import COMPONENT_PLACEMENTS
+from .app_controls import TARGETS
 
 RUNTIME_PROPERTIES = {
-        "op": {"type": "string", "enum": ["skill", "registry", "account", "sessions", "context", "compact", "usage", "app_settings", "schedule", "tasks", "cancel_task", "remember", "recall", "read_artifact", "read_message", "register_tool", "remove_tool", "state", "models", "switch_model"]},
+        "op": {"type": "string", "enum": ["skill", "registry", "account", "app", "sessions", "context", "compact", "usage", "app_settings", "user_help", "schedule", "tasks", "cancel_task", "remember", "recall", "read_artifact", "read_message", "register_tool", "remove_tool", "state", "models", "switch_model"]},
+        "questions": {"type": "array", "minItems": 1, "maxItems": 3, "items": {
+            "type": "object", "properties": {
+                "id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$"},
+                "question": {"type": "string", "minLength": 1, "maxLength": 1000},
+                "options": {"type": "array", "maxItems": 6, "items": {
+                    "type": "object", "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "description": {"type": "string", "maxLength": 300}},
+                    "required": ["label"], "additionalProperties": False}},
+            }, "required": ["id", "question"], "additionalProperties": False}},
         "kind": {"type": "string", "enum": ["tool", "component", "skill", "policy"]},
-        "action": {"type": "string", "enum": ["list", "read", "new", "rename", "fork", "exclude_run", "restore_run", "register", "restore", "remove", "update", "change_password"]},
+        "action": {"type": "string", "enum": ["list", "read", "new", "rename", "fork", "exclude_run", "restore_run", "register", "restore", "remove", "update", "change_password", "open", "close", "navigate", "preview", "download", "attach", "detach", "sign_out", "stop", "reset"]},
+        "target": {"type": "string", "enum": list(TARGETS)},
+        "file_id": {"type": "string", "maxLength": 64},
         "session_id": {"type": "string", "maxLength": 64}, "run_id": {"type": "string", "maxLength": 64},
         "profile": {"type": "object", "properties": {"display_name": {"type": "string", "maxLength": 60},
             "avatar_file_id": {"type": "string"}}, "additionalProperties": False},
@@ -14,7 +27,7 @@ RUNTIME_PROPERTIES = {
         "files": {"type": "object", "maxProperties": 64, "additionalProperties": {"anyOf": [
             {"type": "string"}, {"type": "object", "properties": {"encoding": {"type": "string", "enum": ["base64"]},
                 "content": {"type": "string"}}, "required": ["encoding", "content"], "additionalProperties": False}]}},
-        "placement": {"type": "string", "enum": ["inline", "workspace", "banner"]},
+        "placement": {"type": "string", "enum": list(COMPONENT_PLACEMENTS)},
         "window_seconds": {"type": "integer", "minimum": 1, "maximum": 31536000},
         "target_tokens": {"type": "integer", "minimum": 1000, "maximum": 1000000},
         "settings": preference_schema(),

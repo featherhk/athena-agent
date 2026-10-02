@@ -124,13 +124,15 @@ class ContextControls:
         def listing(db):
             total = db.execute("SELECT COUNT(*) FROM sessions WHERE user_id=? AND title LIKE ? ESCAPE '\\'", (user_id, pattern)).fetchone()[0]
             rows = [dict(row) for row in db.execute('''SELECT s.id,s.title,s.created_at,s.parent_id,
-                (SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running')) AS pending,
+                (SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','waiting_user')) AS pending,
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id=s.id) AS local_message_count
                 FROM sessions s WHERE s.user_id=? AND s.title LIKE ? ESCAPE '\\'
                 ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?''', (user_id, pattern, limit, offset))]
             next_offset = min(offset + len(rows), total)
             return {'scope': 'own_account', 'sessions': rows, 'offset': offset, 'next_offset': next_offset,
-                    'total': total, 'has_more': next_offset < total}
+                    'total': total, 'has_more': next_offset < total,
+                    'navigation': {'op': 'app', 'action': 'navigate', 'parameter': 'session_id',
+                                   'effect': 'Switch the visible application to an owned session; browser acknowledgement confirms the view change.'}}
         return await self.store.call(listing)
 
     async def _read(self, user_id, current_session, target, args):
@@ -172,7 +174,7 @@ class ContextControls:
             if target_run not in {row['run_id'] for row in history}:
                 raise UserError('invalid_input', 'The run is not part of this conversation history.')
             run = db.execute('SELECT status FROM runs WHERE id=?', (target_run,)).fetchone()
-            if target_run == source_run_id or not run or run['status'] in {'running', 'queued'}:
+            if target_run == source_run_id or not run or run['status'] in {'running', 'queued', 'waiting_user'}:
                 raise UserError('invalid_input', 'Active or queued runs cannot be excluded or restored.')
             previous = db.execute('SELECT version,excluded FROM context_exclusions WHERE session_id=? AND run_id=? ORDER BY version DESC LIMIT 1', (session_id, target_run)).fetchone()
             version = previous['version'] if previous else 0

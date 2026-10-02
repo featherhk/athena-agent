@@ -1,0 +1,10 @@
+.user-help { margin-bottom: 12px; padding: 16px 18px; border: 1px solid var(--tint); border-radius: 12px; background: var(--surface); max-height: 42vh; overflow-y: auto; }
+.help-heading { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.help-reason, .help-hint { margin: 8px 0; font-size: 13px; color: var(--muted); line-height: 1.65; }
+.user-help fieldset { border: 0; padding: 0; margin: 0 0 14px; min-width: 0; }
+.user-help legend { font-size: 17px; line-height: 1.65; margin-bottom: 10px; }
+.help-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.help-choices button { border: 1px solid var(--tint); border-radius: 8px; padding: 9px 13px; background: transparent; color: inherit; text-align: start; }
+.help-choices button:hover, .help-choices button[aria-pressed="true"] { border-color: var(--accent); background: var(--wash); }
+.help-choices small { display: block; margin-top: 3px; color: var(--muted); }
+.user-help textarea { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 10px; min-height: 58px; border: 1px solid var(--tint); border-radius: 8px; background: transparent; color: inherit; font: inherit; }

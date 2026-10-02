@@ -5,7 +5,7 @@ from athena.preferences import preference_schema, read_preferences, update_prefe
 from athena.store import now
 
 
-BASE = {"ui_language": "system", "ui_font": "system", "ui_palette": "dream", "reduced_motion": "system"}
+BASE = {"ui_language": "system", "ui_font": "system", "ui_palette": "dream", "reduced_motion": "system", "presence_size": 84, "developer_mode": False}
 
 
 async def account(store, identifier):
@@ -46,6 +46,10 @@ async def test_preferences_are_account_scoped_persisted_and_audited(store):
     {"provider": "not-an-app-preference"}, {"api_base": "https://example.invalid"},
     {"key": "not-a-preference"}, {"reply_language": "en"},
     {"ui_font": "serif", "ui_palette": "unknown"}, {"ui_font": "custom.ttf"},
+    {"ui_palette": "#12345"}, {"ui_palette": "#00000000"}, {"ui_palette": "#abcd"},
+    {"ui_palette": "#fff;display:none"}, {"ui_palette": "url(https://example.invalid)"},
+    {"presence_size": 31}, {"presence_size": 241}, {"presence_size": True}, {"presence_size": "84"}, {"presence_size": 84.5},
+    {"developer_mode": 1}, {"developer_mode": "true"},
     {"reduced_motion": True}, [], None,
 ])
 async def test_invalid_preferences_cannot_partially_apply_or_change_provider_settings(store, changes):
@@ -116,7 +120,7 @@ async def test_partial_update_preserves_legacy_language_and_other_preferences(st
     await store.execute("INSERT INTO settings VALUES (?,?)", (f"user_preferences:{user}", json.dumps({"ui_language": "ja"})))
     assert await read_preferences(store, user) == {**BASE, "ui_language": "ja"}
     customized = await update_preferences(store, user, {"ui_font": "humanist", "ui_palette": "forest", "reduced_motion": "reduce"})
-    assert customized == {"ui_language": "ja", "ui_font": "humanist", "ui_palette": "forest", "reduced_motion": "reduce"}
+    assert customized == {**BASE, "ui_language": "ja", "ui_font": "humanist", "ui_palette": "forest", "reduced_motion": "reduce"}
     assert await update_preferences(store, user, {"ui_font": "mono"}) == {**customized, "ui_font": "mono"}
     events = await store.rows("SELECT payload FROM events ORDER BY seq")
     assert json.loads(events[0]["payload"]) == {**customized, "source_run_id": None}
@@ -132,7 +136,9 @@ async def test_preference_discovery_can_drive_a_runtime_update(engine, store):
     fields = response["schema"]["properties"]
     assert set(fields) == set(BASE)
     assert fields["ui_font"]["enum"] == ["system", "humanist", "serif", "mono"]
-    assert fields["ui_palette"]["enum"] == ["dream", "rose", "ocean", "forest"]
+    assert "enum" not in fields["ui_palette"]
+    assert fields["ui_palette"]["anyOf"][0]["enum"] == ["dream", "rose", "ocean", "forest"]
+    assert fields["ui_palette"]["anyOf"][1]["pattern"]
     assert fields["reduced_motion"]["enum"] == ["system", "reduce"]
     assert all(field["description"] and field["default"] == BASE[name] for name, field in fields.items())
     response = await engine.tools.execute("runtime", {"op": "app_settings", "settings": {"ui_font": "serif", "ui_palette": "ocean", "reduced_motion": "reduce"}}, session, None)
@@ -140,3 +146,64 @@ async def test_preference_discovery_can_drive_a_runtime_update(engine, store):
     fields["ui_font"]["enum"].append("unregistered-font")
     with pytest.raises(ValueError):
         await update_preferences(store, user, {"ui_font": "unregistered-font"})
+
+
+@pytest.mark.parametrize(("requested", "normalized"), [
+    ("#000", "#000000"), ("#fff", "#ffffff"), ("#1A2b3C", "#1a2b3c"),
+    ("#456789", "#456789"), ("#Fb0", "#ffbb00"),
+])
+async def test_arbitrary_colors_apply_through_runtime_and_survive_reread(engine, store, requested, normalized):
+    user = await account(store, "theme-owner")
+    session = await store.session(user_id=user)
+    run = await store.enqueue(session, "Use this exact background color")
+    result = await engine.tools.execute("runtime", {
+        "op": "app_settings", "args": {"settings": {"ui_palette": requested}},
+    }, session, run)
+    assert result["settings"]["ui_palette"] == normalized
+    assert (await read_preferences(store, user))["ui_palette"] == normalized
+    saved = await store.rows("SELECT value FROM settings WHERE key=?", (f"user_preferences:{user}",))
+    assert json.loads(saved[0]["value"])["ui_palette"] == normalized
+    events = await store.rows("SELECT payload FROM events WHERE type='preferences_changed' AND session_id=?", (session,))
+    assert json.loads(events[-1]["payload"])["ui_palette"] == normalized
+
+
+async def test_reset_clears_custom_theme_without_losing_chat(engine, store):
+    user = await account(store, "theme-owner")
+    session = await store.session(user_id=user)
+    original = await store.message(session, None, "user", "Keep my conversation")
+    await update_preferences(store, user, {"ui_palette": "#000000"})
+    await engine.reset_user(user)
+    assert await read_preferences(store, user) == BASE
+    assert (await store.history(session))[0]["id"] == original
+
+
+async def test_presence_size_is_discoverable_persisted_and_resettable(engine, store):
+    user = await account(store, "presence-owner")
+    session = await store.session(user_id=user)
+    run = await store.enqueue(session, "Make your emblem smaller")
+    response = await engine.tools.execute("runtime", {
+        "op": "app_settings", "args": {"settings": {"presence_size": 48}},
+    }, session, run)
+    assert response["settings"]["presence_size"] == 48
+    assert (await read_preferences(store, user))["presence_size"] == 48
+    assert response["schema"]["properties"]["presence_size"]["type"] == "integer"
+    assert (await update_preferences(store, user, {"ui_palette": "#000000"}))["presence_size"] == 48
+    await engine.reset_user(user)
+    assert (await read_preferences(store, user))["presence_size"] == 84
+
+
+async def test_developer_mode_changes_the_authoritative_account_and_broadcasts(engine, store):
+    user = await account(store, "developer-owner")
+    session = await store.session(user_id=user)
+    run = await store.enqueue(session, "Open your developer panel")
+    result = await engine.tools.execute("runtime", {"op": "app_settings", "args": {"settings": {"developer_mode": True}}}, session, run)
+    assert result["settings"]["developer_mode"] is True
+    assert result["schema"]["properties"]["developer_mode"]["type"] == "boolean"
+    assert (await store.rows("SELECT developer_mode FROM users WHERE id=?", (user,)))[0]["developer_mode"] == 1
+    assert (await read_preferences(store, user))["developer_mode"] is True
+    event = (await store.rows("SELECT payload FROM events WHERE type='preferences_changed' ORDER BY seq DESC LIMIT 1"))[0]
+    assert json.loads(event["payload"])["developer_mode"] is True
+    assert "password_hash" not in event["payload"] and "api_key" not in event["payload"]
+    # The account flag remains authoritative even when changed by an older client.
+    await store.execute("UPDATE users SET developer_mode=0 WHERE id=?", (user,))
+    assert (await read_preferences(store, user))["developer_mode"] is False

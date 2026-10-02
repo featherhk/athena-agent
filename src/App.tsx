@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { api, empty, defaultPreferences } from './api';
-import type { User, Snapshot, Session, Preferences } from './api';
-import Orb from './Orb';
+import type { User, Snapshot, Session, Preferences, AppAction } from './api';
+import Orb, { AthenaMark } from './Orb';
 import type { Phase } from './Orb';
 import Widget from './Widget';
 import { MessageBody } from './MessageBody';
@@ -9,6 +9,16 @@ import { FilePreview } from './FilePreview';
 import type { FileEntry } from './FilePreview';
 import DeveloperPanel from './DeveloperPanel';
 import { AccountProfile } from './AccountProfile';
+import UserHelp from './UserHelp';
+import { RunTrace } from './RunTrace';
+import { StyledText } from './StyledText';
+import type { TextStyleEffect } from './effects';
+import { mergeSnapshot } from './snapshot-sync';
+import { checkClientVersion } from './client-version';
+import { consumeAppAction, scopeGuard, interruptedReceipt } from './app-actions';
+import type { AppScope, AppReceipt } from './app-actions';
+import { DraftStore } from './draft-store';
+import type { Draft } from './draft-store';
 import ErrorBoundary from './ErrorBoundary';
 import { useI18n, languages, errorMessage } from './i18n';
 
@@ -53,39 +63,214 @@ export default function App() {
   const [preview, setPreview] = useState<FileEntry | null>(null);
   const [attached, setAttached] = useState<FileEntry[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [textEffects, setTextEffects] = useState<Record<string, Record<string, TextStyleEffect>>>({});
+  const [chooseFiles, setChooseFiles] = useState(false);
+  const [actionWake, setActionWake] = useState(0);
+  const appClient = useRef(crypto.randomUUID());
+  const appActionActive = useRef(0);
+  const authEpoch = useRef(0);
+  const uiScope = useRef<AppScope>({ owner: null, session: null, generation: 0, control: 0 });
+  const drafts = useRef<DraftStore | null>(null);
+  if (!drafts.current) {
+    let storage: Storage | null = null; try { storage = sessionStorage; } catch { /* Use memory. */ }
+    drafts.current = new DraftStore(storage);
+  }
+  const appActionSeen = useRef(new Set<string>());
+  const appActionQueue = useRef(Promise.resolve());
+  const messagesRef = useRef(snapshot.messages); messagesRef.current = snapshot.messages;
   const fileInput = useRef<HTMLInputElement>(null);
-  const currentSession = useRef(session); currentSession.current = session;
   const generation = useRef(0);
-  const draftRevision = useRef(0);
   const actionSeen = useRef(0);
   const dismissedAction = useRef(0);
   const input = useRef<HTMLTextAreaElement>(null);
+  const composer = useRef<HTMLElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const scrollIntent = useRef(0);
+  const upgradeState = useRef({ user, session, text, attached, safe: false });
+  upgradeState.current = { user, session, text, attached, safe: !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu };
   const busy = snapshot.runs.some(run => ['running', 'queued'].includes(run.status));
+  const help = snapshot.help_requests?.[0];
+  const waiting = Boolean(help);
   const queued = snapshot.runs.filter(run => run.status === 'queued').length;
   const lastError = snapshot.runs[0]?.error ? errorMessage(snapshot.runs[0]?.error_code) : '';
   const activePhase = snapshot.runs.find(run => run.status === 'running')?.phase;
-  const orbPhase: Phase = busy ? (activePhase === 'responding' || activePhase === 'executing' ? activePhase : phase === 'responding' || phase === 'executing' ? phase : 'thinking') : snapshot.runs[0]?.status === 'interrupted' ? 'stopped' : 'idle';
+  const orbPhase: Phase = waiting ? 'waiting' : busy ? (activePhase === 'responding' || activePhase === 'executing' ? activePhase : phase === 'responding' || phase === 'executing' ? phase : 'thinking') : snapshot.runs[0]?.status === 'interrupted' ? 'stopped' : 'idle';
 
-  const workspace = snapshot.components.filter(component => component.placement === 'workspace' && `${component.id}:${component.version}` !== dismissedWorkspace).at(-1);
-  function navigate(next: string | null) {
-    generation.current++; currentSession.current = next; setSession(next); setAttached([]); setSnapshot(empty()); setPhase('idle'); setError('');
+  const workspace = snapshot.components.filter(component => ['workspace', 'fullscreen'].includes(component.placement || '') && `${component.id}:${component.version}` !== dismissedWorkspace).at(-1);
+  const presence = snapshot.components.filter(component => component.placement === 'presence').at(-1);
+  const styleText = useCallback((key: string, effect: TextStyleEffect | null) => {
+    if (effect && !messagesRef.current.some(message => message.id === effect.message_id)) return;
+    setTextEffects(old => {
+      if (!effect) { if (!(key in old)) return old; const next = { ...old }; delete next[key]; return next; }
+      const owned = old[key] || {};
+      if (Object.keys(owned).length >= 64 && !(effect.message_id in owned)) return old;
+      if (JSON.stringify(owned[effect.message_id]) === JSON.stringify(effect)) return old;
+      return { ...old, [key]: { ...owned, [effect.message_id]: effect } };
+    });
+  }, []);
+  function effectFor(id: string) { return Object.values(textEffects).map(effects => effects[id]).filter(Boolean).at(-1); }
+  function currentGuard() { return scopeGuard(() => uiScope.current); }
+  function showDraft(draft: Draft) { setText(draft.text); setAttached(draft.attached); }
+  function editDraft(change: Partial<Pick<Draft, 'text' | 'attached'>>) {
+    const { owner, session: sid } = uiScope.current;
+    showDraft(drafts.current!.write(owner, sid, { ...drafts.current!.read(owner, sid), ...change }));
   }
+  function changeAttachments(change: (old: FileEntry[]) => FileEntry[]) {
+    const scope = uiScope.current;
+    editDraft({ attached: change(drafts.current!.read(scope.owner, scope.session).attached) });
+  }
+  function navigate(next: string | null, migrate = false) {
+    const scope = uiScope.current;
+    const draft = migrate ? drafts.current!.move(scope.owner, scope.session, next) : drafts.current!.read(scope.owner, next);
+    uiScope.current = { ...scope, session: next, generation: scope.generation + 1 };
+    generation.current++; setSession(next); showDraft(draft);
+    setSnapshot(empty()); setPhase('idle'); setError(''); setReading(false); setTextEffects({}); setChooseFiles(false);
+    setSending(false); setUploading(false);
+  }
+  async function navigateFromWidget(next: string) {
+    const isCurrent = currentGuard();
+    try { await api<Snapshot>(`/sessions/${encodeURIComponent(next)}`); if (isCurrent()) navigate(next); }
+    catch (e) { if (isCurrent()) setError((e as Error).message); }
+  }
+  async function applyAppAction(action: AppAction, isCurrent: () => boolean): Promise<AppReceipt> {
+    if (!isCurrent()) return interruptedReceipt();
+    const { target, file } = action.payload;
+    if (action.action === 'navigate') {
+      const next = action.payload.session_id!;
+      await api<Snapshot>(`/sessions/${encodeURIComponent(next)}`);
+      if (!isCurrent()) return interruptedReceipt();
+      setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false);
+      navigate(next);
+    } else if (action.action === 'open' || action.action === 'close') {
+      const open = action.action === 'open';
+      if (target === 'history') setHistory(open);
+      else if (target === 'menu') setMenu(open);
+      else if (target === 'preview' && !open) setPreview(null);
+      else if (target === 'files') {
+        const next = open ? (await api<{ files: FileEntry[] }>('/files')).files : null;
+        if (!isCurrent()) return interruptedReceipt();
+        setFiles(next);
+      }
+      else if (target === 'account') { if (open) setAccount(true); else closeAccount(); }
+      else if (target === 'password') { setAccount(open); setPasswordRequested(open ? Date.now() : 0); }
+      else if (target === 'appearance') setAppearance(open);
+      else if (target === 'developer') {
+        const next = await api<Preferences>('/settings/preferences', { developer_mode: open });
+        if (!isCurrent()) return interruptedReceipt();
+        applyPreferences(next);
+      } else if (target === 'workspace') {
+        const latest = snapshot.components.filter(component => ['workspace', 'fullscreen'].includes(component.placement || '')).at(-1);
+        if (!latest) return { status: 'failed', error_code: 'unavailable' };
+        setDismissedWorkspace(open ? '' : `${latest.id}:${latest.version}`);
+      } else return { status: 'failed', error_code: 'unavailable' };
+    } else if (action.action === 'preview' && file) setPreview(file);
+    else if (action.action === 'download' && file) {
+      const link = document.createElement('a'); link.href = `${file.content_url}?download=1`; link.download = file.name;
+      document.body.append(link); link.click(); link.remove();
+    } else if (action.action === 'attach') {
+      if (!file) { setChooseFiles(true); return { status: 'failed', error_code: 'user_gesture_required' }; }
+      const currentFiles = drafts.current!.read(uiScope.current.owner, uiScope.current.session).attached;
+      if (currentFiles.length >= 10 && !currentFiles.some(item => item.id === file.id)) return { status: 'failed', error_code: 'unavailable' };
+      changeAttachments(old => old.some(item => item.id === file.id) ? old : [...old, file]);
+    } else if (action.action === 'detach' && file) changeAttachments(old => old.filter(item => item.id !== file.id));
+    else if (action.action !== 'sign_out') return { status: 'failed', error_code: 'unavailable' };
+    // Let React commit the requested view before reporting the browser effect.
+    await new Promise<void>(resolve => { requestAnimationFrame(() => requestAnimationFrame(() => resolve())); window.setTimeout(resolve, 250); });
+    return { status: 'applied' };
+  }
+  const appActionHandler = useRef(applyAppAction); appActionHandler.current = applyAppAction;
+  useEffect(() => {
+    const wake = () => { if (!document.hidden) setActionWake(old => old + 1); };
+    document.addEventListener('visibilitychange', wake);
+    return () => document.removeEventListener('visibilitychange', wake);
+  }, []);
+  useEffect(() => {
+    if (!user || !session || document.hidden) return;
+    const scopeStillCurrent = currentGuard(), authTicket = authEpoch.current, owner = user.id;
+    const isSameAccount = () => authEpoch.current === authTicket && uiScope.current.owner === owner;
+    for (const action of snapshot.app_actions || []) {
+      if (appActionSeen.current.has(action.id)) continue;
+      appActionSeen.current.add(action.id);
+      appActionQueue.current = appActionQueue.current.then(async () => {
+        const isCurrent = () => scopeStillCurrent() && !document.hidden;
+        appActionActive.current++;
+        try {
+          const applied = await consumeAppAction(action, appClient.current, api, (request, guard) => appActionHandler.current(request, guard), isCurrent, isSameAccount);
+          if (applied && action.action === 'sign_out' && isSameAccount()) acceptUser(null);
+        } finally { appActionActive.current--; }
+      }).catch(() => { /* A dispatched effect is never replayed; unclaimed requests can reconnect. */ })
+        .finally(() => { appActionSeen.current.delete(action.id); });
+    }
+  }, [snapshot.app_actions, session, user?.id, actionWake]);
   function acceptUser(next: User | null, saved?: Preferences) {
-    generation.current++;
-    applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setAttached([]); setPreview(null); setFiles(null);
-    setUser(next); setAccount(false); setAuth(null); setPassword('');
-    setSession(next ? localStorage.getItem('athena-session:' + next.id) : null);
-    setSnapshot(empty()); setError('');
+    const previous = uiScope.current.owner;
+    authEpoch.current++; generation.current++;
+    let nextSession: string | null = null;
+    try { if (next) nextSession = localStorage.getItem('athena-session:' + next.id); } catch { /* Private browser mode. */ }
+    // A guest's unsent first message may accompany login. A signed-out account's draft never does.
+    if (next && !previous) {
+      const guest = drafts.current!.read(null, null), existing = drafts.current!.read(next.id, nextSession);
+      if (guest.text && !existing.text && !existing.attached.length) drafts.current!.write(next.id, nextSession, { text: guest.text, attached: [] });
+      drafts.current!.clear(null, null);
+    } else if (!next && previous) drafts.current!.clear(null, null);
+    if (next) {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem('athena-upgrade-draft') || 'null');
+        if (cached?.user_id === next.id && Date.now() - cached.saved_at < 600000) {
+          nextSession = cached.session_id || null;
+          if (typeof cached.text === 'string') drafts.current!.write(next.id, nextSession, { text: cached.text, attached: Array.isArray(cached.attached) ? cached.attached : [] });
+          sessionStorage.removeItem('athena-upgrade-draft');
+        }
+      } catch { /* A failed recovery must not prevent login. */ }
+    }
+    uiScope.current = { owner: next?.id || null, session: nextSession, generation: uiScope.current.generation + 1, control: uiScope.current.control + 1 };
+    applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setPreview(null); setFiles(null); setSessions([]);
+    setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
+    setSending(false); setUploading(false); setResetting(false); setSession(nextSession); showDraft(drafts.current!.read(next?.id || null, nextSession));
+    setSnapshot(empty()); setError(''); setTextEffects({});
   }
   async function loadAccount() {
+    const ticket = authEpoch.current;
     try {
       const result = await api<{ user: User | null; preferences?: Preferences; configured: boolean; has_users: boolean }>('/auth/me');
+      if (authEpoch.current !== ticket) return;
       acceptUser(result.user, result.preferences); setHasUsers(result.has_users); setReady(true);
-    } catch { setError(t('error.connection')); }
+    } catch { if (authEpoch.current === ticket) setError(t('error.connection')); }
   }
   useEffect(() => { void loadAccount(); }, []);
+  useEffect(() => {
+    if (!user) return;
+    let stopped = false, checking = false;
+    const check = async () => {
+      if (checking || stopped || document.hidden || !upgradeState.current.safe || appActionActive.current || document.activeElement?.tagName === 'IFRAME') return;
+      checking = true; const authTicket = authEpoch.current;
+      const version = await checkClientVersion();
+      const current = upgradeState.current;
+      if (!stopped && version && current.safe && !appActionActive.current && document.activeElement?.tagName !== 'IFRAME' && current.user?.id === user.id && uiScope.current.owner === user.id && authEpoch.current === authTicket) {
+        try {
+          if (!drafts.current!.persist(user.id, uiScope.current.session)) { checking = false; return; }
+          sessionStorage.setItem('athena-upgrade-draft', JSON.stringify({ user_id: user.id, session_id: uiScope.current.session, saved_at: Date.now() }));
+          window.location.reload();
+        } catch { /* Keep the page and draft when private storage is unavailable. */ }
+      }
+      checking = false;
+    };
+    const timer = window.setInterval(() => void check(), 10000);
+    document.addEventListener('visibilitychange', check);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', check); };
+  }, [user?.id]);
+  useEffect(() => { setUser(old => old && old.developer_mode !== preferences.developer_mode ? { ...old, developer_mode: preferences.developer_mode } : old); }, [preferences.developer_mode]);
+  useEffect(() => {
+    if (!composer.current) return;
+    const observer = new ResizeObserver(entries => {
+      const height = entries[0]?.target.getBoundingClientRect().height;
+      if (height) document.documentElement.style.setProperty('--composer-height', `${height}px`);
+    });
+    observer.observe(composer.current);
+    return () => { observer.disconnect(); document.documentElement.style.removeProperty('--composer-height'); };
+  }, []);
   useEffect(() => {
     setServiceMessage('');
     if (!user) return;
@@ -112,16 +297,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', escape);
   }, []);
   useEffect(() => {
-    if (user) {
-      if (session) localStorage.setItem('athena-session:' + user.id, session);
-      else localStorage.removeItem('athena-session:' + user.id);
-    }
+    try {
+      if (user) {
+        if (session) localStorage.setItem('athena-session:' + user.id, session);
+        else localStorage.removeItem('athena-session:' + user.id);
+      }
+    } catch { /* Session navigation also works without browser persistence. */ }
     const ticket = ++generation.current;
     setSnapshot(empty()); setPhase('idle'); setReconnecting(false);
     if (!session || !user) return;
     let source: EventSource | undefined;
     let disposed = false;
-    let seen = 0, eventCursor = 0, loading = false, again = false;
+    let seen = 0, eventCursor = 0, structuralFloor = 0, loading = false, again = false;
+    const messageVersions = new Map<string, number>();
     const reload = async () => {
       if (loading) { again = true; return; }
       loading = true;
@@ -130,7 +318,7 @@ export default function App() {
           again = false;
           const next = await api<Snapshot>(`/sessions/${session}`);
           if (disposed || ticket !== generation.current) return;
-          if (next.cursor >= seen) { seen = next.cursor; setSnapshot(next); if (next.preferences) applyPreferences(next.preferences); if (next.account_action) receiveAction(next.account_action); const active = next.runs.find(run => run.status === 'running'); if (active?.phase) setPhase(active.phase as Phase); }
+          if (next.cursor >= structuralFloor) { seen = Math.max(seen, next.cursor); setSnapshot(old => mergeSnapshot(old, next, messageVersions, structuralFloor) || old); if (next.preferences) applyPreferences(next.preferences); if (next.account_action) receiveAction(next.account_action); const active = next.runs.find(run => run.status === 'running'); if (active?.phase) setPhase(active.phase as Phase); }
           else again = true;
         } while (again && !disposed);
       } catch (e) { if (!disposed) setError((e as Error).message); }
@@ -150,15 +338,17 @@ export default function App() {
         eventCursor = item.seq;
         if (item.type === 'account_action') receiveAction({ seq: item.seq, ...item.payload });
         if (item.type === 'account_changed') setUser(item.payload.user);
+        if (item.type === 'reset' || (item.type === 'app_action' && item.payload.status === 'dismissed' && ['reset', 'interrupted'].includes(item.payload.error_code))) invalidateActions();
         if (item.seq <= seen) return;
-        seen = item.seq;
+        if (item.type === 'message') messageVersions.set(item.payload.id, item.seq);
+        else structuralFloor = Math.max(structuralFloor, item.seq);
         if (item.type === 'message') setSnapshot(old => {
           const found = old.messages.some(message => message.id === item.payload.id);
           return { ...old, cursor: item.seq, messages: found ? old.messages.map(message => message.id === item.payload.id ? item.payload : message) : [...old.messages, item.payload] };
         });
         else if (item.type === 'account_changed') { setUser(item.payload.user); }
 
-        else if (item.type === 'preferences_changed') { applyPreferences(item.payload); }
+        else if (item.type === 'preferences_changed') { applyPreferences(item.payload); void reload(); }
         else if (item.type === 'status') { setPhase(item.payload.phase || 'thinking'); void reload(); }
         else { if (item.type === 'reset') setSnapshot(old => ({ ...old, components: [] })); void reload(); }
       };
@@ -168,50 +358,91 @@ export default function App() {
   useEffect(() => { if (nearBottom.current) end.current?.scrollIntoView({ behavior: 'instant' }); }, [snapshot.messages, busy]);
   useEffect(() => {
     if (!history || !user) return;
-    const load = () => void api<Session[]>('/sessions').then(setSessions).catch(e => setError(e.message));
+    let disposed = false; const isCurrent = currentGuard();
+    const load = () => void api<Session[]>('/sessions').then(next => { if (!disposed && isCurrent()) setSessions(next); }).catch(e => { if (!disposed && isCurrent()) setError(e.message); });
     load(); const timer = window.setInterval(load, 3000);
-    return () => clearInterval(timer);
+    return () => { disposed = true; clearInterval(timer); };
   }, [history, user?.id]);
 
   function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
   async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true) {
     if ((!value.trim() && (!fromComposer || attached.length === 0)) || sending || resetting || uploading) return;
     if (!user) { requestLogin(); return; }
-    const ticket = generation.current;
-    const sentRevision = draftRevision.current;
-    const sentFiles = new Set(fromComposer ? attached.map(file => file.id) : []);
+    const owner = user.id;
+    let isCurrent = currentGuard(), sid = session;
+    let sentDraft = drafts.current!.read(owner, sid);
+    const sentFiles = new Set(fromComposer ? sentDraft.attached.map(file => file.id) : []);
     setSending(true); setError(''); nearBottom.current = true;
     try {
-      let id = session;
-      if (!id) { id = (await api<{ id: string }>('/sessions', {})).id; if (generation.current === ticket) setSession(id); }
-      await api(`/sessions/${id}/messages`, { text: value, mode, file_ids: [...sentFiles] });
-      if (fromComposer && (currentSession.current === id || (session === null && generation.current === ticket))) {
-        if (draftRevision.current === sentRevision) setText('');
-        setAttached(old => old.filter(file => !sentFiles.has(file.id)));
-        input.current?.focus();
+      if (!sid) {
+        sid = (await api<{ id: string }>('/sessions', {})).id;
+        if (!isCurrent()) return;
+        const unchanged = drafts.current!.read(owner, null).revision === sentDraft.revision;
+        navigate(sid, true); isCurrent = currentGuard(); setSending(true);
+        sentDraft = { ...sentDraft, revision: unchanged ? drafts.current!.read(owner, sid).revision : -1 };
       }
-    } catch (e) { setError((e as Error).message); }
-    finally { setSending(false); }
+      if (help && fromComposer && mode === 'queue' && help.questions.length === 1) {
+        await api(`/sessions/${sid}/help/${help.id}/answer`, { answers: { [help.questions[0].id]: value }, file_ids: [...sentFiles] });
+      } else await api(`/sessions/${sid}/messages`, { text: value, mode, file_ids: [...sentFiles] });
+      if (fromComposer) {
+        const remaining = drafts.current!.submitted(owner, sid, sentDraft);
+        if (uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(remaining);
+        if (isCurrent()) input.current?.focus();
+      }
+    } catch (e) { if (isCurrent()) setError((e as Error).message); }
+    finally { if (isCurrent()) setSending(false); }
+  }
+  function invalidateActions() {
+    uiScope.current.control++; setChooseFiles(false); setSending(false); setUploading(false);
   }
   async function stop() {
     if (!session) return;
-    try { await api(`/sessions/${session}/stop`, {}); setPhase('stopped'); } catch (e) { setError((e as Error).message); }
+    invalidateActions(); const isCurrent = currentGuard();
+    try { await api(`/sessions/${session}/stop`, {}); if (isCurrent()) setPhase('stopped'); }
+    catch (e) { if (isCurrent()) setError((e as Error).message); }
+  }
+  async function answerHelp(answers: Record<string, string>) {
+    if (!session || !help || sending || uploading) return;
+    const sid = session, owner = user!.id, isCurrent = currentGuard();
+    const sentFiles = new Set(attached.map(file => file.id));
+    setSending(true); setError('');
+    try {
+      await api(`/sessions/${sid}/help/${help.id}/answer`, { answers, file_ids: [...sentFiles] });
+      const draft = drafts.current!.read(owner, sid);
+      const remaining = drafts.current!.write(owner, sid, { ...draft, attached: draft.attached.filter(file => !sentFiles.has(file.id)) });
+      if (!isCurrent()) return;
+      showDraft(remaining);
+      const next = await api<Snapshot>(`/sessions/${sid}`);
+      if (isCurrent()) setSnapshot(old => next.cursor >= old.cursor ? next : old);
+    } catch (e) { if (isCurrent()) setError((e as Error).message); }
+    finally { if (isCurrent()) setSending(false); }
   }
   async function reset() {
-    setSnapshot(old => ({ ...old, components: [] })); applyPreferences(defaultPreferences);
-    if (!user) { setError(''); setText(''); setToast(t('resetGuest')); return; }
+    invalidateActions(); const isCurrent = currentGuard();
+    setSnapshot(old => ({ ...old, components: [] })); setTextEffects({}); applyPreferences(defaultPreferences);
+    if (!user) { setError(''); setToast(t('resetGuest')); return; }
+    const owner = user.id, authTicket = authEpoch.current;
     setResetting(true); setError('');
     try {
       await api('/reset', {});
-      if (session) setSnapshot(await api<Snapshot>(`/sessions/${session}`));
-      setToast(t('resetDone'));
-    } catch (e) { setError((e as Error).message); }
-    finally { setResetting(false); }
+      // Reset broadcasts also invalidate the action scope. Account identity still gates the receipt.
+      if (uiScope.current.owner !== owner || authEpoch.current !== authTicket) return;
+      if (isCurrent() && session) {
+        const next = await api<Snapshot>(`/sessions/${session}`);
+        if (isCurrent()) setSnapshot(old => next.cursor >= old.cursor ? next : old);
+      }
+      if (uiScope.current.owner === owner && authEpoch.current === authTicket) setToast(t('resetDone'));
+    } catch (e) { if (uiScope.current.owner === owner && authEpoch.current === authTicket) setError((e as Error).message); }
+    finally { if (uiScope.current.owner === owner && authEpoch.current === authTicket) setResetting(false); }
   }
   async function developer(enabled: boolean) {
+    const isCurrent = currentGuard();
     if (!enabled) setUser(old => old ? { ...old, developer_mode: false } : old);
-    try { await api('/settings/developer', { enabled }); setUser(old => old ? { ...old, developer_mode: enabled } : old); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      await api('/settings/developer', { enabled });
+      if (!isCurrent()) return;
+      applyPreferences({ developer_mode: enabled }); setUser(old => old ? { ...old, developer_mode: enabled } : old);
+    } catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
   function receiveAction(action: { seq: number; action: string }) {
     if (action.action !== 'change_password' || action.seq <= actionSeen.current || action.seq <= dismissedAction.current) return;
@@ -228,79 +459,135 @@ export default function App() {
   }
   async function changePreferences(change: Partial<Preferences>) {
     if (!user) { applyPreferences(change); return; }
-    try { applyPreferences(await api<Preferences>('/settings/preferences', change)); }
-    catch (e) { setError((e as Error).message); }
+    const isCurrent = currentGuard();
+    try { const next = await api<Preferences>('/settings/preferences', change); if (isCurrent()) applyPreferences(next); }
+    catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
   async function openFiles() {
     if (!user) { requestLogin(); return; }
-    try { setFiles((await api<{ files: FileEntry[] }>('/files')).files); }
-    catch (e) { setError((e as Error).message); }
+    const isCurrent = currentGuard();
+    try { const result = await api<{ files: FileEntry[] }>('/files'); if (isCurrent()) setFiles(result.files); }
+    catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
   async function upload(selection: FileList | null) {
     if (!selection?.length || uploading) return;
     if (!user) { requestLogin(); return; }
-    const chosen = [...selection];
+    const chosen = [...selection], owner = user.id, authTicket = authEpoch.current;
     if (chosen.length + attached.length > 10) { setError(t('files.limit')); return; }
     if (chosen.some(file => file.size > 20 * 1024 * 1024)) { setError(t('error.file_too_large')); return; }
-    const ticket = generation.current;
+    let isCurrent = currentGuard(), sid = session;
     setUploading(true); setError('');
     try {
-      let sid = session;
-      if (!sid) { sid = (await api<{ id: string }>('/sessions', {})).id; if (generation.current !== ticket) return; currentSession.current = sid; setSession(sid); }
+      if (!sid) {
+        sid = (await api<{ id: string }>('/sessions', {})).id;
+        if (!isCurrent()) return;
+        navigate(sid, true); isCurrent = currentGuard(); setUploading(true);
+      }
       for (const file of chosen) {
+        if (authEpoch.current !== authTicket || uiScope.current.owner !== owner) return;
         const response = await fetch(`/api/sessions/${sid}/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } });
         const result = await response.json();
         if (!response.ok) throw new Error(errorMessage(result.code));
-        if (currentSession.current === sid) setAttached(old => [...old, result]);
+        const draft = drafts.current!.read(owner, sid);
+        const next = drafts.current!.write(owner, sid, { ...draft, attached: [...draft.attached, result].slice(0, 10) });
+        if (authEpoch.current === authTicket && uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(next);
       }
-    } catch (e) { setError((e as Error).message); }
-    finally { setUploading(false); if (fileInput.current) fileInput.current.value = ''; }
+    } catch (e) { if (isCurrent()) setError((e as Error).message); }
+    finally { if (isCurrent()) { setUploading(false); if (fileInput.current) fileInput.current.value = ''; } }
+  }
+  async function signOut() {
+    const ticket = authEpoch.current;
+    invalidateActions();
+    try {
+      try { await api('/auth/logout', {}); }
+      catch (error) {
+        if (authEpoch.current !== ticket) return;
+        const result = await api<{ user: User | null }>('/auth/me');
+        if (result.user) throw error;
+      }
+      if (authEpoch.current === ticket) acceptUser(null);
+    } catch (e) { if (authEpoch.current === ticket) setError((e as Error).message); }
+  }
+  async function forkSession() {
+    if (!session) return;
+    const isCurrent = currentGuard();
+    try {
+      const next = await api<{ id: string }>(`/sessions/${session}/fork`, {});
+      if (isCurrent()) { navigate(next.id); setHistory(false); }
+    } catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
   function fileCard(file: FileEntry, removable = false) {
-    return <div className="attachment" key={file.id}><button type="button" className="attachment-open" onClick={() => setPreview(file)} title={t('files.preview', { name: file.name })}><span className="file-type">{file.name.split('.').pop()?.slice(0, 5).toUpperCase()}</span><span><strong>{file.name}</strong><small>{new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(file.size / 1024)} KB</small></span></button>{removable && <button className="icon-button" type="button" aria-label={t('files.remove')} onClick={() => setAttached(old => old.filter(item => item.id !== file.id))}>×</button>}</div>;
+    return <div className="attachment" key={file.id}><button type="button" className="attachment-open" onClick={() => setPreview(file)} title={t('files.preview', { name: file.name })}><span className="file-type">{file.name.split('.').pop()?.slice(0, 5).toUpperCase()}</span><span><strong>{file.name}</strong><small>{new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(file.size / 1024)} KB</small></span></button>{removable && <button className="icon-button" type="button" aria-label={t('files.remove')} onClick={() => changeAttachments(old => old.filter(item => item.id !== file.id))}>×</button>}</div>;
   }
-  return <div className="app">
+  const tracedRuns = new Set<string>();
+  return <div className="app" data-reading={reading}>
     <header className="topbar">
-      <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}>athena<span>✦</span></button>
+      <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
       <nav aria-label={t('chatControls')}><button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
     </header>
-    {!workspace && <div className="agent-presence"><Orb phase={orbPhase} /><span className="presence-label" role="status">{t(orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
-    <main className="scroll-area" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; }}>
-      {!resetting && snapshot.components.filter(component => component.placement === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}><Widget component={component} submit={value => void submit(value, 'queue', false)} /></div>)}
-      {workspace && !resetting && <section className="workspace-panel"><button className="quiet" onClick={() => setDismissedWorkspace(`${workspace.id}:${workspace.version}`)}>{t('backToChat')}</button><Widget key={`${workspace.id}-${workspace.version}`} component={workspace} submit={value => void submit(value, 'queue', false)} /></section>}
-      <div className="conversation">
+    <div className="workspace-layout">
+      {!resetting && snapshot.components.some(component => component.placement === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{snapshot.components.filter(component => component.placement === 'sidebar-start').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>}
+      <div className="reading-pane">
+    {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence"><Widget key={`${presence.id}-${presence.version}`} sessionId={session!} component={presence} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
+    {!resetting && (['top-start', 'top-end', 'bottom-start', 'bottom-end'] as const).map(placement => {
+      const components = snapshot.components.filter(component => component.placement === placement);
+      return components.length > 0 && <aside className="widget-dock" data-placement={placement} key={placement}>{components.map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>;
+    })}
+    {!resetting && snapshot.components.filter(component => component.placement === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}><Widget sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div>)}
+    <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
+      {!resetting && snapshot.components.filter(component => component.placement === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}><Widget sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div>)}
+      {workspace && !resetting && <section className="workspace-panel"><button className="quiet" onClick={() => setDismissedWorkspace(`${workspace.id}:${workspace.version}`)}>{t('backToChat')}</button><Widget key={`${workspace.id}-${workspace.version}`} sessionId={session!} component={workspace} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></section>}
+      <div className="conversation" hidden={Boolean(workspace)}>
         <article className="message assistant greeting"><div>{t('greeting')}</div></article>
-        {snapshot.messages.map(message => <article key={message.id} className={`message ${message.role}`}><div dir="auto">{message.role === 'assistant' ? <MessageBody content={message.content} reasoning={message.reasoning} streaming={message.status === 'streaming' && !message.content} /> : <span className="user-text">{message.content}</span>}{message.attachments?.map(file => fileCard(file))}</div>{message.status === 'queued' && <span className="message-note">{t('queued')}</span>}{['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}</article>)}
-        {!resetting && snapshot.components.filter(component => !component.placement || component.placement === 'inline').map(component => <Widget key={`${component.id}-${component.version}`} component={component} submit={value => void submit(value, 'queue', false)} />)}
+        {snapshot.messages.map(message => {
+          const trace = message.run_id && !tracedRuns.has(message.run_id);
+          if (trace) tracedRuns.add(message.run_id!);
+          const visible = Boolean(message.content || message.attachments?.length);
+          return <Fragment key={message.id}>
+            {trace && message.role === 'assistant' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={snapshot.runs.find(run => run.id === message.run_id)?.phase} />}
+            {visible && <article className={`message ${message.role}`}>
+              <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
+              {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
+              {['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}
+            </article>}
+            {trace && message.role === 'user' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={snapshot.runs.find(run => run.id === message.run_id)?.phase} />}
+          </Fragment>;
+        })}
+        {!resetting && snapshot.components.filter(component => !component.placement || component.placement === 'inline').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}
         {snapshot.tasks.length > 0 && <section className="tasks">{snapshot.tasks.map(task => <div className="task" key={task.id}><div><strong>{task.title}</strong><span>{task.status === 'paused' ? t('paused') : task.last_error ? t('watchRetry') : task.condition_command ? t('watching') : new Date(task.due_at).toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>{task.status !== 'paused' && <button className="quiet" onClick={() => void api(`/sessions/${session}/tasks/${task.id}/pause`, {}).catch(e => setError(e.message))}>{t('pause')}</button>}</div>)}</section>}
         {snapshot.files?.some(file => file.source === 'output') && <section className="output-files" aria-label={t('files.outputs')}>{snapshot.files.filter(file => file.source === 'output').map(file => fileCard(file))}</section>}
         {lastError && <p className="notice" role="status">{lastError}</p>}<div ref={end} />
       </div>
     </main>
-    <footer className="composer-area"><div className="composer-wrap">
-      {busy && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
+      </div>
+      {!resetting && snapshot.components.some(component => component.placement === 'sidebar-end') && <aside className="surface-sidebar" data-side="end">{snapshot.components.filter(component => component.placement === 'sidebar-end').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>}
+    </div>
+    <footer className="composer-area" ref={composer}><div className="composer-wrap">
+      {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
+      {busy && !waiting && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
       {error && <div className="notice" role="alert">{error}{!ready && <button className="quiet" onClick={() => void loadAccount()}>{t('retry')}</button>}</div>}
       {!error && serviceMessage && <div className="notice" role="status">{serviceMessage}</div>}
       {attached.length > 0 && <div className="attachment-tray" aria-label={t('files.attached')}>{attached.map(file => fileCard(file, true))}</div>}
       {uploading && <p className="activity" role="status">{t('files.uploading')}</p>}
+      {chooseFiles && <div className="activity"><button className="quiet" type="button" onClick={() => { setChooseFiles(false); fileInput.current?.click(); }}>{t('files.attach')}</button><button className="icon-button" type="button" aria-label={t('close')} onClick={() => setChooseFiles(false)}>×</button></div>}
       <input type="file" multiple hidden ref={fileInput} onChange={event => void upload(event.target.files)} />
       <form className="composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
         <button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
-        <textarea dir="auto" ref={input} aria-label={t('message')} placeholder={t('placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { draftRevision.current++; setText(event.target.value); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
-        <div className="send-actions">{busy && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{busy && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={busy ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
+        <textarea dir="auto" ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+        <div className="send-actions">{(busy || waiting) && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{(busy || waiting) && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={(busy && !waiting) || (help && help.questions.length > 1) ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
       </form>
     </div></footer>
     {toast && <div className="toast" role="status">{toast}</div>}
     {Boolean(user?.developer_mode) && <ErrorBoundary panel close={() => void developer(false)}><DeveloperPanel session={session} close={() => void developer(false)} /></ErrorBoundary>}
     {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items"><button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button><button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
-    {appearance && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
-    {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy} onClick={async () => { try { navigate((await api<{ id: string }>(`/sessions/${session}/fork`, {})).id); setHistory(false); } catch (e) { setError((e as Error).message); } }}>{t('fork')}</button>}</aside></div>}
+    {appearance && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{key === 'ui_palette' && preferences.ui_palette.startsWith('#') && <option value={preferences.ui_palette}>{preferences.ui_palette}</option>}{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
+    {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
     {auth && <div className="overlay centered"><form className="dialog" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {
-      event.preventDefault(); setSending(true); setError('');
-      try { const result = await api<{ user: User; preferences: Preferences }>(`/auth/${auth}`, { username, password }); acceptUser(result.user, result.preferences); setHasUsers(true); }
-      catch (e) { setError((e as Error).message); } finally { setSending(false); }
+      event.preventDefault(); const ticket = ++authEpoch.current; invalidateActions(); setSending(true); setError('');
+      try { const result = await api<{ user: User; preferences: Preferences }>(`/auth/${auth}`, { username, password }); if (authEpoch.current === ticket) { acceptUser(result.user, result.preferences); setHasUsers(true); } }
+      catch (e) { if (authEpoch.current === ticket) setError((e as Error).message); } finally { if (authEpoch.current === ticket) setSending(false); }
     }}><div className="dialog-top"><h2>{auth === 'login' ? t('welcomeBack') : t('niceToMeet')}</h2><button className="icon-button" type="button" aria-label={t('close')} onClick={() => { setAuth(null); setPassword(''); }}>×</button></div><label htmlFor="username">{t('username')}</label><input id="username" autoComplete="username" autoFocus aria-describedby="username-hint" value={username} onChange={event => setUsername(event.target.value)} required minLength={2} maxLength={40} /><p id="username-hint" className="field-hint">{t('usernameHint')}</p><label htmlFor="password">{t('password')}</label><input id="password" type="password" autoComplete={auth === 'login' ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} required minLength={8} maxLength={128} placeholder={t('passwordHint')} />{error && <p className="notice">{error}</p>}<button className="primary wide" disabled={sending}>{sending ? t('wait') : auth === 'login' ? t('signIn') : t('createAccount')}</button><button type="button" className="quiet wide" onClick={() => { setAuth(auth === 'login' ? 'register' : 'login'); setError(''); }}>{auth === 'login' ? t('needAccount') : t('haveAccount')}</button></form></div>}
-    {account && user && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('account')}><div className="dialog-top"><h2>{user.display_name || user.username}</h2><button className="icon-button" aria-label={t('close')} onClick={closeAccount}>×</button></div><AccountProfile user={user} onChange={setUser} passwordRequested={passwordRequested} onPasswordChanged={closeAccount} /><label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>{error && <p className="notice">{error}</p>}<button className="quiet wide logout" onClick={async () => { try { await api('/auth/logout', {}); acceptUser(null); } catch (e) { setError((e as Error).message); } }}>{t('signOut')}</button></section></div>}
+    {account && user && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('account')}><div className="dialog-top"><h2>{user.display_name || user.username}</h2><button className="icon-button" aria-label={t('close')} onClick={closeAccount}>×</button></div><AccountProfile user={user} onChange={next => { if (uiScope.current.owner === next.id) setUser(next); }} passwordRequested={passwordRequested} onPasswordChanged={closeAccount} /><label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>{error && <p className="notice">{error}</p>}<button className="quiet wide logout" onClick={() => void signOut()}>{t('signOut')}</button></section></div>}
     {files && <div className="overlay centered"><section className="dialog file-dialog" role="dialog" aria-modal="true" aria-label={t('files')}><div className="dialog-top"><h2>{t('files')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setFiles(null)}>×</button></div>{files.length === 0 ? <p className="empty-note">{t('filesEmpty')}</p> : <div className="file-list">{files.map(file => fileCard(file))}</div>}</section></div>}
     {preview && <div className="overlay centered preview-overlay"><div className="preview-dialog" role="dialog" aria-modal="true" aria-label={preview.name}><FilePreview file={preview} onClose={() => setPreview(null)} /></div></div>}
   </div>;

@@ -7,8 +7,16 @@ description: "创建或修改用户需要的交互组件"
 
 update_frontend 的 upsert 操作接受 id、title、html。重复使用 id 更新原组件；remove 接受 id 移除组件。源码版本保存在用户文件区，登记和审计保存在数据库。不要修改 React 源码，不要为了普通文字回答创建组件。
 
-html 是独立页面的主体或完整 HTML，运行在隔离 iframe。内联 CSS 和 JavaScript 可用；外部脚本、fetch、顶层导航、访问父页面和本地文件不可用。无需 React 或外部依赖。用大字体、清楚的中文和足够大的按钮适配手机。保持浅色背景，少装饰，不暴露编程术语。
+html 是独立页面的主体或完整 HTML，运行在隔离 iframe。内联 CSS 和 JavaScript 可用；外部脚本、fetch、顶层导航、访问父页面和本地文件不可用。无需 React 或外部依赖。用清晰文字和足够大的按钮适配手机，跟随用户的语言、主题与任务需要；先读取应用设置，不强制浅色或中文。少装饰，不暴露编程术语。
 
 用 Athena.submit("用户点击按钮后希望发送的文字") 将一次显式用户操作交给助手。不要在加载时自动发送。用 Athena.resize(高度) 调整组件高度，限制为 120–900 像素。当前版本组件浏览器内部状态在重新加载时重置，重要内容需作为正常用户消息保存；不要把持久编辑器状态只放在 iframe 中。
 
-布局 placement 可为 inline（默认聊天卡片）、workspace（主要工作区，例如表格/编辑器）、banner（重要提醒）。界面变化服务于当前目标；简单问答或查询不需要装饰性重排。workspace 保留外层输入、停止、菜单和恢复，用户可返回对话。每次注册新版本即刷新对应frame，不刷新整个应用。HTML脚本在隔离frame内，无法读取账号或改父页面；需要应用状态操作让 Athena.submit 发起明确请求。视频/外部嵌入的能力不要假设已支持，当前CSP不允许外部资源。
+布局 placement 可为 inline（聊天卡片）、workspace（表格等工作区）、banner（提醒）、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end（为侧栏实际留出空间）、overlay（透明动画层）、fullscreen（沉浸工作区）或 presence（替换 Athena 标志）。start/end 跟随阅读方向。不能用普通聊天卡片代替用户指定的位置，也不必把动画限制在角落。fullscreen/overlay 均保留固定输入、停止和恢复外壳，不是操作系统全屏。每次注册新版本刷新对应 frame，不刷新整个应用。
+
+界面变化服务于当前目标；普通查询不需要装饰性重排。组件默认继承当前主题变量、字体和基本按钮样式，优先使用 `var(--ink)`、`var(--surface)` 等，不叠加违和的黑盒或多层卡片。涉及动态布局、逐字样式、会话导航、标志或跨气泡动画时，先读 `references/bridge.md`。其中的 Athena.observe/styleText/navigate 是宿主提供的语义接口，不允许直接读写父页面。当前 CSP 仍不允许外部资源，不能宣称已支持外部视频或在线字体。
+
+## 验证实际效果
+
+注册成功仅表示版本已保存，不证明用户看见或功能正常。使用 `runtime registry` 的 component `read/list` 查看当前版本的 `render`：unobserved 是浏览器尚未回报；mounted 是已加载；has_content 表示存在内容；in_view 是该次观察是否在可视区域；failed 和 error_code 表示加载、脚本或资源失败。它们是带时间的浏览器观察，不是端到端功能验证。不要把旧版本的观察当成新版本成功，也不要将注册、计划运行或任务创建宣称为已完成更新。
+
+缺少位置、账户授权或其他无法可靠推断的必需信息时，读取 collaboration skill，通过 user_help 等待用户补充。不要假造天气、价格等实时数据填充组件。联网数据通过后端命令或工具取得，注明来源与更新时间，再注册显示；iframe 内的 fetch 会被阻止。需要定期更新时，先读取 tasks skill，登记后台任务来获取新数据并更新同一组件 id。组件里的计时器只能更新本地展示，不能证明实时数据已刷新。失败时保留带时间的旧数据并说明未更新。

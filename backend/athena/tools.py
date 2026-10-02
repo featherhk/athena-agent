@@ -13,7 +13,7 @@ from .store import Store, now, uid
 from .protection import protected_command
 from .profiles import Models
 from .preferences import preference_schema, read_preferences, update_preferences
-from .registry import Registry
+from .registry import Registry, COMPONENT_PLACEMENTS
 from .introspection import Introspection, validate_compaction_plan
 from .runtime_schema import RUNTIME_SCHEMA
 
@@ -31,7 +31,7 @@ TOOLS = [
         "op": {"type": "string", "enum": ["upsert", "remove"]},
         "id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$"},
         "title": {"type": "string", "maxLength": 80},
-        "placement": {"type": "string", "enum": ["inline", "workspace", "banner"]},
+        "placement": {"type": "string", "enum": list(COMPONENT_PLACEMENTS)},
         "html": {"type": "string", "maxLength": 100000},
     }, ["op", "id"]),
     function("runtime", "操作 Athena。先用 op=skill、args.name 按需读取技能。", {
@@ -187,6 +187,12 @@ class ToolRunner:
         user = owner["user_id"]
         if op == "registry":
             return await self.registry.operate(args, session_id)
+        if op == "app":
+            from .app_controls import app_operation
+            return await app_operation(self.store, session_id, run_id, args, self.config)
+        if op == "user_help":
+            from .user_help import request_help
+            return await request_help(self.store, session_id, run_id, args)
         if op == "sessions":
             from .context_controls import ContextControls
             return await ContextControls(self.store).operate(session_id, run_id,
