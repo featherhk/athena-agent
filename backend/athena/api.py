@@ -320,7 +320,7 @@ def create_app(config: Config | None = None):
                 return f"id: {event['seq']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
             try:
                 idle_ticks = 0
-                while not await request.is_disconnected():
+                while not engine.closing and not await request.is_disconnected():
                     if not await app.state.auth.current(request.cookies.get(COOKIE)):
                         return
                     # Queues only wake the reader. Always catch up from the log so

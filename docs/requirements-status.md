@@ -81,6 +81,10 @@ Offline evaluation on a disposable copy of the three largest local conversations
 
 The regression tests exercise the actual automatic execution path, exact inspection/payload agreement, immutable originals, attachments and memory notes, retained reasoning and call pairing, stable repeated projection, and protected recovery results when the requested budget is unattainable. The full check passed 331 Python tests, 50 frontend logic tests and the production build; the Python 3.14.8T doctor still reports GIL disabled.
 
+## Graceful local updates
+
+The CLI and macOS launcher now share a server adapter that drains open event streams before the HTTP server waits for connections to close. This fixes a reproduced five-second graceful-shutdown timeout with an idle browser attached. Store and engine teardown still happen after HTTP draining. Tests require clean shutdown logs and verify that active partial replies become durable interrupted records without automatic replay; disconnecting a view alone does not cancel its work.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.

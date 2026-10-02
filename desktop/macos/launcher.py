@@ -14,6 +14,7 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 from athena.config import require_free_threading
 from athena.api import create_app
+from athena.server import AthenaServer
 import uvicorn
 
 require_free_threading()
@@ -46,7 +47,7 @@ async def main():
     os.environ["ATHENA_PORT"] = str(port)
     config = uvicorn.Config(create_app(), loop="asyncio", http="h11", access_log=False,
                             log_level="warning", timeout_graceful_shutdown=5)
-    server = uvicorn.Server(config)
+    server = AthenaServer(config)
     parent_pid = os.getppid()
 
     async def watch_parent():

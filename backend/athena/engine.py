@@ -452,8 +452,18 @@ class Engine:
         finally:
             self.resetting_users.discard(user_id)
 
-    async def close(self):
+    def begin_shutdown(self):
+        self.check_owner()
         self.closing = True
+        for listeners in self.listeners.values():
+            for queue in listeners:
+                while not queue.empty():
+                    queue.get_nowait()
+                queue.put_nowait(None)
+        self.listeners.clear()
+
+    async def close(self):
+        self.begin_shutdown()
         for task in self.watchers.values():
             task.cancel()
         await asyncio.gather(*self.watchers.values(), return_exceptions=True)
