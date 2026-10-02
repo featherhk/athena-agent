@@ -12,7 +12,7 @@ from .errors import UserError
 from .files import initialize_files, list_files, list_session_files, public_file
 from .store import now, uid
 
-TARGETS = ("menu", "history", "files", "account", "appearance", "developer", "password", "workspace", "preview")
+TARGETS = ("menu", "history", "files", "account", "appearance", "developer", "password", "workspace", "preview", "surfaces")
 OPEN_TARGETS = tuple(target for target in TARGETS if target != "preview")
 ERROR_CODES = ("unavailable", "user_gesture_required", "file_not_found", "navigation_failed", "execution_failed", "dismissed", "reset", "interrupted")
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")

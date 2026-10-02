@@ -10,6 +10,31 @@ export function widgetDocument(source: string, locale: string, instance: string,
     let theme = {tokens:{'--ink':${JSON.stringify(color)},'--surface':${JSON.stringify(background)}},font_family:'system-ui',scheme:${JSON.stringify(scheme)}};
     const observers = new Set();
     const send = data => parent.postMessage({...data, instance}, '*');
+    const fields = () => [...document.querySelectorAll('input,textarea,select')].slice(0,128);
+    const retainable = field => !['password','file','hidden','button','submit','reset','image'].includes(field.type) && !/password|one-time-code|cc-/.test(field.autocomplete || '');
+    const rememberForm = () => {
+      let size = 0;
+      const draft = [];
+      fields().forEach((field,index) => {
+        if (!retainable(field)) return;
+        size += field.value.length;
+        if (size > 32000) return;
+        draft.push({index,value:field.value,checked:Boolean(field.checked),...(field.multiple ? {selected:[...field.options].flatMap((option,index)=>option.selected?[index]:[]).slice(0,256)} : {})});
+      });
+      send({type:'athena:form-state', draft});
+    };
+    let explicitSize = false, sizeFrame = 0, reportedHeight = 0, viewportWidth = innerWidth, viewportHeight = innerHeight;
+    const measureHeight = () => {
+      sizeFrame = 0;
+      if (explicitSize || ${transparent} || observers.size || !document.body) return;
+      const height = Math.max(80, Math.min(1000, Math.ceil(document.body.getBoundingClientRect().height)));
+      const heightOnly = innerWidth === viewportWidth && innerHeight !== viewportHeight;
+      viewportWidth = innerWidth; viewportHeight = innerHeight;
+      // A 100vh document must not make the iframe grow itself in a loop.
+      if (heightOnly && reportedHeight && height > reportedHeight) return;
+      if (height !== reportedHeight) { reportedHeight = height; send({type:'athena:resize', height}); }
+    };
+    const sizeSoon = () => { if (!sizeFrame) sizeFrame = requestAnimationFrame(measureHeight); };
     const hasContent = () => {
       const body = document.body;
       if (!body) return false;
@@ -31,7 +56,7 @@ export function widgetDocument(source: string, locale: string, instance: string,
     window.Athena = {
       get theme() { return theme; },
       submit: text => send({type:'athena:submit', text}),
-      resize: height => send({type:'athena:resize', height}),
+      resize: height => { explicitSize = true; send({type:'athena:resize', height}); },
       observe: callback => {
         if (typeof callback !== 'function' || observers.size >= 32) throw new TypeError('observe requires a callback; at most 32 observers');
         observers.add(callback);
@@ -52,6 +77,15 @@ export function widgetDocument(source: string, locale: string, instance: string,
     addEventListener('securitypolicyviolation', () => fail('blocked_resource'));
     addEventListener('message', event => {
       if (event.source !== parent || event.data?.instance !== instance) return;
+      if (event.data.type === 'athena:restore-form' && Array.isArray(event.data.draft)) {
+        const controls = fields();
+        for (const saved of event.data.draft.slice(0,128)) {
+          const field = controls[saved.index];
+          if (!field || !retainable(field)) continue;
+          field.value = saved.value; if ('checked' in field) field.checked = saved.checked;
+          if (field.multiple && saved.selected) [...field.options].forEach((option,index)=>option.selected=saved.selected.includes(index));
+        }
+      }
       if (event.data.type === 'athena:inspect') {
         inspect(true);
         if (observers.size) send({type:'athena:observe'});
@@ -73,6 +107,10 @@ export function widgetDocument(source: string, locale: string, instance: string,
     });
     addEventListener('DOMContentLoaded', () => {
       inspect(true);
+      new ResizeObserver(sizeSoon).observe(document.body);
+      sizeSoon();
+      document.addEventListener('input', rememberForm);
+      document.addEventListener('change', rememberForm);
       new MutationObserver(() => {
         if (!scheduled) {
           scheduled = true;

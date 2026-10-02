@@ -54,6 +54,8 @@ class HelpAnswer(BaseModel):
 def public_message(message):
     result = {key: message[key] for key in ("id", "seq", "role", "content", "reasoning", "status", "run_id", "created_at") if key in message}
     result["attachments"] = [{k: v for k, v in item.items() if k != "workspace_path"} for item in json.loads(message.get("attachments") or "[]")]
+    if message.get("help_reply"):
+        result["help_reply"] = json.loads(message["help_reply"])
     return result
 
 
@@ -253,11 +255,12 @@ def create_app(config: Config | None = None):
     async def snapshot(session_id: str, request: Request):
         await exists(session_id, request)
         def snapshot(db):
+            from .component_views import active_components
             history = Store._history(db, session_id)
             return {
                 "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant")],
                 "runs": [dict(row) for row in db.execute("SELECT * FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 50", (session_id,))],
-                "components": [dict(row) for row in db.execute("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1", (session_id,))],
+                "components": active_components(db, session_id),
                 "tasks": [dict(row) for row in db.execute("SELECT * FROM tasks WHERE session_id=? AND status!='done' ORDER BY due_at", (session_id,))],
                 "cursor": db.execute("SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=?", (session_id,)).fetchone()[0],
             }

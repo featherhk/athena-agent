@@ -8,3 +8,13 @@
 .help-choices button:hover, .help-choices button[aria-pressed="true"] { border-color: var(--accent); background: var(--wash); }
 .help-choices small { display: block; margin-top: 3px; color: var(--muted); }
 .user-help textarea { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 10px; min-height: 58px; border: 1px solid var(--tint); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+.help-receipt { max-width: 100%; margin: 8px 0 18px; color: var(--muted); font-size: 14px; }
+.help-receipt summary { display: flex; align-items: baseline; gap: 9px; cursor: pointer; list-style: none; }
+.help-receipt summary::-webkit-details-marker { display: none; }
+.help-receipt summary > span:not(.help-receipt-preview) { flex-shrink: 0; }
+.help-receipt-preview { min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; color: var(--ink); }
+.help-receipt dl { border-inline-start: 1px solid var(--tint); margin: 12px 0 0 5px; padding-inline-start: 20px; }
+.help-receipt dl > div + div { margin-top: 14px; }
+.help-receipt dt { font-size: 13px; line-height: 1.65; }
+.help-receipt dd { margin: 4px 0 0; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; }
+.help-response-files { margin-bottom: 18px; }

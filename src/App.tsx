@@ -1,15 +1,19 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { api, empty, defaultPreferences } from './api';
-import type { User, Snapshot, Session, Preferences, AppAction } from './api';
+import type { User, Snapshot, Session, Preferences, AppAction, Component, ViewChange } from './api';
 import Orb, { AthenaMark } from './Orb';
 import type { Phase } from './Orb';
 import Widget from './Widget';
+import ComponentControls from './ComponentControls';
+import { arrangePanels, floatingPlacements, placementOf } from './component-layout';
+import { useSurfaceBounds } from './use-surface-bounds';
+import type { FormDraft } from './component-forms';
 import { MessageBody } from './MessageBody';
 import { FilePreview } from './FilePreview';
 import type { FileEntry } from './FilePreview';
 import DeveloperPanel from './DeveloperPanel';
 import { AccountProfile } from './AccountProfile';
-import UserHelp from './UserHelp';
+import UserHelp, { HelpReceipt } from './UserHelp';
 import VoiceCall from './VoiceCall';
 import { RunTrace } from './RunTrace';
 import { StyledText } from './StyledText';
@@ -60,7 +64,10 @@ export default function App() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [reconnecting, setReconnecting] = useState(false);
   const [files, setFiles] = useState<FileEntry[] | null>(null);
-  const [dismissedWorkspace, setDismissedWorkspace] = useState('');
+  const [surfaces, setSurfaces] = useState(false);
+  const [surfaceHeights, setSurfaceHeights] = useState<Record<string, number>>({});
+  const surfaceDrafts = useRef(new Map<string, FormDraft>());
+  const surfaceBounds = useSurfaceBounds();
   const [preview, setPreview] = useState<FileEntry | null>(null);
   const [attached, setAttached] = useState<FileEntry[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -93,7 +100,7 @@ export default function App() {
   const nearBottom = useRef(true);
   const scrollIntent = useRef(0);
   const upgradeState = useRef({ user, session, text, attached, safe: false });
-  upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu };
+  upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu && !surfaces };
   const busy = snapshot.runs.some(run => ['running', 'queued'].includes(run.status));
   const help = snapshot.help_requests?.[0];
   const waiting = Boolean(help);
@@ -105,8 +112,13 @@ export default function App() {
   const activePhase = snapshot.runs.find(run => run.status === 'running')?.phase;
   const orbPhase: Phase = waiting ? 'waiting' : busy ? (activePhase === 'responding' || activePhase === 'executing' ? activePhase : phase === 'responding' || phase === 'executing' ? phase : 'thinking') : snapshot.runs[0]?.status === 'interrupted' ? 'stopped' : 'idle';
 
-  const workspace = snapshot.components.filter(component => ['workspace', 'fullscreen'].includes(component.placement || '') && `${component.id}:${component.version}` !== dismissedWorkspace).at(-1);
-  const presence = snapshot.components.filter(component => component.placement === 'presence').at(-1);
+  const components = snapshot.components.filter(component => !component.view?.hidden);
+  const workspaces = snapshot.components.filter(component => ['workspace', 'fullscreen'].includes(placementOf(component))).sort((a, b) => (a.view_updated_at || a.created_at || '').localeCompare(b.view_updated_at || b.created_at || ''));
+  const workspace = workspaces.filter(component => !component.view?.hidden).at(-1);
+  const presence = components.filter(component => placementOf(component) === 'presence').at(-1);
+  const floating = components.filter(component => floatingPlacements.has(placementOf(component)));
+  const panelLayout = arrangePanels(floating, surfaceBounds, locale === 'ar', surfaceHeights);
+  const measureWidget = useCallback((id: string, height: number) => setSurfaceHeights(old => old[id] === height ? old : { ...old, [id]: height }), []);
   const styleText = useCallback((key: string, effect: TextStyleEffect | null) => {
     if (effect && !messagesRef.current.some(message => message.id === effect.message_id)) return;
     setTextEffects(old => {
@@ -133,7 +145,7 @@ export default function App() {
     const draft = migrate ? drafts.current!.move(scope.owner, scope.session, next) : drafts.current!.read(scope.owner, next);
     uiScope.current = { ...scope, session: next, generation: scope.generation + 1 };
     generation.current++; setSession(next); showDraft(draft);
-    setSnapshot(empty()); setPhase('idle'); setError(''); setReading(false); setTextEffects({}); setChooseFiles(false);
+    setSnapshot(empty()); setPhase('idle'); setError(''); setReading(false); setTextEffects({}); setChooseFiles(false); setSurfaceHeights({}); setSurfaces(false);
     setSending(false); setUploading(false);
   }
   async function navigateFromWidget(next: string) {
@@ -141,6 +153,22 @@ export default function App() {
     try { await api<Snapshot>(`/sessions/${encodeURIComponent(next)}`); if (isCurrent()) navigate(next); }
     catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
+  async function changeComponentView(component: Component, view: ViewChange) {
+    if (!session) return;
+    const sid = session, isCurrent = currentGuard();
+    try {
+      const result = await api<Pick<Component, 'version' | 'view' | 'view_revision' | 'view_updated_at'>>(`/sessions/${sid}/components/${component.id}/view`, { version: component.version, view_revision: component.view_revision || 0, view });
+      if (isCurrent()) setSnapshot(old => ({ ...old, components: old.components.map(item => item.id === component.id && item.version === result.version && (item.view_revision || 0) <= (result.view_revision || 0) ? { ...item, ...result } : item) }));
+    } catch (e) {
+      if (isCurrent()) {
+        setError((e as Error).message);
+        // A competing window or a new registration wins over our stale drag.
+        try { const next = await api<Snapshot>(`/sessions/${sid}`); if (isCurrent()) setSnapshot(old => next.cursor >= old.cursor ? next : old); } catch { /* Preserve the last known view. */ }
+      }
+      throw e;
+    }
+  }
+  function adjustComponent(component: Component, view: ViewChange) { void changeComponentView(component, view).catch(() => {}); }
   async function applyAppAction(action: AppAction, isCurrent: () => boolean): Promise<AppReceipt> {
     if (!isCurrent()) return interruptedReceipt();
     const { target, file } = action.payload;
@@ -153,6 +181,7 @@ export default function App() {
     } else if (action.action === 'open' || action.action === 'close') {
       const open = action.action === 'open';
       if (target === 'history') setHistory(open);
+      else if (target === 'surfaces') setSurfaces(open);
       else if (target === 'menu') setMenu(open);
       else if (target === 'preview' && !open) setPreview(null);
       else if (target === 'files') {
@@ -168,9 +197,10 @@ export default function App() {
         if (!isCurrent()) return interruptedReceipt();
         applyPreferences(next);
       } else if (target === 'workspace') {
-        const latest = snapshot.components.filter(component => ['workspace', 'fullscreen'].includes(component.placement || '')).at(-1);
+        const latest = workspaces.at(-1);
         if (!latest) return { status: 'failed', error_code: 'unavailable' };
-        setDismissedWorkspace(open ? '' : `${latest.id}:${latest.version}`);
+        if (open) await changeComponentView(latest, { hidden: false });
+        else await Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true })));
       } else return { status: 'failed', error_code: 'unavailable' };
     } else if (action.action === 'preview' && file) setPreview(file);
     else if (action.action === 'download' && file) {
@@ -212,6 +242,7 @@ export default function App() {
     }
   }, [snapshot.app_actions, session, user?.id, actionWake]);
   function acceptUser(next: User | null, saved?: Preferences) {
+    if (uiScope.current.owner !== (next?.id || null)) { surfaceDrafts.current.clear(); setSurfaces(false); }
     const previous = uiScope.current.owner;
     authEpoch.current++; generation.current++;
     let nextSession: string | null = null;
@@ -456,6 +487,7 @@ export default function App() {
     finally { if (isCurrent()) setSending(false); }
   }
   async function reset() {
+    surfaceDrafts.current.clear(); setSurfaces(false);
     setVoiceRecovery(old => old + 1);
     invalidateActions(); const isCurrent = currentGuard();
     setSnapshot(old => ({ ...old, components: [] })); setTextEffects({}); applyPreferences(defaultPreferences);
@@ -558,24 +590,29 @@ export default function App() {
   function fileCard(file: FileEntry, removable = false) {
     return <div className="attachment" key={file.id}><button type="button" className="attachment-open" onClick={() => setPreview(file)} title={t('files.preview', { name: file.name })}><span className="file-type">{file.name.split('.').pop()?.slice(0, 5).toUpperCase()}</span><span><strong>{file.name}</strong><small>{new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(file.size / 1024)} KB</small></span></button>{removable && <button className="icon-button" type="button" aria-label={t('files.remove')} onClick={() => changeAttachments(old => old.filter(item => item.id !== file.id))}>×</button>}</div>;
   }
+  function renderWidget(component: Component) {
+    const rect = floatingPlacements.has(placementOf(component)) ? panelLayout[component.id] : undefined;
+    const key = `${user?.id}:${session}:${component.id}:${component.version}`;
+    return <Widget key={`${component.id}-${component.version}`} component={component} sessionId={session!}
+      submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget}
+      onView={changeComponentView} floating={rect || undefined} fallback={rect === null} bounds={surfaceBounds} onHeight={measureWidget}
+      draft={surfaceDrafts.current.get(key)} onDraft={value => { if (!surfaceDrafts.current.has(key) && surfaceDrafts.current.size >= 64) surfaceDrafts.current.delete(surfaceDrafts.current.keys().next().value!); surfaceDrafts.current.set(key, value); }} />;
+  }
   const tracedRuns = new Set<string>();
   return <div className="app" data-reading={reading}>
     <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
-      <nav aria-label={t('chatControls')}>{workspace && !resetting && <button className="quiet workspace-return" onClick={() => setDismissedWorkspace(`${workspace.id}:${workspace.version}`)}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
+      <nav aria-label={t('chatControls')}>{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
     </header>
     <div className="workspace-layout">
-      {!resetting && snapshot.components.some(component => component.placement === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{snapshot.components.filter(component => component.placement === 'sidebar-start').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>}
+      {!resetting && components.some(component => placementOf(component) === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{components.filter(component => placementOf(component) === 'sidebar-start').map(component => renderWidget(component))}</aside>}
       <div className="reading-pane">
-    {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence"><Widget key={`${presence.id}-${presence.version}`} sessionId={session!} component={presence} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
-    {!resetting && (['top-start', 'top-end', 'bottom-start', 'bottom-end'] as const).map(placement => {
-      const components = snapshot.components.filter(component => component.placement === placement);
-      return components.length > 0 && <aside className="widget-dock" data-placement={placement} key={placement}>{components.map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>;
-    })}
-    {!resetting && snapshot.components.filter(component => component.placement === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}><Widget sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div>)}
+    {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
+    {!resetting && floating.filter(component => panelLayout[component.id]).map(component => renderWidget(component))}
+    {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
     <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
-      {!resetting && snapshot.components.filter(component => component.placement === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}><Widget sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></div>)}
-      {workspace && !resetting && <section className="workspace-panel"><Widget key={`${workspace.id}-${workspace.version}`} sessionId={session!} component={workspace} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} /></section>}
+      {!resetting && components.filter(component => placementOf(component) === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
+      {workspace && !resetting && <section className="workspace-panel">{renderWidget(workspace)}</section>}
       <div className="conversation" hidden={Boolean(workspace)}>
         <article className="message assistant greeting"><div>{t('greeting')}</div></article>
         {snapshot.messages.map(message => {
@@ -584,7 +621,8 @@ export default function App() {
           const visible = Boolean(message.content || message.attachments?.length);
           return <Fragment key={message.id}>
             {trace && message.role === 'assistant' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={snapshot.runs.find(run => run.id === message.run_id)?.phase} />}
-            {visible && <article className={`message ${message.role}`}>
+            {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(file => fileCard(file))}</div>}</>}
+            {visible && !message.help_reply && <article className={`message ${message.role}`}>
               <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
               {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
               {['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}
@@ -592,14 +630,14 @@ export default function App() {
             {trace && message.role === 'user' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={snapshot.runs.find(run => run.id === message.run_id)?.phase} />}
           </Fragment>;
         })}
-        {!resetting && snapshot.components.filter(component => !component.placement || component.placement === 'inline').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}
+        {!resetting && components.filter(component => placementOf(component) === 'inline' || (floatingPlacements.has(placementOf(component)) && !panelLayout[component.id])).map(component => renderWidget(component))}
         {snapshot.tasks.length > 0 && <section className="tasks">{snapshot.tasks.map(task => <div className="task" key={task.id}><div><strong>{task.title}</strong><span>{task.status === 'paused' ? t('paused') : task.last_error ? t('watchRetry') : task.condition_command ? t('watching') : new Date(task.due_at).toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>{task.status !== 'paused' && <button className="quiet" onClick={() => void api(`/sessions/${session}/tasks/${task.id}/pause`, {}).catch(e => setError(e.message))}>{t('pause')}</button>}</div>)}</section>}
         {snapshot.files?.some(file => file.source === 'output') && <section className="output-files" aria-label={t('files.outputs')}>{snapshot.files.filter(file => file.source === 'output').map(file => fileCard(file))}</section>}
         {lastError && <p className="notice" role="status">{lastError}</p>}<div ref={end} />
       </div>
     </main>
       </div>
-      {!resetting && snapshot.components.some(component => component.placement === 'sidebar-end') && <aside className="surface-sidebar" data-side="end">{snapshot.components.filter(component => component.placement === 'sidebar-end').map(component => <Widget key={`${component.id}-${component.version}`} sessionId={session!} component={component} submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget} />)}</aside>}
+      {!resetting && components.some(component => placementOf(component) === 'sidebar-end') && <aside className="surface-sidebar" data-side="end">{components.filter(component => placementOf(component) === 'sidebar-end').map(component => renderWidget(component))}</aside>}
     </div>
     <footer className="composer-area" ref={composer}><div className="composer-wrap">
       {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
@@ -616,9 +654,10 @@ export default function App() {
         <div className="send-actions"><VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />{(busy || waiting) && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{(busy || waiting) && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={(busy && !waiting) || (help && help.questions.length > 1) ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
       </form>
     </div></footer>
+    {surfaces && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setSurfaces(false); }}><section className="dialog surface-dialog" role="dialog" aria-modal="true" aria-label={t('surface.all')}><div className="dialog-top"><h2>{t('surface.all')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setSurfaces(false)}>×</button></div><div className="surface-list">{snapshot.components.map(component => <div className="surface-row" key={component.id}><button className="surface-open" onClick={() => { adjustComponent(component, { hidden: false }); setSurfaces(false); }}><span>{component.title}</span><small>{t(component.view?.hidden ? 'surface.hidden' : 'surface.visible')}</small></button><ComponentControls component={component} change={view => adjustComponent(component, view)} /></div>)}</div></section></div>}
     {toast && <div className="toast" role="status">{toast}</div>}
     {Boolean(user?.developer_mode) && <ErrorBoundary panel close={() => void developer(false)}><DeveloperPanel session={session} close={() => void developer(false)} /></ErrorBoundary>}
-    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items"><button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button><button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
+    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items"><button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
     {appearance && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{key === 'ui_palette' && preferences.ui_palette.startsWith('#') && <option value={preferences.ui_palette}>{preferences.ui_palette}</option>}{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
     {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
     {auth && <div className="overlay centered"><form className="dialog" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {

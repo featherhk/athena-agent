@@ -15,7 +15,20 @@ class ComponentReport(BaseModel):
     error_code: Literal["script_error", "unhandled_rejection", "blocked_resource", "empty_document", "load_timeout"] | None = None
 
 
+class ComponentViewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    version: int = Field(ge=1)
+    view_revision: int = Field(ge=0)
+    view: dict
+
+
 def register_component_routes(app, exists):
+    @app.post("/api/sessions/{session_id}/components/{component_id}/view")
+    async def layout(session_id: str, component_id: str, body: ComponentViewInput, request: Request):
+        await exists(session_id, request)
+        from .component_views import update_view
+        return await update_view(app.state.store, session_id, component_id, body.version, body.view_revision, body.view)
+
     @app.post("/api/sessions/{session_id}/components/{component_id}/report")
     async def report(session_id: str, component_id: str, body: ComponentReport, request: Request):
         await exists(session_id, request)

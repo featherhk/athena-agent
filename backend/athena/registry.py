@@ -250,7 +250,7 @@ class Registry:
 
     async def operate(self, args, session_id):
         kind, action = args.get("kind"), args.get("action")
-        if kind not in KINDS or action not in ("list", "read", "register", "restore", "remove"):
+        if kind not in KINDS or action not in ("list", "read", "register", "restore", "remove", "layout"):
             raise ValueError("Registry requires kind and action")
         await initialize_registry(self.store)
         user, owner = await self._scope(session_id, kind)
@@ -267,6 +267,11 @@ class Registry:
         version = args.get("version")
         if version is not None and (type(version) is not int or version < 1):
             raise ValueError("Version must be a positive integer")
+        if action == "layout":
+            if kind != "component":
+                raise ValueError("Layout applies to components only.")
+            from .component_views import update_view
+            return await update_view(self.store, owner, name, version, args.get('view_revision'), args.get('view'))
         if action == "list":
             table, column, _ = KINDS[kind]
             limit = min(200, max(1, args.get("limit", 100)))
@@ -284,6 +289,8 @@ class Registry:
                 item["description" if kind != "component" else "title"] = row["description" if kind != "component" else "title"]
                 item["enabled"] = bool(row["active"] and row["current"])
                 if kind == "component":
+                    from .component_views import read_view
+                    item.update(await self.store.call(lambda db, row=row: read_view(db, owner, row['id'])))
                     item["placement"] = row.get("placement", "inline")
                     item["render"] = await self.store.call(lambda db, row=row: self._render_status(db, owner, row["id"], row["version"]))
                 elif kind == "policy":
@@ -300,6 +307,8 @@ class Registry:
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 result.update(policy_state(name, row["active"], latest["version"] == row["version"]))
             if kind == "component":
+                from .component_views import read_view
+                result.update(await self.store.call(lambda db: read_view(db, owner, name)))
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 render = await self.store.call(lambda db: self._render_status(db, owner, name, row["version"]))
                 return {**result, "enabled": bool(row["active"] and row["version"] == latest["version"]),
@@ -434,6 +443,8 @@ class Registry:
             result = {"kind": kind, key: name, "version": version, "status": "restored" if action == "restore" else "registered"}
             if kind == "component":
                 self._component_event(db, owner, name, version, action, record["placement"])
+                from .component_views import read_view
+                result.update(read_view(db, owner, name))
                 result.update(enabled=True, placement=record["placement"], render=self._render_status(db, owner, name, version))
             return {**result, **policy_state(name)} if kind == "policy" else result
         try:

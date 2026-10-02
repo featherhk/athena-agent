@@ -62,6 +62,7 @@ class Store:
                 ("runs", "phase", "TEXT NOT NULL DEFAULT 'idle'"),
                 ("messages", "attachments", "TEXT NOT NULL DEFAULT '[]'"),
                 ("messages", "context_note", "TEXT NOT NULL DEFAULT ''"),
+                ("messages", "help_reply", "TEXT"),
                 ("requests", "tool_versions", "TEXT"),
             ):
                 if column not in {row[1] for row in db.execute(f"PRAGMA table_info({table})")}:
@@ -70,7 +71,10 @@ class Store:
                 session_id TEXT NOT NULL REFERENCES sessions(id), epoch INTEGER NOT NULL,
                 boundary INTEGER NOT NULL, prompt TEXT NOT NULL, created_at TEXT NOT NULL,
                 PRIMARY KEY(session_id,epoch,boundary))""")
-            db.execute("PRAGMA user_version=6")
+            if db.execute("PRAGMA user_version").fetchone()[0] < 7:
+                from .user_help import backfill_help_replies
+                backfill_help_replies(db)
+            db.execute("PRAGMA user_version=7")
         await self.call(migrate)
         from .context_controls import initialize_context_controls
         await initialize_context_controls(self)
@@ -202,6 +206,7 @@ class Store:
             identifier = uid()
             db.execute("INSERT INTO sessions(id,project_id,title,parent_id,fork_seq,created_at,user_id,model_profile_id,model_epoch) VALUES (?,?,?,?,?,?,?,?,?)", (identifier, original["project_id"], original["title"] + " · 新方向", session_id, max((m["seq"] for m in history), default=0), now(), original["user_id"], original["model_profile_id"], original["model_epoch"]))
             db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement) SELECT ?,id,version,title,html,active,created_at,file_path,placement FROM components WHERE session_id=?", (identifier, session_id))
+            db.execute("INSERT INTO component_views SELECT ?,component_id,state,revision,updated_at FROM component_views WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO context_prefixes SELECT ?,epoch,boundary,prompt,created_at FROM context_prefixes WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO context_clips SELECT ?,message_id,content,created_at FROM context_clips WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO compactions SELECT lower(hex(randomblob(16))),?,through_seq,before_chars,after_chars,created_at FROM compactions WHERE session_id=?", (identifier, session_id))
@@ -222,4 +227,5 @@ class Store:
         return await self.call(add)
 
     async def components(self, session_id):
-        return await self.rows("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1", (session_id,))
+        from .component_views import active_components
+        return await self.call(lambda db: active_components(db, session_id))

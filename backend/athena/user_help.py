@@ -20,6 +20,34 @@ def _owner(db, session_id, user_id):
         raise UserError("not_found", "This conversation was not found.")
 
 
+def reply_content(record, answers):
+    return next(iter(answers.values())) if len(answers) == 1 else "\n\n".join(
+        question["question"] + "\n" + answers[question["id"]] for question in record["questions"])
+
+
+def reply_receipt(record, answers):
+    # Freeze the relationship on the message itself. Forked history keeps this
+    # receipt without copying/activating a pending user-help interaction.
+    return json.dumps({"id": record["id"], "reason": record["reason"], "items": [
+        {"id": question["id"], "question": question["question"], "answer": answers[question["id"]]}
+        for question in record["questions"]
+    ]}, ensure_ascii=False)
+
+
+def backfill_help_replies(db):
+    """Annotate only exact legacy matches; never rewrite protocol history."""
+    for row in db.execute("SELECT * FROM user_help WHERE status='answered' AND answers IS NOT NULL ORDER BY resolved_at").fetchall():
+        record = _record(row)
+        if db.execute("SELECT 1 FROM messages WHERE run_id=? AND help_reply IS NOT NULL AND json_extract(help_reply,'$.id')=?", (record['run_id'], record['id'])).fetchone():
+            continue
+        # A subsequent request in the same run bounds this answer's identity.
+        next_question = db.execute("SELECT MIN(created_at) FROM user_help WHERE run_id=? AND created_at>?", (record['run_id'], record['resolved_at'])).fetchone()[0]
+        candidates = db.execute("SELECT id,attachments FROM messages WHERE run_id=? AND role='user' AND help_reply IS NULL AND content=? AND created_at>=? AND (? IS NULL OR created_at<?)",
+            (record['run_id'], reply_content(record, record['answers']), record['resolved_at'], next_question, next_question)).fetchall()
+        if len(candidates) == 1 and json.loads(candidates[0]['attachments']) == record['attachments']:
+            db.execute("UPDATE messages SET help_reply=? WHERE id=?", (reply_receipt(record, record['answers']), candidates[0]['id']))
+
+
 def validate_questions(questions):
     if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
         raise ValueError("Ask one to three questions at a time.")
@@ -111,8 +139,9 @@ async def answer_help(store, session_id, user_id, help_id, answers, attachments=
         db.execute("UPDATE user_help SET status='answered',answers=?,attachments=?,resolved_at=? WHERE id=?", (json.dumps(answers, ensure_ascii=False), json.dumps(attachments, ensure_ascii=False), stamp, help_id))
         # Preserve the original tool result and append the reply: no prefix rewrite and
         # no replay of earlier actions. The source and matching questions remain auditable.
-        content = next(iter(answers.values())) if len(answers) == 1 else "\n\n".join(question["question"] + "\n" + answers[question["id"]] for question in record["questions"])
+        content = reply_content(record, answers)
         message_id = Store._message(db, session_id, record["run_id"], "user", content, "complete")
+        db.execute("UPDATE messages SET help_reply=? WHERE id=?", (reply_receipt(record, answers), message_id))
         if attachments:
             db.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(attachments, ensure_ascii=False), message_id))
         db.execute("UPDATE runs SET status='queued',phase='idle',finished_at=NULL WHERE id=?", (record["run_id"],))

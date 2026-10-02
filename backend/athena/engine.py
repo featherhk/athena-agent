@@ -456,6 +456,7 @@ class Engine:
                     rows = db.execute("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1", (sid,)).fetchall()
                     for row in rows:
                         db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement) VALUES (?,?,?,?,?,0,?,?,?)", (sid, row["id"], row["version"]+1, row["title"], row["html"], now(), row["file_path"], row["placement"]))
+                    db.execute("DELETE FROM component_views WHERE session_id=?", (sid,))
                 from .registry import reset_registry
                 reset_registry(db, user_id)
                 for session in sessions:

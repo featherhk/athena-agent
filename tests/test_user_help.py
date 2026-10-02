@@ -193,6 +193,42 @@ async def test_single_question_accepts_file_only_help_reply(store):
     assert (await store.history(session))[-1]["content"] == ""
 
 
+async def test_legacy_receipts_migrate_without_rewriting_model_context(store, engine):
+    session, run, first = await waiting(store)
+    await answer_help(store, session, None, first, {"city": "Tokyo"})
+    await store.claim(session)
+    second = (await request_help(store, session, run, {"questions": QUESTIONS}))["request"]["id"]
+    await activate_help(store, session, run, second, [])
+    await answer_help(store, session, None, second, {"city": "Tokyo"})
+    await store.execute("UPDATE runs SET status='complete' WHERE id=?", (run,))
+    await store.execute("UPDATE messages SET help_reply=NULL WHERE session_id=?", (session,))
+    before = await engine.context(session)
+    prefix = await store.rows("SELECT * FROM context_prefixes WHERE session_id=?", (session,))
+    await store.execute("PRAGMA user_version=6")
+    await store.initialize()
+    receipts = [json.loads(row['help_reply']) for row in await store.history(session) if row['help_reply']]
+    assert [item['id'] for item in receipts] == [first, second]
+    assert await engine.context(session) == before
+    assert await store.rows("SELECT * FROM context_prefixes WHERE session_id=?", (session,)) == prefix
+    await store.initialize()
+    assert len([row for row in await store.history(session) if row['help_reply']]) == 2
+
+
+@pytest.mark.parametrize("mismatch", ["ambiguous", "attachments"])
+async def test_legacy_receipts_leave_uncertain_matches_untouched(store, mismatch):
+    session, run, request_id = await waiting(store)
+    await answer_help(store, session, None, request_id, {"city": "Tokyo"})
+    await store.execute("UPDATE runs SET status='complete' WHERE id=?", (run,))
+    await store.execute("UPDATE messages SET help_reply=NULL WHERE session_id=?", (session,))
+    if mismatch == 'ambiguous':
+        await store.call(lambda db: Store._message(db, session, run, 'user', 'Tokyo', 'complete'))
+    else:
+        await store.execute("UPDATE user_help SET attachments='[{\"id\":\"missing-file\"}]' WHERE id=?", (request_id,))
+    await store.execute("PRAGMA user_version=6")
+    await store.initialize()
+    assert not any(row['help_reply'] for row in await store.history(session))
+
+
 async def test_user_answer_does_not_reset_total_model_step_budget(config, store, monkeypatch):
     engine = Engine(replace(config, max_steps=1), store)
     calls, _ = install_provider(monkeypatch, engine)

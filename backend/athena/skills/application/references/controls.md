@@ -4,7 +4,7 @@
 
 | 需求 | 操作 |
 | --- | --- |
-| 打开/关闭菜单、历史、文件、账户、外观、开发面板、密码表单或工作区 | app `action: open/close, target: menu/history/files/account/appearance/developer/password/workspace` |
+| 打开/关闭菜单、历史、文件、账户、外观、开发面板、密码表单、工作区或组件管理 | app `action: open/close, target: menu/history/files/account/appearance/developer/password/workspace/surfaces` |
 | 切换到已有对话 | app `action: navigate, session_id` |
 | 预览或下载已有文件 | app `action: preview/download, file_id` |
 | 关闭文件预览 | app `action: close, target: preview` |
@@ -16,6 +16,7 @@
 | 新建、改名、fork | 使用已有 `runtime sessions`；新建/fork 后需要显示目标时再 app navigate |
 | 改语言、字体、颜色、显示参数或开发者模式 | 使用已有 `runtime app_settings`，按当前 schema 更新 |
 | 改账户资料或头像、暂停任务 | 使用已有 account / cancel_task |
+| 收起/展开、移动、调整组件尺寸 | registry `kind:component, action:layout`；先读取 version/view_revision，详见 interface skill 的 references/bridge.md |
 
 没有实际文件 ID 时，不要伪造下载地址。先在文件区产生输出，再用 app list/read（不带 id）发现当前会话文件，返回 `files` 中的真实 id；无需打开浏览器触发登记。默认返回50条，可用 limit（1–200）与 offset 翻页。当前 download 是已有文件导出，不代表支持任意会话归档格式。
 

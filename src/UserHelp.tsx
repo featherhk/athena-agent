@@ -1,7 +1,15 @@
 import { useState } from 'react';
-import type { HelpRequest } from './api';
+import type { HelpRequest, HelpReply } from './api';
 import { useI18n } from './i18n';
 import './user-help.css';
+
+export function HelpReceipt({ reply }: { reply: HelpReply }) {
+  const { t } = useI18n();
+  return <details className="help-receipt">
+    <summary><span className="help-receipt-mark" aria-hidden="true">✓</span><span>{t('help.answered')}</span><span className="help-receipt-preview" dir="auto">{reply.items.map(item => item.answer).filter(Boolean).join(' · ') || t('help.filesProvided')}</span></summary>
+    <dl>{reply.items.map(item => <div key={item.id}><dt dir="auto">{item.question}</dt><dd dir="auto">{item.answer || t('help.filesProvided')}</dd></div>)}</dl>
+  </details>;
+}
 
 // One question uses the normal message composer. Multiple questions share one
 // transient form; none of these controls exist until Athena needs an answer.

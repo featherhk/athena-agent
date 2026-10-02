@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS components (
  file_path TEXT,
  PRIMARY KEY(session_id, id, version)
 );
+CREATE TABLE IF NOT EXISTS component_views (
+ session_id TEXT NOT NULL REFERENCES sessions(id), component_id TEXT NOT NULL,
+ state TEXT NOT NULL, revision INTEGER NOT NULL, updated_at TEXT NOT NULL,
+ PRIMARY KEY(session_id,component_id)
+);
 CREATE TABLE IF NOT EXISTS tasks (
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), title TEXT NOT NULL,
  prompt TEXT NOT NULL, due_at TEXT NOT NULL, interval_seconds INTEGER, status TEXT NOT NULL,

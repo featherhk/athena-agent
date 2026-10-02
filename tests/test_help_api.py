@@ -53,4 +53,12 @@ async def test_help_survives_snapshot_and_resumes_once_with_authorized_answer(co
             assert final['help_requests'] == [] and final['runs'][0]['status'] == 'complete'
             assert len(requests) == 2
             assert sum(message['content'] == 'October 15' for message in final['messages']) == 1
+            reply = next(message for message in final['messages'] if message['content'] == 'October 15')
+            assert reply['role'] == 'user'  # Provider protocol remains unchanged.
+            assert reply['help_reply'] == {'id': question['id'], 'reason': '', 'items': [
+                {'id': 'return_date', 'question': 'What date are you returning?', 'answer': 'October 15'}]}
+            fork = (await client.post(f'/api/sessions/{session}/fork', json={})).json()['id']
+            inherited = (await client.get(f'/api/sessions/{fork}')).json()
+            assert inherited['help_requests'] == []
+            assert next(message for message in inherited['messages'] if message['id'] == reply['id'])['help_reply'] == reply['help_reply']
             assert (await client.post(path, json={'answers': {'return_date': 'October 16'}})).status_code == 400

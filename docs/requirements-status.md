@@ -61,7 +61,19 @@ A patch under construction is not an integrated pass. Refer to the final validat
 - An Apple Silicon test DMG was generated with a bundled free-threaded Python and non-secret cloud endpoint. Relocation, startup, authentication boundary, cross-site rejection, restart and shutdown smoke checks passed. Native window automation stalled; do not count native UI, clean-Mac installation, actual cloud login or real microphone behavior as verified. Apple signing/notarization remains deferred by the operator.
 - The redesigned Feather website has been published, with Athena first and truthful private-preview labels. Download and web links remain hidden until their endpoints pass release checks.
 
-## Explicit gaps carried forward
+## Clarification and work-surface follow-up
+
+Clarification replies now carry an immutable question/answer receipt on the original message. The UI displays a compact, expandable “Information provided” entry, retaining attachments. Model protocol content is unchanged; answered receipts survive forks without copying pending requests. The additive migration annotates only exact, unambiguous legacy matches. A copy of the local database migrated its one answered request while preserving a digest of all protocol message fields.
+
+Work surfaces now have host-owned close/reopen, placement, drag and resize controls. The same effects are available through `runtime registry action:layout`, with a separate durable layout revision and optimistic concurrency check. Layout and its refresh event commit together; a stale browser cannot overwrite a newer source registration or layout. Content updates respect a user's hidden state. Forks copy layout independently; reset clears it while retaining source versions and files. `runtime app open/close target:surfaces` controls the management view.
+
+Automatic floating panels fit their contents and use available margins without covering the reading column, each other, the top controls or composer. Overflow and narrow screens return to the conversation flow. Explicit user positioning may cover text but remains inside the available area. A workspace uses its full host area, regardless of previous floating width. Sidebar width, presence and full-workspace sizing remain host-managed.
+
+Ordinary native form drafts survive hide/reopen and placement/conversation changes within the same page, using bounded account/session/version-scoped browser memory. Password, OTP, payment and file controls are excluded. This does not persist arbitrary JavaScript/Canvas state or preserve edits through a page reload; authored documents still need an explicit save.
+
+Validation: 327 Python tests, 50 frontend logic tests, production build and free-threading doctor passed. Isolated browser acceptance exercised drag, keyboard resize, content-preserving hide/reopen, layout selection, full-workspace exit, expanded clarification receipts, durable page reload and a 390×844 mobile viewport. The fixture used a mock provider and disposable data, not live user commands. Public/cloud deployment and DMG validation above describe the previous release and must be repeated for a new distributed build.
+
+## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.
 2. **Integrated browser and computer control.** Ad-hoc commands installing a browser do not constitute a packaged, supported executor. A usable product needs managed browser identity, login handoff, capability discovery, screenshots/semantic reads, cancellation and native platform adapters. Browser automation usually benefits from DOM/accessibility; desktop visual control needs a vision-capable model/provider.
