@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS memories (
  id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_id TEXT NOT NULL, content TEXT NOT NULL,
  source_run_id TEXT REFERENCES runs(id), created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS memory_revisions (
+ memory_id TEXT NOT NULL REFERENCES memories(id), version INTEGER NOT NULL,
+ content TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','forgotten')),
+ action TEXT NOT NULL, source_session_id TEXT REFERENCES sessions(id),
+ source_run_id TEXT REFERENCES runs(id), source_memory_id TEXT REFERENCES memories(id),
+ source_version INTEGER, created_at TEXT NOT NULL,
+ PRIMARY KEY(memory_id,version)
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS context_clips (
  session_id TEXT NOT NULL REFERENCES sessions(id), message_id TEXT NOT NULL REFERENCES messages(id),

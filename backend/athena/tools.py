@@ -250,14 +250,11 @@ class ToolRunner:
         if op == "cancel_task":
             changed = await self.store.execute("UPDATE tasks SET status='paused' WHERE id=? AND session_id=?", (args["task_id"], session_id))
             return {"updated": bool(changed)}
-        if op == "remember":
-            scope = args.get("scope", "session")
-            memory_owner = {"global": f"global:{user}" if user else "global", "project": owner["project_id"], "session": session_id}[scope]
-            identifier = uid()
-            await self.store.execute("INSERT INTO memories VALUES (?,?,?,?,?,?)", (identifier, scope, memory_owner, args["content"], run_id, now()))
-            return {"memory_id": identifier, "scope": scope}
-        if op == "recall":
-            return await self.store.rows("SELECT * FROM memories WHERE owner_id IN (?,?,?) AND instr(lower(content),lower(?))>0 ORDER BY created_at DESC LIMIT 20", (f"global:{user}" if user else "global", owner["project_id"], session_id, args.get("query", "")))
+        if op in ("memory", "remember", "recall"):
+            from .memory import memory_operation
+            fields = {**args, 'action': 'add' if op == 'remember' else 'list'} if op != 'memory' else args
+            result = await memory_operation(self.store, session_id, run_id, fields)
+            return result['items'] if op == 'recall' else result
         if op == "read_artifact":
             record = await self.store.artifact(session_id, args["artifact_id"])
             if not record:

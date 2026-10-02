@@ -19,7 +19,7 @@ Reviewed 2026-10-03 against the product requests, repository and live local runt
 | Nine app languages without flags | ar, en, es, fr, ja, ko, pt, zh-Hans, zh-Hant; system matching, English fallback, RTL, account preferences | Native OS language detection will need client adapters |
 | Model identity and switching | Short Athena identity plus configured base-model name; versioned profiles and request snapshots; explicit cache boundary | Chat Completions is the integrated protocol; other provider protocols and automatic quality routing remain work |
 | Stable prompt prefix; progressive skills | Directory packages with SKILL.md metadata and arbitrary resources; persisted prefix boundary | Measure actual cache effectiveness over long realistic tasks, not just prefix equality |
-| Recoverable compression and memory layers | Tool clipping preserves originals; user/project/session memories; context inspection/exclusion; target-budget reports | Memory lifecycle quality, conflict resolution and retrieval evaluation are not mature |
+| Recoverable compression and memory layers | Tool clipping preserves originals; versioned user/project/session memories; correction, withdrawal and recovery; bounded recall; context inspection/exclusion; target-budget reports | Semantic conflict resolution, relevance ranking and retrieval evaluation are not mature; withdrawal does not erase historical transcripts |
 | Queue, interrupt, stop and reconnect | Durable transitions and preserved partial replies; tool-call pairing; browser disconnect does not cancel | Cannot promise exactly-once external effects after an unknown remote outcome |
 | Session forks and cross-session context | Immutable history boundary; copied jobs paused; owned-session lookup; context projection tests | Subagent lineage is reserved, not implemented |
 | Arbitrary timed and script-triggered work | No-model condition checks wake the source conversation; task state stored in SQLite | Local node must be awake; cloud scheduling, notifications and executor idempotency need release validation |
@@ -84,6 +84,18 @@ The regression tests exercise the actual automatic execution path, exact inspect
 ## Graceful local updates
 
 The CLI and macOS launcher now share a server adapter that drains open event streams before the HTTP server waits for connections to close. This fixes a reproduced five-second graceful-shutdown timeout with an idle browser attached. Store and engine teardown still happen after HTTP draining. Tests require clean shutdown logs and verify that active partial replies become durable interrupted records without automatic replay; disconnecting a view alone does not cancel its work.
+
+## Memory lifecycle follow-up
+
+The universal runtime operation now supports memory add/list/read/update/forget/history/restore. Mutations carry the expected current version; simultaneous corrections cannot silently overwrite each other. Same-scope exact additions are idempotent. Every revision retains its source conversation/run; restoration creates a new revision and the original row remains intact. Scope checks apply equally to reads, history and mutations. Forks inherit an independent snapshot of active session memories with parent/version provenance; forgotten entries are not reactivated.
+
+Automatic recall uses whole entries within an 8,000-character note budget. Omitted entries remain searchable and the note reports omissions or further candidates. A policy's selected IDs are resolved again in the database transaction before admission, so a slow plugin cannot resurrect a concurrently forgotten entry or its stale content. Recent content-free withdrawal receipts clarify older snapshots. Old messages and prompt prefixes remain unchanged.
+
+“Forget” means stop using the entry for subsequent default retrieval and automatic recall. It is not physical erasure of chat, request or revision history. Semantic matching/merging and full data-erasure workflows remain unimplemented; the agent must identify and update the appropriate entry through the documented skill.
+
+This follows the useful separation between bounded working memory and searchable history in [Hermes memory](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory/), while retaining Athena's SQLite audit trail and concurrent multi-session ownership model.
+
+Validation: 341 Python tests, 50 frontend logic tests, TypeScript/production build and the free-threading doctor passed. List/history responses are bounded and paginated without clipping individual entries. A private copy of the local database migrated to schema 8 with unchanged original message/memory fields; it contained no memory rows, so legacy memory provenance is additionally exercised with synthetic old-schema records.
 
 ## Remaining release gaps
 

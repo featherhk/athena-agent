@@ -111,7 +111,9 @@ async def test_application_language_and_reply_memory_are_independent(engine, sto
     assert memory["scope"] == "global" and memory["owner_id"] == f"global:{user}"
     assert memory["source_run_id"] == run
     await engine.tools.execute("runtime", {"op": "app_settings", "settings": {"ui_language": "en"}}, session, run)
-    assert await store.rows("SELECT * FROM memories") == [memory]
+    stored = (await store.rows("SELECT * FROM memories"))[0]
+    assert all(memory[key] == value for key, value in stored.items())
+    assert memory['version'] == 1 and memory['status'] == 'active'
 
 
 async def test_partial_update_preserves_legacy_language_and_other_preferences(store):
