@@ -45,7 +45,7 @@ Apple’s [notarization documentation](https://developer.apple.com/documentation
 
 ## Cloud and account boundary
 
-Hosted conversation origin: `https://chat.athena.featherhk.com`; gateway base: `https://chat.athena.featherhk.com/v1`. The separate `https://app.athena.featherhk.com` site provides application downloads. The gateway endpoint is not permission to package a provider key. Hosted authentication and a server-side model gateway must enforce account entitlement and reserve/settle balance for each request. Only explicitly enabled preview accounts have access; other accounts start with zero credit, and there is no recharge UI. An API key configured in a customer’s local SQLite database would defeat this design.
+Hosted conversation origin: `https://chat.athena.featherhk.com`; gateway base: `https://chat.athena.featherhk.com/v1`. The separate `https://app.athena.featherhk.com` site provides application downloads. The gateway endpoint is not permission to package a provider key. Hosted authentication and a server-side model gateway must enforce account entitlement and reserve/settle balance for each request. Only operator-enabled accounts with positive test credit can consume; registration grants no credit and there is no recharge UI. An API key configured in a customer’s local SQLite database would defeat this design.
 
 A cloud-configured preview sidecar uses the central account and credit gateway implemented in `cloud_client.py`; provider credentials remain on the server. It does not inherit the developer’s key, create a default user account, or grant arbitrary accounts a balance. A build with no cloud URL retains isolated local authentication for development. This integration must pass before a customer build is published:
 

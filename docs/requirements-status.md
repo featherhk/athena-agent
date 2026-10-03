@@ -1,6 +1,6 @@
 # Requirements and release readiness
 
-Reviewed 2026-10-03 against the product requests, repository and live local runtime. This is an acceptance inventory, not a marketing feature list. A code path, a passing synthetic test and a verified customer outcome are different levels of evidence.
+Reviewed 2026-10-04 against the product requests, repository and recorded local/hosted acceptance. This is an acceptance inventory, not a marketing feature list. A code path, a passing synthetic test and a verified customer outcome are different levels of evidence.
 
 ## Preserve the product contract
 
@@ -9,11 +9,11 @@ Reviewed 2026-10-03 against the product requests, repository and live local runt
 - A successful task and a comfortable user experience outrank self-modification. Do not redesign the interface while the requested flight, file or reminder remains unfinished.
 - Users can ask for an application change, an external action or a reply preference. These must produce the appropriate durable effect rather than merely describing instructions.
 
-## Implemented and exercised locally
+## Current implemented capabilities and evidence
 
 | Requirement | Current evidence | Remaining boundary |
 | --- | --- | --- |
-| Python 3.14T; safe concurrency | Doctor checks free threading after imports; event-loop ownership and dedicated SQLite worker; concurrency regressions | Production Linux and packaged runtime need separate doctor checks |
+| Python 3.14T; safe concurrency | Doctor checks free threading after imports; event-loop ownership and dedicated SQLite worker; concurrency regressions | Local, hosted Linux and named Mac bundles have passed doctor checks; repeat for each release artifact |
 | Database-backed projects, sessions, runs, requests, events | SQLite transaction and reconnect tests; live existing conversations survive frontend updates | Backup restoration and migration drills are still needed for releases |
 | Minimal text interface and readable state | Shared classical typography/materials; fixed controls; Markdown; presence transitions; narrow-screen review | Ongoing user testing; generated fixed cards can compete for space |
 | Nine app languages without flags | ar, en, es, fr, ja, ko, pt, zh-Hans, zh-Hant; system matching, English fallback, RTL, account preferences | Native OS language detection will need client adapters |
@@ -23,10 +23,10 @@ Reviewed 2026-10-03 against the product requests, repository and live local runt
 | Queue, interrupt, stop and reconnect | Durable transitions and preserved partial replies; tool-call pairing; browser disconnect does not cancel | Cannot promise exactly-once external effects after an unknown remote outcome |
 | Session forks and cross-session context | Immutable history boundary; copied jobs paused; owned-session lookup; context projection tests | Delegation has separate lineage and immutable result receipts; a fork starts no copied subtask |
 | Arbitrary timed and script-triggered work | No-model condition checks wake the source conversation; task state stored in SQLite | Local node must be awake; cloud scheduling, notifications and executor idempotency need release validation |
-| Agent operates application controls | runtime app discovery, visible-session navigation, views, previews, attachments, stop/reset; durable claim and receipt | Browser-only gestures, passwords and native permissions still need user interaction; multi-window targeting can improve |
+| Agent operates application controls | runtime app discovery and bounded client observations; explicit multi-window targets; cross-session navigation, views, previews, attachments and stop/reset; semantic receipts and action-stream recovery | Browser-only gestures, passwords and native permissions still need user interaction; semantic observations are not pixel/content verification |
 | User-help mechanism | Durable waiting state; questions, options, files, same-run resume; cancellation and ownership tests | Phone-call help and native handoff need the voice/client path |
 | Arbitrary themes and task-specific surfaces | Custom hex colors with readable contrast, placements, iframe bridge, text effects, presence replacement, live registration | Full spreadsheet/video workspaces depend on real generated functionality; registration alone is not success |
-| Accounts, profile and password form | Local hashed credentials, owner scoping, name/avatar, fixed secret form | This alone is not hosted identity, billing or tenant execution isolation |
+| Accounts, profile and password form | Local and hosted credentials, owner scoping, name/avatar and fixed secret form; central model gateway and request reservation/settlement ledger for funded test accounts | No recharge or payments; account recovery, production reconciliation and tenant-isolation evaluation remain open |
 | Developer observability | API usage, cache totals, estimated cost, run trace and recoverable outputs | Cost estimates are not a billing ledger; unsupported usage must remain unknown |
 | Input/output files and previews | Owned attachments/outputs; Markdown, HTML, image and bounded XLSX preview; download | XLSX cached cells are not a calculation engine; broader document formats and large-file UX remain work |
 | Code/data separation and reset | External immutable registrations; source-write protection; repository guards; reset preserves chats/files | Recovery of arbitrary future service providers still needs a service host |
@@ -39,18 +39,18 @@ The Activity viewer already retries on reopening. It now also retries a failed l
 
 During that check, fixed generated cards obscured the workspace's return control. The return control now lives in the protected top bar. This is a distinct, reproduced interaction bug.
 
-## New release scope, currently being built
+## Initial preview scope and historical validation
 
 | Workstream | Release acceptance |
 | --- | --- |
 | Natural voice conversation | One call action; microphone permission; turn detection; automatic send; speech playback; interruption cancels playback and model work correctly; hang-up releases devices; reconnect does not duplicate a turn; text transcript survives; multilingual and accessibility fallback; real provider audio tested |
-| Central accounts and model gateway | Client never receives platform provider credentials; existing identities migrate safely; only an explicitly enabled preview account with positive balance can consume; all other users fail closed; registration cannot self-grant access; no recharge UI |
+| Central accounts and model gateway | Client never receives platform provider credentials; existing identities migrate safely; only explicitly enabled accounts with positive balance can consume; unfunded accounts fail closed; registration cannot self-grant access; no recharge UI |
 | Credit accounting | Server-side request reservation, bounded usage, idempotent settlement/release and uncertain-outcome handling; text and voice share enforcement; concurrent requests cannot overspend |
 | Hosted web runtime | HTTPS and allowed-origin enforcement; account ownership; independent execution boundary; no untrusted agent command on the shared New API host; rate limits, logs, backups and rollback; preserve existing New API service |
 | macOS distribution | Self-contained .app and drag-install DMG, no user Python/Node setup; local data outside bundle; clean exit/relaunch; Apple signing/notarization; microphone permission; real install and Gatekeeper test |
 | Website and download distribution | Athena first product; same design language; remove unverified old company claims; truthful release labels; publish only tested download/build references; valid DNS/TLS and rollback |
 
-A patch under construction is not an integrated pass. Refer to the final validation record and distribution documentation for the delivered state.
+The table states acceptance goals; it does not mark every row complete. The following early milestones are historical. The [initial preview](releases/2026-10-03-preview.md), [hosted execution update](releases/2026-10-03-runtime.md) and later release receipts identify the builds actually tested and supersede their earlier pending DNS, download and execution statements.
 
 ### Validation recorded in this update
 
@@ -135,10 +135,14 @@ A private database copy passed repeated migration with unchanged original column
 
 The current chat origin, separate download origin and Feather marketing pages are served over valid HTTPS by Tencent Cloud. The deployed image includes delegation and the latest runtime fixes. The final Mac DMG contains the same runtime plus corrected packaging: mounted-image signature verification, real central login, native window startup/quit and the bundled browser fixture passed. Public downloads match the manifest hash. An unfunded new account receives HTTP 402 without a reservation. See the [release receipt](releases/2026-10-03-preview.md) for exact revisions and limits; this supersedes earlier pending-DNS and pending-DMG statements above.
 
+## Observable interaction release — 2026-10-04
+
+The frontend now reports bounded, authenticated semantic observations; runtime actions can address a particular client and verify their resulting state. Cross-conversation navigation followed by file preview passed real browser and production model acceptance. A deployment-induced 502 exposed a permanently closed action stream; bounded reconnect and failed-run intent cleanup now have regression coverage and a real fault-injection pass. The web and build 7 Mac DMG use the same runtime source. See the [release receipt](releases/2026-10-04-interaction.md) for the exact artifacts, failure history, billing evidence and remaining boundaries.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.
-2. **Browser completion and computer control.** Concrete macOS and optional Linux container adapters support persistent identity, owned tabs, semantic reads, forms and screenshots/downloads. The native fixtures verify a single form submission, downloaded bytes and cookies across restart. See [browser execution](browser-execution.md) and [Linux execution](linux-execution.md). Cloud browsers have no remotely accessible login window; handoff reports that limitation instead of creating an impossible wait. Observed file-input uploads have passed local native fixtures; cloud deployment acceptance is still required. Custom file choosers/popup ownership, headed external login acceptance, vision input and full desktop control remain unfinished.
+2. **Browser completion and computer control.** Concrete macOS and optional Linux container adapters support persistent identity, owned tabs, semantic reads, forms and screenshots/downloads. The native fixtures verify a single form submission, downloaded bytes and cookies across restart. See [browser execution](browser-execution.md) and [Linux execution](linux-execution.md). Cloud browsers have no remotely accessible login window; handoff reports that limitation instead of creating an impossible wait. Observed file-input uploads have passed local native fixtures and isolated Linux acceptance, including exact Chinese filenames and no replay after restart; see the [interaction and browser receipt](releases/2026-10-04-interaction.md). Custom file choosers/popup ownership, headed external login acceptance, vision input and full desktop control remain unfinished.
 3. **Four-platform clients.** The iOS WKWebView host builds for Simulator and unsigned iPhone, with lifecycle recovery and queued native download sharing. Real-device signing/install, microphone and native UI acceptance remain open; see [iOS](ios.md). Android and Windows are not delivered. Mac local sessions/files are separate from the cloud node; shared login alone does not synchronize them.
 4. **System notifications and offline operation.** A paused browser should not be the only place a completed background job can report. Cloud and local wake-up guarantees must be distinguished from computer sleep and provider outages.
 5. **Delegation depth, connectors and extension sharing.** Bounded subtask lineage, waiting, cancellation, main-conversation help/files and fork receipts are implemented; running-child follow-up messages, cross-node delegation and broad quality evaluation remain work. Connector credentials and installation provenance are not implicit properties of the registry.
@@ -148,4 +152,4 @@ The current chat origin, separate download origin and Feather marketing pages ar
 
 ## Documentation consistency
 
-README and older product notes describe different implementation snapshots. The older statements that preferences are browser-only, browser navigation cannot be verified, and all visuals await browser review are stale: preferences are account-backed and Safari/in-app navigation and visuals have been exercised. Conversely, no current document should upgrade policy hooks to complete service replacement, a local account to production billing, or an unsigned artifact to a publicly trusted macOS release.
+Release receipts describe named artifacts and preserve historical outcomes; a later web deployment does not silently certify an older or newly rebuilt DMG. Account-backed preferences, directed browser UI actions and recorded visual acceptance are implemented. None establishes complete service replacement, production billing, real audio-call acceptance or an Apple-notarized release.
