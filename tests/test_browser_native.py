@@ -73,7 +73,9 @@ def ref(page, name):
 
 
 async def test_native_form_download_screenshot_and_persistent_login(config, store, page_server):
-    config = replace(config, repo_dir=Path(__file__).resolve().parents[1])
+    # Exercise the exact same task with a released bundle's native driver, too.
+    root = Path(os.environ.get('ATHENA_TEST_BROWSER_ROOT', Path(__file__).resolve().parents[1]))
+    config = replace(config, repo_dir=root.resolve())
     driver = NativeBrowserDriver(config, headed=False)
     assert driver.available(), 'npm ci must install the pinned native driver'
     host = BrowserHost(config, store, driver)

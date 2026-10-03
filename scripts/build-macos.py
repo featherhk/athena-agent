@@ -159,18 +159,31 @@ def main():
         run("xattr", "-cr", app)
         run(*sign, app)
         run("codesign", "--verify", "--deep", "--strict", app)
-        final_app = dest / "Athena.app"
-        if final_app.exists(): shutil.rmtree(final_app)
-        shutil.move(app, final_app)
         image_root = stage / "image"
         image_root.mkdir()
-        run("ditto", final_app, image_root / "Athena.app")
+        # Build the image before exposing the bundle to a synced output folder.
+        # File Provider may attach FinderInfo as soon as an .app enters it.
+        image_app = image_root / "Athena.app"
+        run("ditto", "--norsrc", "--noextattr", app, image_app)
+        run("codesign", "--verify", "--deep", "--strict", image_app)
         (image_root / "Applications").symlink_to("/Applications")
         label = f"Athena-{version}-macos-{arch}" + ("" if args.identity else "-preview")
         dmg = dest / f"{label}.dmg"
         if dmg.exists(): dmg.unlink()
         run("hdiutil", "create", "-volname", "Athena", "-srcfolder", image_root, "-ov", "-format", "UDZO", dmg)
         if args.identity: run(*sign, dmg)
+        mount = stage / "mounted"
+        mount.mkdir()
+        run("hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", mount, dmg)
+        try:
+            run("codesign", "--verify", "--deep", "--strict", mount / "Athena.app")
+            if (mount / "Applications").readlink() != Path("/Applications"):
+                raise RuntimeError("Disk image has no Applications installation link")
+        finally:
+            run("hdiutil", "detach", mount)
+        final_app = dest / "Athena.app"
+        if final_app.exists(): shutil.rmtree(final_app)
+        shutil.move(app, final_app)
         checksum = hashlib.file_digest(dmg.open("rb"), "sha256").hexdigest()
         (dest / f"{label}.sha256").write_text(f"{checksum}  {dmg.name}\n")
         (dest / f"{label}.json").write_text(json.dumps({"version": version, "architecture": arch,
