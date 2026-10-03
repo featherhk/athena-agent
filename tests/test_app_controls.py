@@ -138,3 +138,101 @@ async def test_signout_ack_only_revokes_receiving_browser_and_control_requires_a
     await store.execute("INSERT INTO runs(id,session_id,status,created_at) VALUES (?,?,'running',?)", (run, session, now()))
     assert (await app_operation(store, session, run, {"action": "stop"}))["control"] == {"stop_run": True}
     assert (await app_operation(store, session, run, {"action": "reset"}))["control"] == {"reset_user": True}
+
+
+async def test_target_conversation_files_are_discovered_and_paged_without_changing_action_origin(config, store, account):
+    user, origin, token = account
+    target = await store.session(user_id=user)
+    await observe_client(store, user, target, token, "target-browser")
+    for session, names in ((origin, ["origin.md"]), (target, ["target.md", "target.csv"])):
+        directory = config.data_dir / "files" / user / session
+        directory.mkdir(parents=True)
+        for name in names:
+            (directory / name).write_text("Synthetic acceptance content")
+    origin_action = (await app_operation(store, origin, None, {"action": "open", "target": "history"}))["request"]
+    target_action = (await app_operation(store, target, None, {"action": "open", "target": "files"}))["request"]
+    first = await app_operation(store, origin, None, {"action": "list", "session_id": target, "limit": 1}, config)
+    assert first["files_session_id"] == target and first["files_total"] == 2 and first["has_more"]
+    assert [item["id"] for item in first["pending"]] == [origin_action["id"]]
+    assert target_action["id"] not in {item["id"] for item in first["recent"]}
+    second = await app_operation(store, origin, None, {"action": "read", "session_id": target, "limit": 1, "offset": first["next_offset"]}, config)
+    assert second["files_session_id"] == target and not second["has_more"]
+    assert {first["files"][0]["name"], second["files"][0]["name"]} == {"target.md", "target.csv"}
+    default = await app_operation(store, origin, None, {"action": "list"}, config)
+    assert default["files_session_id"] == origin and [item["name"] for item in default["files"]] == ["origin.md"]
+    indexed = await app_operation(store, origin, None, {"action": "read", "session_id": target})
+    assert indexed["files_session_id"] == target and indexed["files_total"] == 2
+    # Navigating the receiving client does not relocate the original run or its audit.
+    navigation = (await app_operation(store, origin, None, {"action": "navigate", "session_id": target}))["request"]
+    await claim_app_action(store, origin, user, navigation["id"], "browser-one")
+    await observe_client(store, user, target, token, revision=2)
+    await acknowledge_app_action(store, origin, user, navigation["id"], "browser-one", "applied", observed_revision=2)
+    preview = (await app_operation(store, origin, None, {"action": "preview", "file_id": first["files"][0]["id"], "client_id": "browser-one"}))["request"]
+    assert preview["session_id"] == origin and preview["payload"]["file"]["session_id"] == target
+    assert preview["target_client_id"] == "browser-one"
+    with pytest.raises(UserError):
+        await app_operation(store, origin, None, {"action": "attach", "file_id": first["files"][0]["id"], "client_id": "browser-one"})
+
+
+@pytest.mark.parametrize("action", ["list", "read"])
+async def test_target_file_listing_rejects_foreign_or_missing_conversation_before_discovery(config, store, account, action):
+    user, origin, _ = account
+    other, _ = await Auth(store).register("foreign-file-catalog", "test-password")
+    foreign = await store.session(user_id=other["id"])
+    directory = config.data_dir / "files" / other["id"] / foreign
+    directory.mkdir(parents=True)
+    (directory / "private.md").write_text("Must not be discovered by another account")
+    for target in (foreign, "missing-conversation"):
+        with pytest.raises(UserError) as error:
+            await app_operation(store, origin, None, {"action": action, "session_id": target}, config)
+        assert error.value.code == "not_found"
+    assert not await store.rows("SELECT * FROM file_entries WHERE session_id=?", (foreign,))
+    assert not await store.rows("SELECT * FROM app_actions")
+
+
+@pytest.mark.parametrize("action", ["list", "read"])
+async def test_request_id_and_files_session_id_are_explicitly_mutually_exclusive(store, account, action):
+    _, origin, _ = account
+    requested = (await app_operation(store, origin, None, {"action": "open", "target": "history"}))["request"]
+    for file_arguments in ({"session_id": origin}, {"scope": "session"}, {"scope": "account"}):
+        with pytest.raises(ValueError, match="not both"):
+            await app_operation(store, origin, None, {"action": action, "id": requested["id"], **file_arguments})
+    read = await app_operation(store, origin, None, {"action": "read", "id": requested["id"]})
+    assert read["request"]["id"] == requested["id"] and not read["completed"]
+
+
+@pytest.mark.parametrize("action", ["list", "read"])
+async def test_account_file_catalog_matches_registered_account_files_without_scanning(config, store, account, action):
+    user, origin, _ = account
+    sibling = await store.session(user_id=user)
+    foreign_user, _ = await Auth(store).register("account-file-foreign", "test-password")
+    foreign = await store.session(user_id=foreign_user["id"])
+    await initialize_files(store)
+    for file_id, owner, session in (("origin-registered", user, origin), ("sibling-registered", user, sibling),
+                                   ("foreign-registered", foreign_user["id"], foreign)):
+        await store.execute("INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)", (file_id, owner, session, file_id + ".md", file_id + ".md", 3, "text/markdown", "output", now()))
+    # Account listing is the existing /api/files inventory, not a filesystem crawl.
+    for session in (origin, sibling):
+        directory = config.data_dir / "files" / user / session
+        directory.mkdir(parents=True)
+        (directory / "not-yet-indexed.md").write_text("Do not discover this during account listing")
+    requested = (await app_operation(store, origin, None, {"action": "open", "target": "files"}))["request"]
+    first = await app_operation(store, origin, None, {"action": action, "scope": "account", "limit": 1}, config)
+    second = await app_operation(store, origin, None, {"action": action, "scope": "account", "limit": 1, "offset": first["next_offset"]}, config)
+    assert first["files_scope"] == "account" and first["files_session_id"] is None
+    assert first["files_total"] == 2 and first["has_more"] and not second["has_more"]
+    assert {first["files"][0]["id"], second["files"][0]["id"]} == {"origin-registered", "sibling-registered"}
+    assert [item["id"] for item in first["pending"]] == [requested["id"]]
+    assert not await store.rows("SELECT id FROM file_entries WHERE name='not-yet-indexed.md'")
+    assert (await app_operation(store, origin, None, {"action": "read"}))["files_scope"] == "session"
+
+
+@pytest.mark.parametrize("action", ["list", "read"])
+async def test_account_file_scope_rejects_ambiguous_or_unsupported_combinations(store, account, action):
+    _, origin, _ = account
+    for extra in ({"session_id": origin}, {"id": "request"}, {"session_id": None}, {"id": None}):
+        with pytest.raises(ValueError):
+            await app_operation(store, origin, None, {"action": action, "scope": "account", **extra})
+    for scope in ("global", "project", None, False):
+        with pytest.raises(ValueError):
+            await app_operation(store, origin, None, {"action": action, "scope": scope})

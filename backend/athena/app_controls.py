@@ -19,9 +19,9 @@ OPEN_TARGETS = tuple(target for target in TARGETS if target != "preview")
 ERROR_CODES = ("frontend_conflict", "frontend_unavailable", "unavailable", "user_gesture_required", "file_not_found", "navigation_failed", "execution_failed", "dismissed", "reset", "interrupted")
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
 CATALOG = [
-    {"action": "list", "effect": "Discover application controls and current requests."},
+    {"action": "list", "optional": ["scope", "session_id", "limit", "offset"], "effect": "Discover application controls, origin requests and files in an owned conversation."},
     {"action": "snapshot", "required": ["client_id"], "effect": "Inspect one authenticated client semantic state, revision and freshness; no draft or form values."},
-    {"action": "read", "optional": ["id"], "effect": "Read pending requests and browser acknowledgements."},
+    {"action": "read", "optional": ["id", "scope", "session_id", "limit", "offset"], "effect": "Read request acknowledgements by id, or list owned files; id cannot combine with scope or session_id."},
     {"action": "open", "targets": list(OPEN_TARGETS), "effect": "Open a fixed application view."},
     {"action": "close", "targets": list(TARGETS), "effect": "Close a fixed application view."},
     {"action": "navigate", "required": ["session_id"], "effect": "Show another conversation owned by this account."},
@@ -97,7 +97,7 @@ async def app_operation(store, session_id, run_id, args, config=None):
     action = args.get("action", "list")
     if action not in {item["action"] for item in CATALOG}:
         raise ValueError("Unknown application action; use app action=list to discover controls.")
-    fields = {"op", "action"} | ({"id", "limit", "offset"} if action in ("list", "read") else {"target"} if action in ("open", "close") else {"session_id"} if action == "navigate" else {"file_id"} if action in ("attach", "detach", "preview", "download") else {"client_id"} if action == "snapshot" else set())
+    fields = {"op", "action"} | ({"id", "scope", "session_id", "limit", "offset"} if action in ("list", "read") else {"target"} if action in ("open", "close") else {"session_id"} if action == "navigate" else {"file_id"} if action in ("attach", "detach", "preview", "download") else {"client_id"} if action == "snapshot" else set())
     if action not in ("list", "read", "snapshot", "stop", "reset"):
         fields |= {"client_id", "expected_revision"}
     if "client_id" in args:
@@ -106,16 +106,31 @@ async def app_operation(store, session_id, run_id, args, config=None):
         raise ValueError("Use a positive frontend expected_revision.")
     if set(args) - fields:
         raise ValueError("Unsupported application arguments; secret form values never belong in an application tool.")
+    if action in ("list", "read") and "id" in args and ("session_id" in args or "scope" in args):
+        raise ValueError("Use either an application request id or a files session_id/scope, not both.")
+    files_scope = args.get("scope", "session")
+    if action in ("list", "read"):
+        if files_scope not in ("session", "account"):
+            raise ValueError("File scope must be session or account.")
+        if files_scope == "account" and ("session_id" in args or "id" in args):
+            raise ValueError("Account file scope cannot be combined with session_id or an application request id.")
     files = None
+    files_session_id = session_id
     if action in ("list", "read", "preview", "download", "attach", "detach"):
         await initialize_files(store)
     if action in ("list", "read") and not args.get("id"):
         limit, offset = args.get("limit", 50), args.get("offset", 0)
         if type(limit) is not int or not 1 <= limit <= 200 or type(offset) is not int or offset < 0:
             raise ValueError("Use file listing limit 1–200 and nonnegative offset.")
-        user_id = await store.call(lambda db: _scope(db, session_id))
-        files = (await list_session_files(store, config, user_id, session_id) if config is not None
-                 else await list_files(store, user_id, session_id))
+        files_session_id = None if files_scope == "account" else _identifier(args.get("session_id", session_id))
+        def file_scope(db):
+            user_id = _scope(db, session_id)
+            if files_session_id is not None:
+                _scope(db, files_session_id, user_id)
+            return user_id
+        user_id = await store.call(file_scope)
+        files = (await list_session_files(store, config, user_id, files_session_id) if config is not None and files_session_id is not None
+                 else await list_files(store, user_id, files_session_id))
     def operate(db):
         user_id = _scope(db, session_id)
         if action == "snapshot":
@@ -131,7 +146,7 @@ async def app_operation(store, session_id, run_id, args, config=None):
             return {"operations": CATALOG, "related_operations": RELATED_OPERATIONS,
                     "clients": frontend_state.clients(db, user_id),
                     "targeting": "UI actions accept client_id and expected_revision. Omit client_id only when exactly one fresh foreground client shows this conversation.",
-                    "files": files[offset:offset + limit], "files_total": len(files), "offset": offset,
+                    "files": files[offset:offset + limit], "files_scope": files_scope, "files_session_id": files_session_id, "files_total": len(files), "offset": offset,
                     "limit": limit, "has_more": offset + limit < len(files), "next_offset": min(offset + limit, len(files)),
                     "pending": [_public(row) for row in rows if row["status"] == "pending"],
                     "recent": [_public(row) for row in rows[:20]],

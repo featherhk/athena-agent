@@ -19,7 +19,7 @@
 | 改账户资料或头像、暂停任务 | 使用已有 account / cancel_task |
 | 收起/展开、移动、调整组件尺寸 | registry `kind:component, action:layout`；先读取 version/view_revision，详见 interface skill 的 references/bridge.md |
 
-没有实际文件 ID 时，不要伪造下载地址。先在文件区产生输出，再用 app list/read（不带 id）发现当前会话文件，返回 `files` 中的真实 id；无需打开浏览器触发登记。默认返回50条，可用 limit（1–200）与 offset 翻页。当前 download 是已有文件导出，不代表支持任意会话归档格式。
+没有实际文件 ID 时，不要伪造下载地址。先在文件区产生输出，再用 app list/read（不带 id）发现当前会话文件，返回 `files` 中的真实 id；无需打开浏览器触发登记。切换页面后也可在原任务中用 `app list/read, session_id` 查询同账号目标会话的文件，默认 `scope:session`，结果以 `files_scope` / `files_session_id` 标明文件范围；使用 `scope:account` 列出账号全部已登记文件（与文件面板一致，不扫描所有会话目录），此时不能同时传 `session_id` 或 request `id`；请求回执仍按原任务会话列出，request `id` 不能同时搭配任何显式 `scope` 或 `session_id`。默认返回50条，可用 limit（1–200）与 offset 翻页。当前 download 是已有文件导出，不代表支持任意会话归档格式。
 
 ## 观察、选择客户端与核验
 
