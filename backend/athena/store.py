@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 def now() -> str:
@@ -89,6 +89,8 @@ class Store:
             db.execute('CREATE INDEX IF NOT EXISTS events_archive ON events(type,encoding,seq)')
             from .activity import initialize as initialize_activity
             initialize_activity(db)
+            from .frontend_state import initialize as initialize_frontend_state
+            initialize_frontend_state(db)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         await self.call(migrate)
         from .context_controls import initialize_context_controls
@@ -150,10 +152,14 @@ class Store:
         return await self.call(lambda db: self._message(db, session_id, run_id, role, content, status, **kwargs))
 
     @staticmethod
-    def _enqueue(db, session_id, text, attachments=None, *, origin=None):
+    def _enqueue(db, session_id, text, attachments=None, *, origin=None, frontend_source=None):
+        if origin is not None and frontend_source is not None:
+            raise ValueError("Autonomous task inputs cannot inherit a browser source.")
         identifier = uid()
         db.execute("INSERT INTO runs(id,session_id,status,created_at) VALUES (?,?,'queued',?)", (identifier, session_id, now()))
         message_id = Store._message(db, session_id, identifier, "user", text, "queued")
+        from .frontend_state import bind_source
+        bind_source(db, session_id, identifier, message_id, frontend_source)
         if attachments:
             db.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(attachments, ensure_ascii=False), message_id))
         if origin is not None:
@@ -168,8 +174,8 @@ class Store:
             db.execute("UPDATE sessions SET title=? WHERE id=? AND title='新的事情'", (text[:24], session_id))
         return identifier
 
-    async def enqueue(self, session_id, text, attachments=None):
-        return await self.call(lambda db: self._enqueue(db, session_id, text, attachments))
+    async def enqueue(self, session_id, text, attachments=None, *, frontend_source=None):
+        return await self.call(lambda db: self._enqueue(db, session_id, text, attachments, frontend_source=frontend_source))
 
     async def claim(self, session_id):
         def claim(db):

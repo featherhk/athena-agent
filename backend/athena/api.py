@@ -37,6 +37,7 @@ class Input(BaseModel):
     text: str = Field(default="", max_length=30000)
     file_ids: list[str] = Field(default_factory=list, max_length=10)
     mode: Literal["queue", "interrupt"] = "queue"
+    frontend_client_id: str | None = Field(default=None, max_length=64, min_length=1, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class Credentials(BaseModel):
@@ -314,7 +315,9 @@ def create_app(config: Config | None = None):
         if not body.text.strip() and not body.file_ids:
             raise UserError("empty_message", "请写下你想做的事")
         attachments = await attachment_info(app.state.store, config, request.state.user["id"], session_id, body.file_ids)
-        return {"run_id": await app.state.engine.submit(session_id, body.text.strip(), body.mode, attachments)}
+        return {"run_id": await app.state.engine.submit(session_id, body.text.strip(), body.mode, attachments,
+                frontend_client_id=body.frontend_client_id,
+                frontend_auth_hash=token_hash(request.cookies[COOKIE]) if body.frontend_client_id is not None else None)}
 
     @app.post("/api/sessions/{session_id}/stop")
     async def stop(session_id: str, request: Request):

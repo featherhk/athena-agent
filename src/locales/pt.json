@@ -23,6 +23,7 @@
   "message": "Mensagem",
   "placeholder": "Enviar uma mensagem…",
   "send": "Enviar",
+  "send.notSent": "Sua mensagem não foi enviada. Seu rascunho continua aqui. Tente novamente.",
   "queue": "Enviar em seguida",
   "interrupt": "Esta primeiro",
   "stop": "Parar",

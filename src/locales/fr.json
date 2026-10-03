@@ -23,6 +23,7 @@
   "message": "Message",
   "placeholder": "Envoyer un message…",
   "send": "Envoyer",
+  "send.notSent": "Votre message n’a pas été envoyé. Votre brouillon est toujours là. Veuillez réessayer.",
   "queue": "Envoyer ensuite",
   "interrupt": "Celle-ci d’abord",
   "stop": "Arrêter",

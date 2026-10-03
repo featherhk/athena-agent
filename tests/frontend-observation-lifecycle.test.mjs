@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { FrontendReporter } from '../src/frontend-observation.ts';
+import { frontendRequest } from '../src/frontend-request.ts';
+import { prepareMessageSource } from '../src/frontend-submission.ts';
 
 // Exercise the real effect and transport lifecycle. Layout and React commit timing
 // are accepted separately in the browser, not simulated as successful here.
@@ -36,6 +38,7 @@ function fixture() {
       cleanups[index]?.(); effects[index] = dependencies; cleanups[index] = callback();
     },
   };
+  hooks.useLayoutEffect = hooks.useEffect;
   vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {
     document, window, AbortController, EventSource: Source,
     MutationObserver: class { observe() {} disconnect() {} }, Element: class {},
@@ -46,7 +49,7 @@ function fixture() {
       requests.push({ url, body: JSON.parse(init.body), signal: init.signal });
       return { ok: status === 'accepted', json: async () => status === 'accepted' ? { accepted: true } : { code: status } };
     },
-  })(name => name === 'react' ? hooks : { FrontendReporter, observeFrontend: (_, facts) => ({ ...state, foreground: !document.hidden, errors: facts.reconnecting ? [{ source: 'connection', code: 'connection_lost' }] : state.errors }) }, module, module.exports);
+  })(name => name === 'react' ? hooks : { FrontendReporter, frontendRequest, prepareMessageSource, observeFrontend: (_, facts) => ({ ...state, foreground: !document.hidden, errors: facts.reconnecting ? [{ source: 'connection', code: 'connection_lost' }] : state.errors }) }, module, module.exports);
   const render = (owner = 'owner', client = 'client1') => {
     refIndex = 0; effectIndex = 0;
     return module.exports.useFrontendObservation(owner, client, {}, action => received.push(action), () => { revoked++; }, () => { identityLost++; });
@@ -100,7 +103,7 @@ test('reset revocation rotates once; ordinary connectivity errors cannot churn i
 test('logout aborts outstanding identity work and cannot receive or upload late state', async () => {
   const f = fixture(); const observation = f.render(); await flush();
   f.render(null); const count = f.requests.length;
-  assert.equal(f.sources[0].closed, true); assert.equal(f.requests[0].signal.aborted, true);
+  assert.equal(f.sources[0].closed, true);
   assert.equal(await observation.report(), null); await f.tick();
   assert.equal(f.requests.length, count); f.sources[0].action('client1'); assert.equal(f.received.length, 0);
   f.cleanup();

@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { AppAction } from './api';
 import { FrontendReporter, observeFrontend, type FrontendFacts } from './frontend-observation';
+import { prepareMessageSource } from './frontend-submission';
+import { frontendRequest } from './frontend-request';
 
 /** Observe the fixed shell, not the user's form contents or generated iframe DOM. */
 export function useFrontendObservation(owner: string | null, clientId: string, facts: FrontendFacts, onAction: (action: AppAction) => void, onRevoked: () => void, onIdentityLost: () => void) {
   const current = useRef(facts), receive = useRef(onAction), channel = useRef<FrontendReporter | null>(null);
+  const committed = useRef<{ clientId: string; sessionId: string | null } | null>(null);
+  useLayoutEffect(() => { committed.current = owner ? { clientId, sessionId: facts.sessionId } : null; });
   const revoked = useRef(onRevoked); revoked.current = onRevoked;
   const identityLost = useRef(onIdentityLost); identityLost.current = onIdentityLost;
   current.current = facts; receive.current = onAction;
@@ -17,17 +21,18 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     const reporter = new FrontendReporter(clientId, () => {
       const state = observeFrontend(document, { ...current.current, reconnecting: current.current.reconnecting || channelFailed });
       return departing ? { ...state, foreground: false } : state;
-    }, async observation => {
+    }, observation => frontendRequest(controller.signal, async signal => {
       const response = await fetch('/api/frontend/observation', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(observation), signal: controller.signal, keepalive: true });
+        body: JSON.stringify(observation), signal, keepalive: true });
       const result = await response.json();
+      if (signal.aborted) throw new Error('frontend_observation_unavailable');
       if (!disposed && ['frontend_identity_revoked', 'frontend_identity_changed', 'login_required'].includes(result.code)) {
         checkingIdentity = true; events?.close(); events = null;
         try {
-          const auth = await fetch('/api/auth/me', { signal: controller.signal });
+          const auth = await fetch('/api/auth/me', { signal });
           if (!auth.ok) throw new Error('frontend_authentication_unavailable');
           const identity = await auth.json();
-          if (!disposed) {
+          if (!disposed && !signal.aborted) {
             reporter.stop();
             // Cookies are shared by tabs. Rebind only after verifying the same owner;
             // never let an old tab attach its UI or drafts to a different account.
@@ -36,7 +41,7 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
         } finally { checkingIdentity = false; }
       }
       if (!response.ok || result.accepted !== true) throw new Error('frontend_observation_unavailable');
-    });
+    }));
     channel.current = reporter;
     const cancelReconnect = () => { if (reconnectTimer !== undefined) clearTimeout(reconnectTimer); reconnectTimer = undefined; };
     const scheduleReconnect = () => {
@@ -116,5 +121,9 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
   useEffect(() => { schedule.current(); });
   const report = useCallback(() => channel.current?.report(true) || Promise.resolve(null), []);
   const snapshot = useCallback(() => channel.current?.snapshot() || null, []);
-  return { report, snapshot };
+  const prepareSubmission = useCallback((sessionId: string, clientId: string, isCurrent: () => boolean) => prepareMessageSource({
+    sessionId, clientId, rendered: () => committed.current,
+    current: () => isCurrent() && !document.hidden, report,
+  }), [report]);
+  return { report, snapshot, prepareSubmission };
 }

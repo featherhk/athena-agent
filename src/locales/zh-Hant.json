@@ -23,6 +23,7 @@
   "message": "訊息",
   "placeholder": "傳送訊息…",
   "send": "傳送",
+  "send.notSent": "訊息尚未送出，草稿已保留。請稍後再試。",
   "queue": "接著傳送",
   "interrupt": "先處理這則",
   "stop": "停止",

@@ -4,6 +4,7 @@ This is a last-observation cache, not a DOM recorder or a source of instructions
 All mutation and account checks execute on Store's single SQLite worker.
 """
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
 import json
 from typing import Annotated, Literal
 
@@ -93,6 +94,67 @@ def initialize(db):
         expires_at TEXT NOT NULL)''')
     db.execute('''CREATE TABLE IF NOT EXISTS frontend_revocations (client_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TEXT NOT NULL)''')
     db.execute('CREATE INDEX IF NOT EXISTS frontend_clients_owner ON frontend_clients(user_id,expires_at)')
+    db.execute('''CREATE TABLE IF NOT EXISTS run_frontend_sources (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id), message_id TEXT NOT NULL REFERENCES messages(id),
+        user_id TEXT NOT NULL REFERENCES users(id), client_id TEXT NOT NULL,
+        auth_hash TEXT NOT NULL, captured_at TEXT NOT NULL)''')
+
+
+@dataclass(frozen=True)
+class FrontendSource:
+    """Host-validated input provenance; never a provider-facing credential."""
+    client_id: str
+    session_id: str
+    user_id: str
+    auth_hash: str = field(repr=False)
+    captured_at: str
+
+
+def capture_source(db, session_id, client_id, auth_hash):
+    """Validate before interrupting work; keep the accepted browser identity fixed."""
+    if client_id is None:
+        return None
+    owner = db.execute('SELECT user_id FROM sessions WHERE id=?', (session_id,)).fetchone()
+    if owner is None or not owner['user_id']:
+        raise UserError('frontend_unavailable', 'This message has no authenticated browser source.')
+    _authenticated(db, owner['user_id'], auth_hash)
+    row = client(db, owner['user_id'], client_id, auth_hash=auth_hash, fresh=True)
+    if row['session_id'] != session_id or not json.loads(row['state'])['foreground']:
+        raise UserError('frontend_unavailable', 'Report the current conversation before sending this message.')
+    return FrontendSource(client_id, session_id, owner['user_id'], auth_hash, now())
+
+
+def bind_source(db, session_id, run_id, message_id, source):
+    if source is None:
+        return
+    if not isinstance(source, FrontendSource) or source.session_id != session_id or not db.execute(
+            'SELECT 1 FROM sessions WHERE id=? AND user_id=?', (session_id, source.user_id)).fetchone():
+        raise UserError('frontend_unavailable', 'The accepted browser source does not own this conversation.')
+    initialize(db)
+    db.execute('INSERT INTO run_frontend_sources VALUES (?,?,?,?,?,?)',
+               (run_id, message_id, source.user_id, source.client_id, source.auth_hash, source.captured_at))
+
+
+def run_source(db, user_id, session_id, run_id):
+    initialize(db)
+    if run_id is None:
+        return None
+    return db.execute('''SELECT f.* FROM run_frontend_sources f
+        JOIN runs r ON r.id=f.run_id JOIN sessions s ON s.id=r.session_id
+        WHERE f.run_id=? AND r.session_id=? AND s.user_id=? AND f.user_id=?''',
+        (run_id, session_id, user_id, user_id)).fetchone()
+
+
+def source_summary(db, user_id, session_id, run_id):
+    source = run_source(db, user_id, session_id, run_id)
+    if source is None:
+        return None
+    try:
+        row = client(db, user_id, source['client_id'], auth_hash=source['auth_hash'], fresh=True)
+    except UserError:
+        return {'client_id': source['client_id'], 'stale': True, 'available': False}
+    return {'client_id': source['client_id'], 'stale': False,
+            'available': bool(json.loads(row['state'])['foreground'])}
 
 
 def _authenticated(db, user_id, auth_hash):
@@ -133,7 +195,14 @@ def snapshot(db, user_id, client_id):
             'scope': 'Authenticated client-reported semantics; no drafts, form values, DOM, clipboard or pixel verification.'}
 
 
-def target(db, user_id, session_id, client_id=None, expected_revision=None):
+def target(db, user_id, session_id, client_id=None, expected_revision=None, run_id=None):
+    if client_id is None:
+        source = run_source(db, user_id, session_id, run_id)
+        if source is not None:
+            # An expired, reset or newly authenticated source never falls back to
+            # another window. Its original conversation may have navigated away.
+            client(db, user_id, source['client_id'], auth_hash=source['auth_hash'], fresh=True)
+            client_id = source['client_id']
     if client_id is None:
         choices = [item for item in clients(db, user_id) if not item['stale'] and item['foreground'] and item['session_id'] == session_id]
         if len(choices) > 1:

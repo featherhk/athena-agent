@@ -23,6 +23,7 @@
   "message": "消息",
   "placeholder": "发送消息…",
   "send": "发送",
+  "send.notSent": "消息还没有发出，草稿已保留。请稍后再试。",
   "queue": "加入待办",
   "interrupt": "先处理这条",
   "stop": "停止",

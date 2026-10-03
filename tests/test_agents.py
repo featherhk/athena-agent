@@ -398,8 +398,8 @@ async def test_stop_during_spawn_commit_cannot_leave_an_unowned_child(engine, st
     enqueue, call = Store._enqueue, store.call
     provider_calls = 0
 
-    def delayed_enqueue(db, session_id, text, attachments=None, *, origin=None):
-        run = enqueue(db, session_id, text, attachments, origin=origin)
+    def delayed_enqueue(db, session_id, text, attachments=None, *, origin=None, frontend_source=None):
+        run = enqueue(db, session_id, text, attachments, origin=origin, frontend_source=frontend_source)
         if origin and origin['kind'] == 'agent_task':
             entered.set()
             assert release.wait(5), 'Test did not release the database worker'

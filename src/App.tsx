@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, empty, defaultPreferences } from './api';
 import type { User, Snapshot, Session, Preferences, AppAction, Component, ViewChange } from './api';
 import Orb, { AthenaMark } from './Orb';
 import type { Phase } from './Orb';
 import TaskContinuity, { useTaskContinuity, useVisibleActivity } from './TaskContinuity';
 import type { ActivityItem } from './task-continuity';
+import { SubmissionSourceError } from './frontend-submission';
 import Widget from './Widget';
 import ComponentControls from './ComponentControls';
 import { arrangePanels, floatingPlacements, placementOf } from './component-layout';
@@ -27,6 +28,9 @@ import { checkClientVersion } from './client-version';
 import { consumeAppAction, scopeGuard, interruptedReceipt } from './app-actions';
 import type { AppScope, AppReceipt } from './app-actions';
 import { DraftStore } from './draft-store';
+import { SessionSelection } from './session-selection';
+import { SubmissionBarrier, prepareAppClaim } from './submission-barrier';
+import type { SubmissionTicket } from './submission-barrier';
 import type { Draft } from './draft-store';
 import ErrorBoundary from './ErrorBoundary';
 import { useI18n, languages, errorMessage } from './i18n';
@@ -68,6 +72,9 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [sending, setSending] = useState(false);
+  const [submissionCommit, setSubmissionCommit] = useState(0);
+  const submissions = useRef(new SubmissionBarrier());
+  useLayoutEffect(() => { submissions.current.commit(submissionCommit); }, [submissionCommit]);
   const [resetting, setResetting] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [reconnecting, setReconnecting] = useState(false);
@@ -92,6 +99,13 @@ export default function App() {
   const authEpoch = useRef(0);
   const uiScope = useRef<AppScope>({ owner: null, session: null, generation: 0, control: 0 });
   const drafts = useRef<DraftStore | null>(null);
+  const selection = useRef<SessionSelection | null>(null);
+  if (!selection.current) {
+    let tabStorage: Storage | null = null, sharedStorage: Storage | null = null;
+    try { tabStorage = sessionStorage; } catch { /* Memory fallback. */ }
+    try { sharedStorage = localStorage; } catch { /* Tab persistence still works. */ }
+    selection.current = new SessionSelection(tabStorage, sharedStorage);
+  }
   if (!drafts.current) {
     let storage: Storage | null = null; try { storage = sessionStorage; } catch { /* Use memory. */ }
     drafts.current = new DraftStore(storage);
@@ -176,6 +190,17 @@ export default function App() {
   }, []);
   function effectFor(id: string) { return Object.values(textEffects).map(effects => effects[id]).filter(Boolean).at(-1); }
   function currentGuard() { return scopeGuard(() => uiScope.current); }
+  function submissionScope() {
+    const scope = uiScope.current;
+    return JSON.stringify([scope.owner, scope.session, scope.generation, scope.control, appClient.current]);
+  }
+  function finishSubmission(ticket: SubmissionTicket, isCurrent?: () => boolean) {
+    const revision = submissions.current.finish(ticket);
+    if (revision !== null) {
+      if (isCurrent?.()) setSending(false);
+      setSubmissionCommit(revision);
+    }
+  }
   function showDraft(draft: Draft) { setText(draft.text); setAttached(draft.attached); }
   function editDraft(change: Partial<Pick<Draft, 'text' | 'attached'>>) {
     const { owner, session: sid } = uiScope.current;
@@ -188,6 +213,7 @@ export default function App() {
   function navigate(next: string | null, migrate = false) {
     pendingActivityView.current = null;
     const scope = uiScope.current;
+    selection.current!.write(scope.owner, next);
     const draft = migrate ? drafts.current!.move(scope.owner, scope.session, next) : drafts.current!.read(scope.owner, next);
     uiScope.current = { ...scope, session: next, generation: scope.generation + 1 };
     generation.current++; setSession(next); showDraft(draft);
@@ -296,7 +322,7 @@ export default function App() {
       const isCurrent = () => scopeStillCurrent() && isSameAccount() && !document.hidden;
       appActionActive.current++;
       try {
-        await frontendObservation.report();
+        if (!await prepareAppClaim({ barrier: submissions.current, scope: submissionScope(), current: isCurrent, report: frontendObservation.report })) return;
         const applied = await consumeAppAction(action, client, api, (request, guard) => appActionHandler.current(request, guard), isCurrent, isSameAccount);
         if (applied && action.action === 'sign_out' && isSameAccount()) acceptUser(null);
       } finally { appActionActive.current--; }
@@ -309,8 +335,7 @@ export default function App() {
     const previous = uiScope.current.owner;
     appClient.current = crypto.randomUUID();
     authEpoch.current++; generation.current++;
-    let nextSession: string | null = null;
-    try { if (next) nextSession = localStorage.getItem('athena-session:' + next.id); } catch { /* Private browser mode. */ }
+    let nextSession = selection.current!.read(next?.id || null);
     // A guest's unsent first message may accompany login. A signed-out account's draft never does.
     if (next && !previous) {
       const guest = drafts.current!.read(null, null), existing = drafts.current!.read(next.id, nextSession);
@@ -400,12 +425,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', escape);
   }, []);
   useEffect(() => {
-    try {
-      if (user) {
-        if (session) localStorage.setItem('athena-session:' + user.id, session);
-        else localStorage.removeItem('athena-session:' + user.id);
-      }
-    } catch { /* Session navigation also works without browser persistence. */ }
+    selection.current!.write(user?.id || null, session);
     const ticket = ++generation.current;
     setSnapshot(empty()); setPhase('idle'); setReconnecting(false);
     if (!session || !user) return;
@@ -474,6 +494,8 @@ export default function App() {
       return;
     }
     if (!user) { requestLogin(); return; }
+    const submission = submissions.current.begin(submissionScope());
+    if (!submission) { if (throwOnError) throw new Error('voice_busy'); return; }
     const owner = user.id;
     let isCurrent = currentGuard(), sid = session;
     let sentDraft = drafts.current!.read(owner, sid);
@@ -484,19 +506,24 @@ export default function App() {
         sid = (await api<{ id: string }>('/sessions', {})).id;
         if (!isCurrent()) return;
         const unchanged = drafts.current!.read(owner, null).revision === sentDraft.revision;
-        navigate(sid, true); isCurrent = currentGuard(); setSending(true);
+        navigate(sid, true); submissions.current.move(submission, submissionScope()); isCurrent = currentGuard(); setSending(true);
         sentDraft = { ...sentDraft, revision: unchanged ? drafts.current!.read(owner, sid).revision : -1 };
       }
       if (help && fromComposer && mode === 'queue' && help.questions.length === 1) {
         await api(`/sessions/${sid}/help/${help.id}/answer`, { answers: { [help.questions[0].id]: value }, file_ids: [...sentFiles] });
-      } else await api(`/sessions/${sid}/messages`, { text: value, mode, file_ids: [...sentFiles] });
+      } else {
+        const clientId = appClient.current;
+        const frontendClientId = await frontendObservation.prepareSubmission(sid, clientId, () => isCurrent() && appClient.current === clientId);
+        if (!isCurrent()) return;
+        await api(`/sessions/${sid}/messages`, { text: value, mode, file_ids: [...sentFiles], frontend_client_id: frontendClientId });
+      }
       if (fromComposer) {
         const remaining = drafts.current!.submitted(owner, sid, sentDraft);
         if (uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(remaining);
         if (isCurrent()) input.current?.focus();
       }
-    } catch (e) { if (isCurrent()) setError((e as Error).message); if (throwOnError) throw e; }
-    finally { if (isCurrent()) setSending(false); }
+    } catch (e) { if (isCurrent()) setError(e instanceof SubmissionSourceError ? fromComposer ? t('send.notSent') : errorMessage(e.code) : (e as Error).message); if (throwOnError) throw e; }
+    finally { finishSubmission(submission, isCurrent); }
   }
   async function ensureVoiceSession() {
     if (!user) { requestLogin(); return null; }
@@ -509,13 +536,18 @@ export default function App() {
   }
   async function submitVoice(value: string) {
     if (session && help && voiceQuestion) {
-      const answers = { ...voiceAnswers, [voiceQuestion.id]: value };
-      if (help.questions.some(question => !(question.id in answers))) {
-        setVoiceHelpAnswers({ id: help.id, answers });
-      } else {
-        await api(`/sessions/${session}/help/${help.id}/answer`, { answers, file_ids: [] });
-        setVoiceHelpAnswers({ id: '', answers: {} });
-      }
+      const submission = submissions.current.begin(submissionScope());
+      if (!submission) throw new Error('voice_busy');
+      const isCurrent = currentGuard();
+      try {
+        const answers = { ...voiceAnswers, [voiceQuestion.id]: value };
+        if (help.questions.some(question => !(question.id in answers))) {
+          setVoiceHelpAnswers({ id: help.id, answers });
+        } else {
+          await api(`/sessions/${session}/help/${help.id}/answer`, { answers, file_ids: [] });
+          if (isCurrent()) setVoiceHelpAnswers({ id: '', answers: {} });
+        }
+      } finally { finishSubmission(submission); }
     } else await submit(value, 'interrupt', false, true);
   }
   async function interruptVoice() {
@@ -537,6 +569,8 @@ export default function App() {
   }
   async function answerHelp(answers: Record<string, string>) {
     if (!session || !help || sending || uploading) return;
+    const submission = submissions.current.begin(submissionScope());
+    if (!submission) return;
     const sid = session, owner = user!.id, isCurrent = currentGuard();
     const sentFiles = new Set(attached.map(file => file.id));
     setSending(true); setError('');
@@ -549,7 +583,7 @@ export default function App() {
       const next = await api<Snapshot>(`/sessions/${sid}`);
       if (isCurrent()) setSnapshot(old => next.cursor >= old.cursor ? next : old);
     } catch (e) { if (isCurrent()) setError((e as Error).message); }
-    finally { if (isCurrent()) setSending(false); }
+    finally { finishSubmission(submission, isCurrent); }
   }
   async function reset() {
     setActivity(false); pendingActivityView.current = null;

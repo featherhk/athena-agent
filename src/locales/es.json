@@ -23,6 +23,7 @@
   "message": "Mensaje",
   "placeholder": "Enviar un mensaje…",
   "send": "Enviar",
+  "send.notSent": "Tu mensaje no se ha enviado. El borrador sigue aquí. Inténtalo de nuevo.",
   "queue": "Enviar después",
   "interrupt": "Este primero",
   "stop": "Detener",

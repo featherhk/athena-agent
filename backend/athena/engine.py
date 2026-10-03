@@ -77,7 +77,7 @@ class Engine:
         if not task.cancelled() and task.exception():
             self.loop.call_exception_handler({"message": "Athena session actor failed", "exception": task.exception()})
 
-    async def submit(self, session_id, text, mode="queue", attachments=None):
+    async def submit(self, session_id, text, mode="queue", attachments=None, *, frontend_client_id=None, frontend_auth_hash=None):
         began = self.reset_clock
         owner = await self.tools.owner(session_id)
         if owner["user_id"] in self.resetting_users:
@@ -90,9 +90,15 @@ class Engine:
         async with self.controls.setdefault(session_id, asyncio.Lock()):
             if owner["user_id"] in self.resetting_users or self.user_reset_versions.get(owner["user_id"], 0) > began:
                 raise UserError("resetting", "This input was superseded by reset. Send it again when ready.")
+            from .frontend_state import capture_source
+            source = None
+            if frontend_client_id is not None:
+                source = await self.store.call(lambda db: capture_source(db, session_id, frontend_client_id, frontend_auth_hash))
+                if owner["user_id"] in self.resetting_users or self.user_reset_versions.get(owner["user_id"], 0) > began:
+                    raise UserError("resetting", "This input was superseded by reset. Send it again when ready.")
             if mode == "interrupt":
                 await self._stop(session_id)
-            run_id = await self.store.enqueue(session_id, text, attachments)
+            run_id = await self.store.enqueue(session_id, text, attachments, frontend_source=source)
         await self.emit(session_id, "refresh", {})
         self.kick(session_id)
         return run_id

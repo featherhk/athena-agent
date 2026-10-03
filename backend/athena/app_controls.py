@@ -1,5 +1,6 @@
 """Durable, account-owned application actions with browser execution receipts."""
 import asyncio
+import hashlib
 import json
 import re
 from typing import Literal
@@ -18,6 +19,7 @@ TARGETS = ("menu", "history", "files", "account", "appearance", "developer", "pa
 OPEN_TARGETS = tuple(target for target in TARGETS if target != "preview")
 ERROR_CODES = ("frontend_conflict", "frontend_unavailable", "unavailable", "user_gesture_required", "file_not_found", "navigation_failed", "execution_failed", "dismissed", "reset", "interrupted")
 INACTIVE_RUN_STATUSES = ("failed", "cancelled", "interrupted", "stopped")
+INPUT_CLEAR_ACTIONS = frozenset(("open", "close", "preview", "navigate"))
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
 CATALOG = [
     {"action": "list", "optional": ["scope", "session_id", "limit", "offset"], "effect": "Discover application controls, origin requests and files in an owned conversation."},
@@ -77,6 +79,7 @@ def _scope(db, session_id, user_id=None):
 def _public(row):
     item = {key: row[key] for key in ("id", "session_id", "run_id", "action", "status", "error_code", "created_at", "dispatched_at", "resolved_at")}
     item["payload"] = json.loads(row["payload"])
+    item["payload"].pop("_claim_guard", None)
     item["target_client_id"] = row["target_client_id"]
     item["expected_revision"] = row["expected_revision"]
     item["receipt"] = json.loads(row["receipt"]) if row["receipt"] else None
@@ -92,6 +95,44 @@ def _identifier(value):
     if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
         raise ValueError("Use a valid existing identifier.")
     return value
+
+
+def _input_clear_state_hash(state):
+    """Compare all observed semantics except the single input-clear transition."""
+    remaining = {key: value for key, value in state.items() if key != "has_unsent_changes"}
+    return hashlib.sha256(json.dumps(remaining, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def _input_clear_guard(db, user_id, session_id, run_id, selected, action, args):
+    if action not in INPUT_CLEAR_ACTIONS or "expected_revision" in args:
+        return None
+    source = frontend_state.run_source(db, user_id, session_id, run_id)
+    state = json.loads(selected["state"])
+    if (source is None or source["client_id"] != selected["client_id"]
+            or source["auth_hash"] != selected["auth_hash"] or not state["has_unsent_changes"]):
+        return None
+    return {"kind": "source_input_cleared", "revision": selected["revision"],
+            "state_hash": _input_clear_state_hash(state)}
+
+
+def _claim_revision(db, row, observed):
+    expected = row["expected_revision"]
+    guard = json.loads(row["payload"]).get("_claim_guard")
+    if (row["action"] not in INPUT_CLEAR_ACTIONS or not isinstance(guard, dict)
+            or guard.get("kind") != "source_input_cleared" or guard.get("revision") != expected
+            or observed["revision"] != expected + 1):
+        return expected
+    source = frontend_state.run_source(db, row["user_id"], row["session_id"], row["run_id"])
+    state = json.loads(observed["state"])
+    if (source is None or source["client_id"] != row["target_client_id"]
+            or source["client_id"] != observed["client_id"] or source["auth_hash"] != observed["auth_hash"]
+            or observed["session_id"] != row["target_session_id"] or state["has_unsent_changes"]
+            or _input_clear_state_hash(state) != guard.get("state_hash")):
+        return expected
+    # Only this one revision may be rebased. The guard stays private in durable
+    # storage; the caller receives the new exact revision and still checks it.
+    return observed["revision"]
 
 
 async def app_operation(store, session_id, run_id, args, config=None):
@@ -147,7 +188,8 @@ async def app_operation(store, session_id, run_id, args, config=None):
             rows = db.execute("SELECT * FROM app_actions WHERE user_id=? AND session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 50", (user_id, session_id)).fetchall()
             return {"operations": CATALOG, "related_operations": RELATED_OPERATIONS,
                     "clients": frontend_state.clients(db, user_id),
-                    "targeting": "UI actions accept client_id and expected_revision. Omit client_id only when exactly one fresh foreground client shows this conversation.",
+                    "source": frontend_state.source_summary(db, user_id, session_id, run_id),
+                    "targeting": "UI actions default to this run's source client, even after navigation. An unavailable source never falls back. Without a source, exactly one fresh foreground client must show this conversation. Explicit client_id overrides the default.",
                     "files": files[offset:offset + limit], "files_scope": files_scope, "files_session_id": files_session_id, "files_total": len(files), "offset": offset,
                     "limit": limit, "has_more": offset + limit < len(files), "next_offset": min(offset + limit, len(files)),
                     "pending": [_public(row) for row in rows if row["status"] == "pending"],
@@ -181,9 +223,11 @@ async def app_operation(store, session_id, run_id, args, config=None):
                     raise UserError("file_not_found", "The file is unavailable in this scope.")
                 payload["file"] = public_file(row)
                 payload["file_id"] = identifier
-        selected = frontend_state.target(db, user_id, session_id, args.get("client_id"), args.get("expected_revision"))
+        selected = frontend_state.target(db, user_id, session_id, args.get("client_id"), args.get("expected_revision"), run_id)
         if action in ("attach", "detach") and selected["session_id"] != session_id:
             raise UserError("frontend_conflict", "Attachment changes require the selected browser to show this conversation.")
+        if guard := _input_clear_guard(db, user_id, session_id, run_id, selected, action, args):
+            payload["_claim_guard"] = guard
         # Opaque forms and file pickers remain in the fixed shell; no secret or path input.
         identifier = uid()
         db.execute("INSERT INTO app_actions(id,user_id,session_id,run_id,action,payload,status,created_at,target_client_id,expected_revision,target_session_id) VALUES (?,?,?,?,?,?,'pending',?,?,?,?)",
@@ -225,7 +269,8 @@ async def claim_app_action(store, session_id, user_id, action_id, client_id, aut
                 row = db.execute("SELECT * FROM app_actions WHERE id=?", (action_id,)).fetchone()
                 return {"accepted": False, "request": _public(row)}
         try:
-            frontend_state.target(db, user_id, session_id, client_id, row["expected_revision"])
+            expected_revision = _claim_revision(db, row, observed)
+            frontend_state.target(db, user_id, session_id, client_id, expected_revision)
             if observed["session_id"] != row["target_session_id"]:
                 raise UserError("frontend_conflict", "The browser changed conversations before this action was applied.")
         except UserError as exc:
@@ -233,7 +278,8 @@ async def claim_app_action(store, session_id, user_id, action_id, client_id, aut
             row = db.execute("SELECT * FROM app_actions WHERE id=?", (action_id,)).fetchone()
             _event(db, row)
             return {"accepted": False, "request": _public(row)}
-        db.execute("UPDATE app_actions SET status='dispatched',client_id=?,dispatched_at=? WHERE id=?", (client_id, now(), action_id))
+        db.execute("UPDATE app_actions SET status='dispatched',client_id=?,dispatched_at=?,expected_revision=? WHERE id=?",
+                   (client_id, now(), expected_revision, action_id))
         row = db.execute("SELECT * FROM app_actions WHERE id=?", (action_id,)).fetchone()
         _event(db, row)
         return {"accepted": True, "request": _public(row)}

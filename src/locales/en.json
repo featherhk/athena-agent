@@ -23,6 +23,7 @@
   "message": "Message",
   "placeholder": "Send a message…",
   "send": "Send",
+  "send.notSent": "Your message hasn’t been sent. Your draft is still here. Please try again.",
   "queue": "Send next",
   "interrupt": "This first",
   "stop": "Stop",

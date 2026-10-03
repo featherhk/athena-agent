@@ -12,7 +12,7 @@ Root conversations aggregate child help. The feed distinguishes complete, failed
 
 The existing runtime envelope exposes the same discovery, acknowledgement and conversation stop functions. Opening the activity view uses the existing app action receipt. Details are loaded from the application skill; the stable system prefix does not change.
 
-This is in-app continuity. It does not establish OS push notifications, remote desktop login, cross-device file synchronization, or a fully replaceable service graph. Source-window affinity remains a separate architecture gap.
+This is in-app continuity. It does not establish OS push notifications, remote desktop login, cross-device file synchronization, or a fully replaceable service graph. The current checkout also binds messages to their source window; see [frontend state](frontend-state.md). A document reload creates a new client identity, so an older run does not automatically follow it; further UI actions require a verified explicit target when the original source is unavailable.
 
 ## Acceptance
 
