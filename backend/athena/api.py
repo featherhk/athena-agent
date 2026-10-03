@@ -56,6 +56,10 @@ def public_message(message):
     result["attachments"] = [{k: v for k, v in item.items() if k != "workspace_path"} for item in json.loads(message.get("attachments") or "[]")]
     if message.get("help_reply"):
         result["help_reply"] = json.loads(message["help_reply"])
+    from .task_events import task_origin
+    origin = task_origin(message.get('origin')) if message.get('role') == 'user' else None
+    if origin:
+        result['origin'] = origin
     return result
 
 

@@ -152,6 +152,10 @@ class ContextControls:
                     messages.append({key: row[key] for key in ('id', 'seq', 'role', 'run_id', 'status')}
                                     | {'content': text[start:stop], 'content_offset': start, 'total_chars': len(text),
                                        'clipped': row['id'] in clips, 'original_chars': len(row['content'])})
+                    from .task_events import task_origin
+                    origin = task_origin(row.get('origin')) if row['role'] == 'user' else None
+                    if origin:
+                        messages[-1]['origin'] = origin
                     if len(messages) >= 100:
                         end = min(end, row_end)
                         break

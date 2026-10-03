@@ -14,6 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
+SCHEMA_VERSION = 11
 
 
 def now() -> str:
@@ -49,7 +50,7 @@ class Store:
     async def initialize(self):
         schema = Path(__file__).with_name("schema.sql").read_text()
         def migrate(db):
-            if db.execute('PRAGMA user_version').fetchone()[0] > 10:
+            if db.execute('PRAGMA user_version').fetchone()[0] > SCHEMA_VERSION:
                 raise ValueError('This database requires a newer Athena version')
             db.executescript(schema)
             # Additive v1 -> v2 migration: retain all pre-login local data.
@@ -65,6 +66,7 @@ class Store:
                 ("messages", "attachments", "TEXT NOT NULL DEFAULT '[]'"),
                 ("messages", "context_note", "TEXT NOT NULL DEFAULT ''"),
                 ("messages", "help_reply", "TEXT"),
+                ("messages", "origin", "TEXT"),
                 ("requests", "tool_versions", "TEXT"),
                 ("events", "encoding", "TEXT NOT NULL DEFAULT 'json'"),
                 ("events", "base_seq", "INTEGER REFERENCES events(seq)"),
@@ -80,8 +82,11 @@ class Store:
                 backfill_help_replies(db)
             from .memory import migrate_memories
             migrate_memories(db)
+            if db.execute('PRAGMA user_version').fetchone()[0] < 11:
+                from .task_events import backfill_task_origins
+                backfill_task_origins(db)
             db.execute('CREATE INDEX IF NOT EXISTS events_archive ON events(type,encoding,seq)')
-            db.execute("PRAGMA user_version=10")
+            db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         await self.call(migrate)
         from .context_controls import initialize_context_controls
         await initialize_context_controls(self)
@@ -140,19 +145,21 @@ class Store:
         return await self.call(lambda db: self._message(db, session_id, run_id, role, content, status, **kwargs))
 
     @staticmethod
-    def _enqueue(db, session_id, text, attachments=None):
+    def _enqueue(db, session_id, text, attachments=None, *, origin=None):
         identifier = uid()
         db.execute("INSERT INTO runs(id,session_id,status,created_at) VALUES (?,?,'queued',?)", (identifier, session_id, now()))
         message_id = Store._message(db, session_id, identifier, "user", text, "queued")
         if attachments:
             db.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(attachments, ensure_ascii=False), message_id))
+        if origin is not None:
+            db.execute('UPDATE messages SET origin=? WHERE id=?', (json.dumps(origin, ensure_ascii=False), message_id))
         from .memory import snapshot_note
         note = snapshot_note(db, session_id)
         if note:
             # Freeze recall with this input: later memory updates never rewrite a prefix.
             db.execute("UPDATE messages SET context_note=? WHERE id=?", (note, message_id))
-        count = db.execute("SELECT COUNT(*) FROM messages WHERE session_id=? AND role='user'", (session_id,)).fetchone()[0]
-        if count == 1:
+        count = db.execute("SELECT COUNT(*) FROM messages WHERE session_id=? AND role='user' AND origin IS NULL AND help_reply IS NULL", (session_id,)).fetchone()[0]
+        if origin is None and count == 1:
             db.execute("UPDATE sessions SET title=? WHERE id=? AND title='新的事情'", (text[:24], session_id))
         return identifier
 

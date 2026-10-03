@@ -22,4 +22,12 @@
 .trace-error { overflow-wrap: anywhere; color: var(--muted); }
 .trace-error code { font-size: 12px; }
 .trace-empty { margin: 9px 0; }
+.task-trace { margin-block: 28px 12px; font-size: 13px; }
+.task-trace > summary { max-width: 100%; align-items: baseline; }
+.task-trace-kind { flex-shrink: 0; }
+.task-trace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.task-trace > summary::after, .task-trace .trace-indicator { flex-shrink: 0; }
+.trace-source { font-size: 12px; margin: 0 0 16px 6px; }
+.trace-state { white-space: nowrap; font-size: 12px; }
+.task-trace[open] .task-trace-title { white-space: normal; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .run-trace > summary::after { transition: none; } }

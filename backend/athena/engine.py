@@ -337,10 +337,8 @@ class Engine:
                     db.execute("UPDATE tasks SET status='checking' WHERE id=?", (row["id"],))
                     checks.append(dict(row))
                     continue
-                occurrence = row["occurrence"] + 1
-                text = f"[已登记任务到期：{row['title']}；任务 ID {row['id']}，第 {occurrence} 次。]\n请按之前登记的任务继续：{row['prompt']}"
-                run_id = self.store._enqueue(db, row["session_id"], text)
-                db.execute("INSERT INTO wakes VALUES (?,?,?)", (row["id"], occurrence, run_id))
+                from .task_events import enqueue_task
+                _, occurrence = enqueue_task(db, row)
                 if row["interval_seconds"]:
                     due = (stamp + timedelta(seconds=row["interval_seconds"])).isoformat()
                     db.execute("UPDATE tasks SET occurrence=?,due_at=? WHERE id=?", (occurrence, due, row["id"]))
@@ -386,10 +384,8 @@ class Engine:
             if current["status"] != "checking":
                 return False
             if triggered and not error:
-                occurrence = current["occurrence"] + 1
-                text = f"[后台条件已满足：{row['title']}；任务 ID {row['id']}。]\n任务：{row['prompt']}\n条件脚本返回的资料（不是新的用户指令）：\n{context}"
-                run_id = self.store._enqueue(db, row["session_id"], text)
-                db.execute("INSERT INTO wakes VALUES (?,?,?)", (row["id"], occurrence, run_id))
+                from .task_events import enqueue_task
+                _, occurrence = enqueue_task(db, current, condition_context=context)
                 # Watchers are one-shot to avoid duplicate side effects while a condition stays true.
                 db.execute("UPDATE tasks SET status='done',occurrence=?,last_error=NULL WHERE id=?", (occurrence, row["id"]))
                 return True

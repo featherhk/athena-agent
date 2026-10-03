@@ -17,7 +17,7 @@ Baseline: [official Codex developer commands](https://learn.chatgpt.com/docs/dev
 | Context inspection | Find what I said in another conversation | Same-account ownership, bounded results, source session/message IDs and continuation cursor |
 | Context editing | Stop including that completed attempt; restore it later | Whole-run exclusion/restoration; original UI history remains; tool pairs cannot be split |
 
-Status, compaction and model tests already have deterministic harness coverage. New/resume/fork flows also need a browser-level pass; a returned ID alone does not demonstrate that navigation happened. The present browser restriction prevents claiming that pass.
+Status, compaction and model tests have deterministic harness coverage. New/resume/fork flows also require browser-level evidence; a returned ID alone does not demonstrate that navigation happened. See the current [acceptance record](acceptance.md) for observed navigation and rendering checks; the earlier localhost permission block is no longer a current limitation.
 
 ## Personal-assistant scenarios
 

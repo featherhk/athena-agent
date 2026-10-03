@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS messages (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
  session_id TEXT NOT NULL REFERENCES sessions(id), run_id TEXT REFERENCES runs(id),
  role TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
- tool_calls TEXT, tool_call_id TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL
+ tool_calls TEXT, tool_call_id TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, origin TEXT
 );
 CREATE TABLE IF NOT EXISTS requests (
  id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), model TEXT NOT NULL,

@@ -56,6 +56,10 @@ def _preview(row):
         result[field] = value[:PREVIEW_CHARS]
         result[field + "_chars"] = len(value)
     result["artifact_id"] = _artifact_id(row["content"]) if row["role"] == "tool" else None
+    from .task_events import task_origin
+    origin = task_origin(row['origin']) if row['role'] == 'user' else None
+    if origin:
+        result['origin'] = origin
     return result
 
 

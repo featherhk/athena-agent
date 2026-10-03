@@ -111,6 +111,16 @@ An offline archive command uses the same exclusive lock as the runtime, creates 
 
 Validation: 370 Python tests and 50 frontend tests passed, along with TypeScript, the production build and the Python 3.14.8T free-threading doctor. The opt-in native-browser test was not rerun for this storage-only change; its separate prior acceptance remains documented above.
 
+## Background input provenance
+
+Schema 11 adds an optional message origin. Scheduled and condition-triggered inputs snapshot their task ID, historical title, trigger type and occurrence in the same transaction as the queued run and wake record. The provider protocol role remains compatible; the source text and previously persisted context/request snapshots are not rewritten. A task waking an otherwise empty chat no longer takes over its automatic title.
+
+The default view uses one expandable task/activity row instead of a user bubble containing the internal dispatch text. Actual assistant replies, including reminders, remain visible. Activity entries identify the input as a scheduled/condition trigger, and the universal tool returns structured provenance in session reads and original-message recovery. Other accounts cannot read it; forks inherit historical provenance without duplicating wake records or activating copied jobs.
+
+Legacy annotation requires a recorded wake, matching conversation/run and the exact historical input format. It extracts the historical title from that input, never from a potentially renamed task. Unknown formats and identical human-authored text are left alone. Recurring reply verbosity and delivery preferences remain a separate product issue; this change does not silence requested reminders or alter task schedules.
+
+Validation: 379 Python tests and 52 frontend tests passed, along with TypeScript, the production build and the Python 3.14.8T free-threading doctor. The local upgrade created a private backup and annotated 10 historical wakes; all original columns across 38 tables remained identical. Browser acceptance verified collapsed task rows, expanded original activity, visible assistant replies and a 390 px layout without horizontal overflow. The existing workspace and developer panel were restored afterward. This release has not yet been deployed to the cloud or rebuilt into a DMG.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.

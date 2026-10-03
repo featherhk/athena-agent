@@ -8,7 +8,7 @@ import sqlite3
 from datetime import datetime, timezone
 from .config import Config, require_free_threading
 from .profiles import Profile
-from .store import now
+from .store import now, SCHEMA_VERSION
 
 
 def archive_events(config, vacuum=False):
@@ -22,7 +22,7 @@ def archive_events(config, vacuum=False):
         with closing(sqlite3.connect(config.data_dir / 'athena.sqlite3')) as db:
             db.row_factory = sqlite3.Row
             db.execute('PRAGMA busy_timeout=5000')
-            if db.execute('PRAGMA user_version').fetchone()[0] != 10:
+            if not 10 <= db.execute('PRAGMA user_version').fetchone()[0] <= SCHEMA_VERSION:
                 raise SystemExit('Upgrade the application database before archiving events.')
             if db.execute("SELECT 1 FROM runs WHERE status IN ('running','queued') LIMIT 1").fetchone():
                 raise SystemExit('Wait for active work to finish before archiving events.')

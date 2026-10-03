@@ -16,6 +16,7 @@ import { AccountProfile } from './AccountProfile';
 import UserHelp, { HelpReceipt } from './UserHelp';
 import VoiceCall from './VoiceCall';
 import { RunTrace } from './RunTrace';
+import { taskOrigin } from './message-origin';
 import { StyledText } from './StyledText';
 import type { TextStyleEffect } from './effects';
 import { mergeSnapshot } from './snapshot-sync';
@@ -599,6 +600,7 @@ export default function App() {
       draft={surfaceDrafts.current.get(key)} onDraft={value => { if (!surfaceDrafts.current.has(key) && surfaceDrafts.current.size >= 64) surfaceDrafts.current.delete(surfaceDrafts.current.keys().next().value!); surfaceDrafts.current.set(key, value); }} />;
   }
   const tracedRuns = new Set<string>();
+  const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
   return <div className="app" data-reading={reading}>
     <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
@@ -618,16 +620,18 @@ export default function App() {
         {snapshot.messages.map(message => {
           const trace = message.run_id && !tracedRuns.has(message.run_id);
           if (trace) tracedRuns.add(message.run_id!);
+          const origin = trace ? taskOrigin(message) : undefined;
+          const run = message.run_id ? runsById.get(message.run_id) : undefined;
           const visible = Boolean(message.content || message.attachments?.length);
           return <Fragment key={message.id}>
-            {trace && message.role === 'assistant' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={snapshot.runs.find(run => run.id === message.run_id)?.phase} />}
+            {trace && message.role === 'assistant' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} />}
             {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(file => fileCard(file))}</div>}</>}
-            {visible && !message.help_reply && <article className={`message ${message.role}`}>
+            {visible && !message.help_reply && !origin && <article className={`message ${message.role}`}>
               <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
               {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
               {['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}
             </article>}
-            {trace && message.role === 'user' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={snapshot.runs.find(run => run.id === message.run_id)?.phase} />}
+            {trace && message.role === 'user' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} origin={origin} />}
           </Fragment>;
         })}
         {!resetting && components.filter(component => placementOf(component) === 'inline' || (floatingPlacements.has(placementOf(component)) && !panelLayout[component.id])).map(component => renderWidget(component))}
