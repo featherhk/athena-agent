@@ -1,8 +1,8 @@
 # Cloud deployment and operator runbook
 
-This document describes the implementation in this checkout. It does **not** confirm that DNS, TLS, a deployed server, or a public download has passed release acceptance. Record those results for each release before publishing it.
+This document describes the implementation in this checkout. The [2026-10-03 release receipt](releases/2026-10-03-preview.md) records verified deployment results and remaining limitations. Repeat that acceptance for each release.
 
-The initial access policy is an operator-funded preview: fund **explicitly enabled preview accounts only**; other registrations have no model access. There is no customer recharge endpoint or recharge UI. The existing New API installation is a separate service and must remain untouched.
+The initial access policy is an operator-funded preview: fund explicitly selected test accounts; all other registrations have no model access. There is no customer recharge endpoint or recharge UI. The existing New API installation is a separate service and must remain untouched.
 
 ## Process and data boundaries
 

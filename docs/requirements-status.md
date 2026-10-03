@@ -131,6 +131,10 @@ Validation: 394 Python tests and 53 frontend tests passed, with TypeScript, prod
 
 A private database copy passed repeated migration with unchanged original columns across all 38 existing tables. The local runtime was then gracefully stopped while idle, backed up, upgraded with the same full-column comparison and restarted. Its existing workspace and developer view reconnected successfully. Synthetic acceptance records remain outside the checkout and real chats. Cloud and DMG releases still require a separate rebuild/deployment and acceptance.
 
+## Public preview deployment — 2026-10-03
+
+The current chat origin, separate download origin and Feather marketing pages are served over valid HTTPS by Tencent Cloud. The deployed image includes delegation and the latest runtime fixes. The final Mac DMG contains the same runtime plus corrected packaging: mounted-image signature verification, real central login, native window startup/quit and the bundled browser fixture passed. Public downloads match the manifest hash. An unfunded new account receives HTTP 402 without a reservation. See the [release receipt](releases/2026-10-03-preview.md) for exact revisions and limits; this supersedes earlier pending-DNS and pending-DMG statements above.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.

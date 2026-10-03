@@ -6,7 +6,7 @@ Athena 是一个从对话开始的个人助手。说出想办的事，进度、�
 
 当前是基于 Python 3.14T、SQLite、TypeScript 和 React 的 **macOS / 网页本机原型**。它是允许逐步定制能力的通用助手，界面不以编程为中心。[产品方向](docs/product.md) 区分了已有实现和仍需验证的设想。
 
-当前预览还包括独立的账户/模型网关，支持零额度注册、经过审计的美元测试额度，以及适用于 Apple Silicon 的自包含 macOS 测试包。网关已通过真实模型供应商流式响应和结算检查；公共 DNS/TLS 尚待启用。DMG 使用临时签名，尚未公证。语音轮次交互、打断和供应商适配器已实现，但真实音频通道和麦克风通话尚未验证。详见[发布就绪情况](docs/requirements-status.md)、[云端运维](docs/cloud-deployment.md)、[桌面分发](docs/distribution.md)和[语音](docs/voice.md)。
+当前预览还包括独立的账户/模型网关，支持零额度注册、经过审计的美元测试额度，以及适用于 Apple Silicon 的自包含 macOS 测试包。网关已通过真实模型供应商流式响应和结算检查；[网页预览](https://chat.athena.featherhk.com/)和 [Mac 下载页](https://app.athena.featherhk.com/)已在腾讯云通过 HTTPS 发布。DMG 使用临时签名，尚未公证。语音轮次交互、打断和供应商适配器已实现，但真实音频通道和麦克风通话尚未验证。详见[发布就绪情况](docs/requirements-status.md)、[云端运维](docs/cloud-deployment.md)、[桌面分发](docs/distribution.md)和[语音](docs/voice.md)。
 
 ## 已有能力
 
