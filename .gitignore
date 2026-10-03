@@ -292,5 +292,9 @@ account-avatars/
 *.dmg
 *.app/
 *.xcarchive/
+*.ipa
+*.mobileprovision
+xcuserdata/
+DerivedData/
 .ssh/
 .secrets/

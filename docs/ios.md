@@ -1,0 +1,104 @@
+# iPhone preview
+
+Athena for iPhone is a native UIKit/WKWebView host for `https://chat.athena.featherhk.com/`. Login and model entitlement belong to the hosted service. Conversations and tool execution remain on the server; this app does not embed Python, a model key, or a local shell. Installing an iOS client does not add a missing server capability.
+
+The project targets **iOS 17 or newer**. That is an iPhone OS requirement, not a minimum macOS version. A successful build is not a real-device or end-to-end acceptance result. No iPhone installation, App Store distribution or TestFlight distribution has been verified yet.
+
+## Which Athena app should open where?
+
+| Output | Runs on | Correct entry point |
+| --- | --- | --- |
+| `build/ios/simulator/.../Athena.app` | The selected iOS Simulator | Install/launch with `simctl`, or use the build command below |
+| `build/ios/device/.../Athena.app` | A provisioned iPhone | Xcode's device installation workflow |
+| `build/macos/Athena.app` or the published `.dmg` | A supported Mac | Open the DMG, drag to Applications, open Athena |
+
+The iOS Simulator output also contains an ARM64 executable on Apple Silicon. **It is still not a macOS application.** Double-clicking it in Finder can produce a message that Athena cannot run on this version of macOS. Updating macOS does not turn that simulator bundle into the desktop product.
+
+To identify an existing bundle without launching it:
+
+```sh
+uv run python scripts/build-ios.py --inspect-bundle build/ios/simulator/Build/Products/Debug-iphonesimulator/Athena.app
+```
+
+The diagnostic reports the actual bundle platform, version, minimum OS and correct launch instructions. If a macOS bundle is the one that failed, inspect the macOS release's architecture, minimum OS and signing separately; do not assume that every compatibility dialog is an iOS mix-up.
+
+## Select and check Xcode
+
+Use an installed Xcode that supports the Mac and the intended iOS runtime. This script checks first-launch initialization **before** invoking the SDK or Simulator tools. It never runs privileged setup, installs runtimes, upgrades macOS or changes the global `xcode-select` setting.
+
+```sh
+uv run python scripts/build-ios.py --xcode /Applications/Xcode.app --preflight
+```
+
+If that installation has not completed setup, open that Xcode and finish its setup, or explicitly select another initialized installation. `--xcode` applies only to this command. Without it, the script respects `DEVELOPER_DIR`, then the current `xcode-select` selection.
+
+On the development Mac checked on 2026-10-03, macOS was 15.4.1, `/Applications/Xcode.app` was 16.4 with unfinished first-launch setup, and `/Applications/Xcode-beta.app` was an initialized 16.1 installation with the iOS 18.1 SDK. The directory name does not describe the actual version; preflight prints the actual version. These are local observations, not required versions for all contributors.
+
+## Build and launch in a Simulator
+
+List the installed, available iOS Simulators:
+
+```sh
+uv run python scripts/build-ios.py --xcode /Applications/Xcode-beta.app --list-simulators
+```
+
+Use the exact UDID, since several Simulators can have the same phone name on different iOS versions:
+
+```sh
+uv run python scripts/build-ios.py --xcode /Applications/Xcode-beta.app --simulator <UDID> --launch
+```
+
+This builds for the selected device, boots it if necessary, installs the iOS app and launches the app inside that Simulator. Open the **Simulator application** supplied by the same Xcode to see its window; do not open the produced Athena bundle in Finder. Relaunching replaces the currently running Athena simulator process, while its installed application data remains.
+
+A build without `--launch` creates an artifact without installing or launching it:
+
+```sh
+uv run python scripts/build-ios.py --xcode /Applications/Xcode-beta.app
+```
+
+For a disposable local fixture, a Debug Simulator build can explicitly select a loopback endpoint:
+
+```sh
+uv run python scripts/build-ios.py --xcode /Applications/Xcode-beta.app --simulator <UDID> --launch --test-origin http://127.0.0.1:4331
+```
+
+The command rejects credentials, non-loopback addresses, paths, query strings and fragments. Release builds and physical-iPhone builds do not accept this override. The fixture endpoint must already be running. This is not a route for shipping configurable provider keys or production credentials.
+
+Each successful build writes an ignored `build/ios/<platform>/build-receipt.json` with actual platform, app version/build, minimum OS, source revision, dirty state, selected Xcode/SDK and whether simulator launch completed. A new build removes the old receipt first, so a failed rebuild cannot leave an old success receipt appearing current. A launch receipt is **not** an end-to-end test receipt.
+
+## Physical iPhone
+
+An unsigned device compilation can detect device-only compiler problems:
+
+```sh
+uv run python scripts/build-ios.py --device --xcode /Applications/Xcode.app
+```
+
+Installing on a real iPhone requires development signing/provisioning and device trust. Open `mobile/ios/Athena.xcodeproj` in a compatible Xcode, choose the connected iPhone and a development team, then run. With an already configured development team, the build script accepts `--device --team <TEAMID>` and verifies the resulting signature and embedded provisioning profile. It does not enroll a device, accept account agreements, store Apple credentials or claim installation succeeded.
+
+Keep device provisioning files and Xcode user state out of Git. App Store/TestFlight distribution and a general iOS download are separate future work; the macOS DMG cannot install an iPhone app.
+
+## Current native behavior and acceptance limits
+
+- One persistent trusted web origin owns login and native microphone permission. Generated subframes do not receive microphone/camera permission; camera capture is not enabled.
+- The web surface respects the iPhone safe area and keyboard guide. Supported native strings use the same nine language catalogs as the product, with English fallback.
+- Explicit external links open in an in-app Safari view; they do not gain access to the host's native permissions.
+- Downloads from the trusted origin use native sharing/saving. Cross-origin download redirects are rejected. Concurrently completed files wait for the active share sheet or other native modal to close; background downloads wait until the app becomes active.
+- Network/page-process failures show an independent native retry view. A two-finger long press offers page recovery even when page JavaScript fails; it warns that an unsent draft can be lost. Retrying loads a GET page and never replays a model request or possibly completed tool action.
+- Voice is foreground-only in this preview. Entering the background releases microphone/playback and notifies the web client without canceling a server task. Real-device call audio, interruption, headphones and Bluetooth remain to be accepted.
+
+Required real-device checks include login/expiry, send/stop/reconnect, long server tools across background/foreground, keyboard and rotation, file selection/download, microphone grant/deny, call interruption, process termination/recovery and VoiceOver. The simulator is useful for development but does not substitute for those checks.
+
+## Regression checks
+
+```sh
+uv run pytest tests/test_ios_build.py -q
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc mobile/ios/Athena/HostPolicy.swift mobile/ios/Tests/HostPolicyTests.swift -o /private/tmp/athena-ios-policy-check
+/private/tmp/athena-ios-policy-check --athena-test-origin http://127.0.0.1:4331
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc mobile/ios/Athena/DownloadQueue.swift mobile/ios/Tests/DownloadQueueTests.swift -o /private/tmp/athena-ios-download-check
+/private/tmp/athena-ios-download-check
+```
+
+The Python checks cover platform mix-ups, exact Simulator selection, safe fixture URLs and early refusal of uninitialized Xcode without global configuration changes. The Swift checks cover exact origin/native capability boundaries, malformed external links, refusal of a simulator override in a non-simulator executable and deferred/concurrent download batches. Native modal presentation still needs device acceptance. Run the repository's full `npm run check` before publishing source changes.
+
+Verified on 2026-10-03: the 17 Python checks and both standalone Swift checks passed; the Debug Simulator target and unsigned Release iPhone target compiled successfully using Xcode 16.1 / SDK 18.1. The uninitialized Xcode 16.4 path stopped with guidance before launching SDK tools, and the global developer-directory selection stayed unchanged. No simulator UI, physical-device, signing or upload acceptance is implied by these checks.

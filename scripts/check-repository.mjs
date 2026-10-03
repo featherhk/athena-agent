@@ -8,7 +8,8 @@ export function prohibitedPath(path) {
     || (base !== '.env.example' && /^\.env(?:\.|$)/i.test(base))
     || ['.npmrc', '.pypirc', '.envrc'].includes(base)
     || /\.(db|sqlite|sqlite3)(?:-.*)?$/i.test(base)
-    || /\.(pem|key|p12|pfx|log|jsonl|har|dmg)$/i.test(base)
+    || /\.(pem|key|p12|pfx|log|jsonl|har|dmg|ipa|mobileprovision)$/i.test(base)
+    || parts.some(p => ['xcuserdata', 'deriveddata'].includes(p))
     || parts.some(p => ['.ssh', '.secrets'].includes(p) || /\.(app|xcarchive)$/.test(p))
     || /^(auth|credentials|secrets)\.json$/i.test(base)
     || /^(cookies.*|.*storage-state.*)\.json$/i.test(base);

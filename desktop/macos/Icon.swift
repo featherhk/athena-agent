@@ -1,19 +1,21 @@
 import AppKit
 let destination = CommandLine.arguments[1]
-let sizes = [16, 32, 128, 256, 512]
+let mobile = CommandLine.arguments.dropFirst(2).contains("--ios")
+let sizes = mobile ? [1024] : [16, 32, 128, 256, 512]
 try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: true)
 for size in sizes {
-    for scale in [1, 2] {
+    for scale in (mobile ? [1] : [1, 2]) {
         let px = size * scale
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
-                                  bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                  bitsPerSample: 8, samplesPerPixel: mobile ? 3 : 4, hasAlpha: !mobile,
                                   isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         let t = AffineTransform(scale: CGFloat(px) / 1024)
         (t as NSAffineTransform).concat()
         NSColor(calibratedRed: 0.969, green: 0.955, blue: 0.925, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 56, y: 56, width: 912, height: 912), xRadius: 204, yRadius: 204).fill()
+        if mobile { NSBezierPath(rect: NSRect(x: 0, y: 0, width: 1024, height: 1024)).fill() }
+        else { NSBezierPath(roundedRect: NSRect(x: 56, y: 56, width: 912, height: 912), xRadius: 204, yRadius: 204).fill() }
         let transform = NSAffineTransform()
         transform.translateX(by: 128, yBy: 890)
         transform.scaleX(by: 8, yBy: -8)
