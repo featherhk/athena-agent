@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def now() -> str:
@@ -87,6 +87,8 @@ class Store:
                 from .task_events import backfill_task_origins
                 backfill_task_origins(db)
             db.execute('CREATE INDEX IF NOT EXISTS events_archive ON events(type,encoding,seq)')
+            from .activity import initialize as initialize_activity
+            initialize_activity(db)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         await self.call(migrate)
         from .context_controls import initialize_context_controls

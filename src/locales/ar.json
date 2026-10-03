@@ -237,5 +237,19 @@
   "agents.results": "النتائج المستلمة · {count}",
   "agents.unfinished": "{count} غير مكتملة",
   "agents.needsHelp": "تحتاج إلى مساعدتك",
-  "error.agent_limit": "راجع النتائج الحالية قبل تفويض مزيد من المهام."
+  "error.agent_limit": "راجع النتائج الحالية قبل تفويض مزيد من المهام.",
+  "continuity.title": "مهامك",
+  "continuity.needsYou": "بانتظار إجابتك",
+  "continuity.ready": "جاهز للاطلاع",
+  "continuity.failed": "يحتاج إلى مراجعة",
+  "continuity.stopped": "متوقف",
+  "continuity.working": "قيد العمل",
+  "continuity.count": "تحديثات في {count} محادثات",
+  "continuity.tasks": "{count} مهام",
+  "continuity.stopChat": "إيقاف العمل في هذه المحادثة",
+  "continuity.dismiss": "إخفاء هذا التحديث",
+  "continuity.unavailable": "تحديثات المهام غير متاحة",
+  "continuity.more": "عرض المزيد من المهام",
+  "continuity.history": "عرض المحادثات الأخرى في السجل",
+  "continuity.clear": "اطلعت على جميع التحديثات."
 }

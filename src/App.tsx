@@ -3,6 +3,8 @@ import { api, empty, defaultPreferences } from './api';
 import type { User, Snapshot, Session, Preferences, AppAction, Component, ViewChange } from './api';
 import Orb, { AthenaMark } from './Orb';
 import type { Phase } from './Orb';
+import TaskContinuity, { useTaskContinuity, useVisibleActivity } from './TaskContinuity';
+import type { ActivityItem } from './task-continuity';
 import Widget from './Widget';
 import ComponentControls from './ComponentControls';
 import { arrangePanels, floatingPlacements, placementOf } from './component-layout';
@@ -56,6 +58,8 @@ export default function App() {
   const [serviceMessage, setServiceMessage] = useState('');
   const [toast, setToast] = useState('');
   const [history, setHistory] = useState(false);
+  const [activity, setActivity] = useState(false);
+  const pendingActivityView = useRef<string | null>(null);
   const [account, setAccount] = useState(false);
   const [passwordRequested, setPasswordRequested] = useState(0);
   const [menu, setMenu] = useState(false);
@@ -105,7 +109,7 @@ export default function App() {
   const nearBottom = useRef(true);
   const scrollIntent = useRef(0);
   const upgradeState = useRef({ user, session, text, attached, safe: false });
-  upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu && !surfaces };
+  upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !activity && !menu && !surfaces };
   const busy = snapshot.runs.some(run => ['running', 'queued', 'waiting_agents'].includes(run.status));
   const waitingAgents = snapshot.runs.some(run => run.status === 'waiting_agents');
   const help = snapshot.help_requests?.[0];
@@ -130,6 +134,35 @@ export default function App() {
     helpIds: (snapshot.help_requests || []).map(item => item.id), choosingFiles: chooseFiles, uploading, reconnecting,
     hasError: Boolean(error), hasUnsentChanges: Boolean(text.trim() || attached.length), attachmentIds: attached.map(file => file.id),
   }, enqueueAppAction, () => { appClient.current = crypto.randomUUID(); setActionWake(old => old + 1); }, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
+  const continuity = useTaskContinuity(user?.id || null, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
+  useVisibleActivity(continuity, session, snapshot.runs,
+    Boolean(preview || account || appearance || files || history || activity || menu || surfaces || auth || workspace || resetting), snapshot.cursor);
+  useEffect(() => {
+    const run = pendingActivityView.current;
+    if (!run || !snapshot.runs.some(item => item.id === run)) return;
+    const candidates = [...document.querySelectorAll<HTMLElement>('[data-run-id]')].filter(element => element.dataset.runId === run);
+    const target = candidates.at(-1);
+    if (target) { target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true }); }
+    else end.current?.scrollIntoView({ block: 'end' });
+    pendingActivityView.current = null;
+  }, [snapshot, session]);
+  async function openActivityConversation(item: ActivityItem) {
+    const isCurrent = currentGuard();
+    const next = await api<Snapshot>(`/sessions/${encodeURIComponent(item.session_id)}`);
+    if (!isCurrent()) return false;
+    // Viewing a chosen result must not be overridden by the chat's follow-tail effect.
+    nearBottom.current = false;
+    setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false); setSurfaces(false); setActivity(false);
+    if (session !== item.session_id) navigate(item.session_id);
+    else setSnapshot(next);
+    pendingActivityView.current = item.run_id;
+    return true;
+  }
+  function activityControl(embedded = false) {
+    return <TaskContinuity key={user?.id} continuity={continuity} currentSession={embedded ? null : session} embedded={embedded}
+      open={activity} setOpen={setActivity} includeCurrentTerminal={!nearBottom.current} openConversation={openActivityConversation}
+      openHistory={() => { setActivity(false); setPreview(null); setHistory(true); }} />;
+  }
   const measureWidget = useCallback((id: string, height: number) => setSurfaceHeights(old => old[id] === height ? old : { ...old, [id]: height }), []);
   const styleText = useCallback((key: string, effect: TextStyleEffect | null) => {
     if (effect && !messagesRef.current.some(message => message.id === effect.message_id)) return;
@@ -153,11 +186,12 @@ export default function App() {
     editDraft({ attached: change(drafts.current!.read(scope.owner, scope.session).attached) });
   }
   function navigate(next: string | null, migrate = false) {
+    pendingActivityView.current = null;
     const scope = uiScope.current;
     const draft = migrate ? drafts.current!.move(scope.owner, scope.session, next) : drafts.current!.read(scope.owner, next);
     uiScope.current = { ...scope, session: next, generation: scope.generation + 1 };
     generation.current++; setSession(next); showDraft(draft);
-    setSnapshot(empty()); setPhase('idle'); setError(''); setReading(false); setTextEffects({}); setChooseFiles(false); setSurfaceHeights({}); setSurfaces(false);
+    setSnapshot(empty()); setPhase('idle'); setError(''); setActivity(false); setReading(false); setTextEffects({}); setChooseFiles(false); setSurfaceHeights({}); setSurfaces(false);
     setSending(false); setUploading(false);
   }
   async function navigateFromWidget(next: string) {
@@ -196,7 +230,10 @@ export default function App() {
       const afterNavigation = currentGuard(); effectIsCurrent = () => afterNavigation() && !document.hidden;
     } else if (action.action === 'open' || action.action === 'close') {
       const open = action.action === 'open';
-      if (target === 'history') setHistory(open);
+      if (target === 'activity') {
+        if (open) { setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false); setSurfaces(false); }
+        setActivity(open);
+      } else if (target === 'history') setHistory(open);
       else if (target === 'surfaces') setSurfaces(open);
       else if (target === 'menu') setMenu(open);
       else if (target === 'preview' && !open) setPreview(null);
@@ -292,7 +329,7 @@ export default function App() {
     }
     uiScope.current = { owner: next?.id || null, session: nextSession, generation: uiScope.current.generation + 1, control: uiScope.current.control + 1 };
     applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setPreview(null); setFiles(null); setSessions([]);
-    setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
+    pendingActivityView.current = null; setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
     setSending(false); setUploading(false); setResetting(false); setSession(nextSession); showDraft(drafts.current!.read(next?.id || null, nextSession));
     setSnapshot(empty()); setError(''); setTextEffects({});
   }
@@ -416,7 +453,7 @@ export default function App() {
 
         else if (item.type === 'preferences_changed') { applyPreferences(item.payload); void reload(); }
         else if (item.type === 'status') { setPhase(item.payload.phase || 'thinking'); void reload(); }
-        else { if (item.type === 'reset') { setSnapshot(old => ({ ...old, components: [] })); void frontendObservation.report().catch(() => {}); } void reload(); }
+        else { if (item.type === 'reset') { setActivity(false); pendingActivityView.current = null; continuity.source.current?.refresh(); setSnapshot(old => ({ ...old, components: [] })); void frontendObservation.report().catch(() => {}); } void reload(); }
       };
     })();
     return () => { disposed = true; source?.close(); };
@@ -515,6 +552,7 @@ export default function App() {
     finally { if (isCurrent()) setSending(false); }
   }
   async function reset() {
+    setActivity(false); pendingActivityView.current = null;
     surfaceDrafts.current.clear(); setSurfaces(false);
     setVoiceRecovery(old => old + 1);
     invalidateActions(); const isCurrent = currentGuard();
@@ -629,10 +667,11 @@ export default function App() {
   }
   const tracedRuns = new Set<string>();
   const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
+  const lastAnswerByRun = new Map(snapshot.messages.filter(message => message.run_id && message.role === 'assistant' && (message.content || message.attachments?.length)).map(message => [message.run_id, message.id]));
   return <div className="app" data-reading={reading} data-phase={orbPhase}>
     <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
-      <nav aria-label={t('chatControls')}>{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
+      <nav aria-label={t('chatControls')}>{!preview && !auth && !account && !appearance && !files && !history && !menu && !surfaces && activityControl()}{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
     </header>
     <div className="workspace-layout">
       {!resetting && components.some(component => placementOf(component) === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{components.filter(component => placementOf(component) === 'sidebar-start').map(component => renderWidget(component))}</aside>}
@@ -652,15 +691,15 @@ export default function App() {
           const run = message.run_id ? runsById.get(message.run_id) : undefined;
           const visible = Boolean(message.content || message.attachments?.length);
           return <Fragment key={message.id}>
-            {trace && message.role === 'assistant' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} />}
+            {trace && message.role === 'assistant' && <div data-run-id={message.run_id} tabIndex={-1} data-activity-result={run && ['failed', 'interrupted', 'cancelled'].includes(run.status) ? message.run_id : undefined}><RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} /></div>}
             {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(file => fileCard(file))}</div>}</>}
             {origin?.kind === 'agent_results' && <AgentResults origin={origin} />}
-            {visible && !message.help_reply && !origin && <article className={`message ${message.role}`}>
+            {visible && !message.help_reply && !origin && <article className={`message ${message.role}`} data-run-id={message.run_id} tabIndex={-1} data-activity-result={run?.status === 'complete' && lastAnswerByRun.get(message.run_id) === message.id ? message.run_id : undefined}>
               <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
               {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
               {['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}
             </article>}
-            {trace && message.role === 'user' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} origin={origin} />}
+            {trace && message.role === 'user' && <div data-run-id={message.run_id} tabIndex={-1} data-activity-result={run && ['failed', 'interrupted', 'cancelled'].includes(run.status) ? message.run_id : undefined}><RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} origin={origin} /></div>}
             {trace && Boolean(snapshot.agents?.some(job => job.root_run_id === message.run_id)) && <AgentActivity sessionId={session!} revision={snapshot.cursor} jobs={snapshot.agents!.filter(job => job.root_run_id === message.run_id)} />}
           </Fragment>;
         })}
@@ -701,6 +740,6 @@ export default function App() {
     }}><div className="dialog-top"><h2>{auth === 'login' ? t('welcomeBack') : t('niceToMeet')}</h2><button className="icon-button" type="button" aria-label={t('close')} onClick={() => { setAuth(null); setPassword(''); }}>×</button></div><label htmlFor="username">{t('username')}</label><input id="username" autoComplete="username" autoFocus aria-describedby="username-hint" value={username} onChange={event => setUsername(event.target.value)} required minLength={2} maxLength={40} /><p id="username-hint" className="field-hint">{t('usernameHint')}</p><label htmlFor="password">{t('password')}</label><input id="password" type="password" autoComplete={auth === 'login' ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} required minLength={8} maxLength={128} placeholder={t('passwordHint')} />{error && <p className="notice">{error}</p>}<button className="primary wide" disabled={sending}>{sending ? t('wait') : auth === 'login' ? t('signIn') : t('createAccount')}</button><button type="button" className="quiet wide" onClick={() => { setAuth(auth === 'login' ? 'register' : 'login'); setError(''); }}>{auth === 'login' ? t('needAccount') : t('haveAccount')}</button></form></div>}
     {account && user && <div className="overlay centered"><section className="dialog" data-app-view="account" role="dialog" aria-modal="true" aria-label={t('account')}><div className="dialog-top"><h2>{user.display_name || user.username}</h2><button className="icon-button" aria-label={t('close')} onClick={closeAccount}>×</button></div><AccountProfile user={user} onChange={next => { if (uiScope.current.owner === next.id) setUser(next); }} passwordRequested={passwordRequested} onPasswordChanged={closeAccount} /><label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>{error && <p className="notice">{error}</p>}<button className="quiet wide logout" onClick={() => void signOut()}>{t('signOut')}</button></section></div>}
     {files && <div className="overlay centered"><section className="dialog file-dialog" data-app-view="files" role="dialog" aria-modal="true" aria-label={t('files')}><div className="dialog-top"><h2>{t('files')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setFiles(null)}>×</button></div>{files.length === 0 ? <p className="empty-note">{t('filesEmpty')}</p> : <div className="file-list">{files.map(file => fileCard(file))}</div>}</section></div>}
-    {preview && <div className="overlay centered preview-overlay"><div className="preview-dialog" data-app-view="preview" role="dialog" aria-modal="true" aria-label={preview.name}><FilePreview key={preview.id} file={preview} onObservation={value => setPreviewObservation(old => JSON.stringify(old) === JSON.stringify(value) ? old : value)} onClose={() => setPreview(null)} /></div></div>}
+    {preview && <div className="overlay centered preview-overlay"><div className="preview-dialog" data-app-view="preview" role="dialog" aria-modal="true" aria-label={preview.name}>{activityControl(true)}<FilePreview key={preview.id} file={preview} onObservation={value => setPreviewObservation(old => JSON.stringify(old) === JSON.stringify(value) ? old : value)} onClose={() => setPreview(null)} /></div></div>}
   </div>;
 }

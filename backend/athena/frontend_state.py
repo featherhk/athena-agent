@@ -17,7 +17,7 @@ from .store import now
 TTL_SECONDS = 75
 MAX_CLIENTS = 24
 Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')]
-View = Literal['menu', 'history', 'files', 'account', 'appearance', 'developer', 'password', 'workspace', 'preview', 'surfaces', 'authentication']
+View = Literal['menu', 'history', 'files', 'account', 'appearance', 'developer', 'password', 'workspace', 'preview', 'surfaces', 'activity', 'authentication']
 Placement = Literal['inline', 'workspace', 'banner', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'overlay', 'fullscreen', 'presence', 'sidebar-start', 'sidebar-end']
 ComponentError = Literal['script_error', 'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']
 

@@ -9,6 +9,8 @@ description: "操作 Athena 界面、切换会话与修改设置；区分应用�
 
 操作界面（切换会话、打开面板、预览文件等）先用 `runtime {"op":"app","args":{"action":"list"}}` 查看真实目录；详细参数与回执含义见 [references/controls.md](references/controls.md)。目录中的 `clients` 是浏览器观察摘要；用 `app snapshot, client_id` 按需查看页面、工作区、组件、等待事项与错误。先观察，再操作，再核对新观察和回执。切换会话是 `app navigate`，不只是读取历史。既有按钮能完成的事，优先用对应接口实际执行。
 
+查询其他会话仍在做什么、哪里需要用户回应或最近有什么结果，用 `runtime {"op":"activity","args":{"action":"list"}}`；已读规则见 [references/activity.md](references/activity.md)。完成普通界面操作后用用户语言简短确认，不主动列出 client_id、revision、状态字段或文件字节数；用户询问诊断细节时再给出。
+
 - 查看：`runtime {"op":"app_settings"}` 返回 `settings` 当前值和 `schema`，后者列出字段、选项、默认值与用途。
 - 修改：`runtime {"op":"app_settings","settings":{"ui_language":"zh-Hans","ui_font":"serif"}}`。只传需要修改的字段，其他设置保留。简体用 `zh-Hans`，繁体用 `zh-Hant`；语言的 `system` 跟随设备，不支持时回退英语。当前也提供字体 `ui_font`、配色 `ui_palette`、减少动效 `reduced_motion`；能力以 schema 为准。
 - 配色预设是快捷方式，不是限制。`ui_palette` 也接受任意 `#RGB` / `#RRGGBB` 背景色，界面自动生成可读的文字和控件颜色。黑色用 `{"ui_palette":"#000000"}`，深蓝用 `{"ui_palette":"#101b35"}`；明确的颜色要求直接落实，不因没有同名预设而拒绝，也无需创建组件。返回规范化的十六进制颜色可确认设置已持久化；恢复默认用 `dream`。

@@ -14,7 +14,7 @@ from .files import initialize_files, list_files, list_session_files, public_file
 from .store import now, uid
 from . import frontend_state
 
-TARGETS = ("menu", "history", "files", "account", "appearance", "developer", "password", "workspace", "preview", "surfaces")
+TARGETS = ("menu", "history", "files", "account", "appearance", "developer", "password", "workspace", "preview", "surfaces", "activity")
 OPEN_TARGETS = tuple(target for target in TARGETS if target != "preview")
 ERROR_CODES = ("frontend_conflict", "frontend_unavailable", "unavailable", "user_gesture_required", "file_not_found", "navigation_failed", "execution_failed", "dismissed", "reset", "interrupted")
 INACTIVE_RUN_STATUSES = ("failed", "cancelled", "interrupted", "stopped")
@@ -35,6 +35,7 @@ CATALOG = [
     {"action": "reset", "effect": "Reset this account's customizations through the engine, retaining chats and files."},
 ]
 RELATED_OPERATIONS = [
+    {"op": "activity", "action": "list", "effect": "See active work, requests for help and recent unread outcomes across this account; application activity reference describes acknowledgement."},
     {"op": "sessions", "action": "new", "effect": "Create a conversation; then use app navigate with its returned id to display it."},
     {"op": "sessions", "action": "rename", "effect": "Rename an owned conversation."},
     {"op": "sessions", "action": "fork", "effect": "Fork a conversation; background tasks remain paused; use app navigate to display the returned id."},

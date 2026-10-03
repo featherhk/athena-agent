@@ -237,5 +237,19 @@
   "agents.results": "結果を受信 · {count} 件",
   "agents.unfinished": "{count} 件未完了",
   "agents.needsHelp": "確認をお願いします",
-  "error.agent_limit": "現在の結果を確認してから、次の作業を依頼してください。"
+  "error.agent_limit": "現在の結果を確認してから、次の作業を依頼してください。",
+  "continuity.title": "進行中の依頼",
+  "continuity.needsYou": "回答が必要です",
+  "continuity.ready": "結果が届きました",
+  "continuity.failed": "確認が必要です",
+  "continuity.stopped": "停止しました",
+  "continuity.working": "対応中",
+  "continuity.count": "{count} 件の会話に更新があります",
+  "continuity.tasks": "{count} 件の依頼",
+  "continuity.stopChat": "この会話の作業を停止",
+  "continuity.dismiss": "更新を閉じる",
+  "continuity.unavailable": "依頼の状況を更新できません",
+  "continuity.more": "さらに表示",
+  "continuity.history": "履歴でほかの会話を見る",
+  "continuity.clear": "すべて確認済みです。"
 }

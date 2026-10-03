@@ -56,11 +56,12 @@ async def test_invalid_preferences_cannot_partially_apply_or_change_provider_set
     user = await account(store, "first")
     await store.session(user_id=user)
     await store.execute("INSERT INTO settings VALUES ('deepseek_api_key','test-service-credential')")
+    settings_before = await store.rows("SELECT * FROM settings ORDER BY key")
     with pytest.raises(ValueError):
         await update_preferences(store, user, changes)
     assert await read_preferences(store, user) == BASE
     assert await store.rows("SELECT * FROM events") == []
-    assert await store.rows("SELECT * FROM settings") == [{"key": "deepseek_api_key", "value": "test-service-credential"}]
+    assert await store.rows("SELECT * FROM settings ORDER BY key") == settings_before
 
 
 async def test_preferences_reject_unowned_provenance_without_writing(store):

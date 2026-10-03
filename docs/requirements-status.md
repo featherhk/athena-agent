@@ -139,6 +139,10 @@ The current chat origin, separate download origin and Feather marketing pages ar
 
 The frontend now reports bounded, authenticated semantic observations; runtime actions can address a particular client and verify their resulting state. Cross-conversation navigation followed by file preview passed real browser and production model acceptance. A deployment-induced 502 exposed a permanently closed action stream; bounded reconnect and failed-run intent cleanup now have regression coverage and a real fault-injection pass. The web and build 7 Mac DMG use the same runtime source. See the [release receipt](releases/2026-10-04-interaction.md) for the exact artifacts, failure history, billing evidence and remaining boundaries.
 
+## Task continuity — 2026-10-04
+
+Background work, requests for help and unread outcomes now remain reachable across conversations and inside file preview. A compact control appears only when relevant; it never navigates automatically or replaces a draft. The universal runtime exposes the same account-scoped discovery, acknowledgement and conversation stop. Durable exact-state read receipts prevent a stale acknowledgement from hiding a newer outcome. See [task continuity](task-continuity.md) for the contract and isolated real-engine browser acceptance. This is in-app continuity, not OS notification delivery or shared files across execution nodes.
+
 ## Remaining release gaps
 
 1. **Complete service-provider replacement.** Engine, Store, model transport, scheduler and authentication remain concrete integrations. Implement one end-to-end provider graph with immutable in-flight bindings, staged activation and independent recovery before declaring the harness self-evolving.

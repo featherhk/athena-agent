@@ -30,6 +30,7 @@ from .client_version import register_client_version_route
 from .frontend_state import register_frontend_routes, clear as clear_frontend_clients
 from .app_controls import initialize_app_controls, list_app_actions, register_app_control_routes
 from .voice import VoiceConfig, VoiceService, initialize_voice, register_voice_routes
+from .activity import register_activity_routes
 
 
 class Input(BaseModel):
@@ -382,6 +383,7 @@ def create_app(config: Config | None = None):
     register_client_version_route(app, config)
     register_app_control_routes(app, exists)
     register_frontend_routes(app)
+    register_activity_routes(app)
     dist = config.repo_dir / "dist"
     if (dist / "assets").exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")

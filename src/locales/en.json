@@ -237,5 +237,19 @@
   "agents.results": "Results received · {count}",
   "agents.unfinished": "{count} unfinished",
   "agents.needsHelp": "Needs your help",
-  "error.agent_limit": "Collect the current results before delegating more work."
+  "error.agent_limit": "Collect the current results before delegating more work.",
+  "continuity.title": "Your tasks",
+  "continuity.needsYou": "Needs your reply",
+  "continuity.ready": "Ready to view",
+  "continuity.failed": "Needs attention",
+  "continuity.stopped": "Stopped",
+  "continuity.working": "In progress",
+  "continuity.count": "{count} conversations with updates",
+  "continuity.tasks": "{count} tasks",
+  "continuity.stopChat": "Stop work in this conversation",
+  "continuity.dismiss": "Dismiss update",
+  "continuity.unavailable": "Task updates are unavailable",
+  "continuity.more": "Show more tasks",
+  "continuity.history": "See other conversations in history",
+  "continuity.clear": "You are all caught up."
 }

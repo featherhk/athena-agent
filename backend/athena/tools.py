@@ -50,6 +50,7 @@ def clip(text: str, limit: int) -> str:
 class ToolRunner:
     def __init__(self, config: Config, store: Store):
         self.config, self.store = config, store
+        self.stop_session = None
         self.models = Models(config, store)
         self.registry = Registry(config, store)
         self.introspection = Introspection(store, self.models)
@@ -203,6 +204,9 @@ class ToolRunner:
         if op == "app":
             from .app_controls import app_operation
             return await app_operation(self.store, session_id, run_id, args, self.config)
+        if op == "activity":
+            from .activity import activity_operation
+            return await activity_operation(self.store, session_id, args, run_id, self.stop_session)
         if op == "user_help":
             from .user_help import request_help
             return await request_help(self.store, session_id, run_id, args)

@@ -22,6 +22,8 @@ class Engine:
         self.listeners: dict[str, set[asyncio.Queue]] = {}
         self.controls: dict[str, asyncio.Lock] = {}
         self.tools = ToolRunner(config, store)
+        self.tools.stop_session = self.stop_from_tool
+        self.tool_controls: set[asyncio.Task] = set()
         self.models = self.tools.models
         self.cloud = None
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15))
@@ -125,6 +127,36 @@ class Engine:
         children = await self.store.call(lambda db: cancel_branch(db, session_id))
         for child in children:
             await self.stop(child, app_action_reason=app_action_reason)
+
+    async def stop_from_tool(self, source_session, source_run, target_session):
+        """An awaited, engine-owned stop survives cancellation of its requester."""
+        self.check_owner()
+        if source_session == target_session:
+            raise ValueError("Self-stop must finish its tool-result slots first.")
+        def validate(db):
+            row = db.execute("""SELECT s.user_id FROM runs r JOIN sessions s ON s.id=r.session_id
+                WHERE r.id=? AND r.session_id=? AND r.status='running'""", (source_run, source_session)).fetchone()
+            if row is None or not row['user_id'] or not db.execute(
+                    "SELECT 1 FROM sessions WHERE id=? AND user_id=?", (target_session, row['user_id'])).fetchone():
+                raise UserError("not_found", "This active task or target conversation was not found.")
+        await self.store.call(validate)
+        async def apply():
+            async with self.controls.setdefault(target_session, asyncio.Lock()):
+                await self._stop(target_session)
+                remaining = await self.store.rows("SELECT id,status FROM runs WHERE session_id=? AND status IN ('queued','running','waiting_user','waiting_agents')", (target_session,))
+            await self.emit(target_session, "refresh", {})
+            return {"status": "applied" if not remaining else "unknown", "completed": not remaining,
+                    "action": "stop", "session_id": target_session, "remaining": remaining}
+        task = asyncio.create_task(apply(), name=f"athena-stop-{target_session}")
+        self.tool_controls.add(task)
+        def done(finished):
+            self.tool_controls.discard(finished)
+            if not finished.cancelled() and finished.exception():
+                self.loop.call_exception_handler({"message": "Athena cross-conversation stop failed", "exception": finished.exception()})
+        task.add_done_callback(done)
+        # A and B may stop one another. Cancellation must unwind either model
+        # task immediately instead of propagating into the other's stop waiter.
+        return await asyncio.shield(task)
 
     async def answer_help(self, session_id, user_id, help_id, answers, attachments=None):
         from .user_help import answer_help
@@ -309,7 +341,8 @@ class Engine:
                     markers = output.get("control", {}) if isinstance(output, dict) and isinstance(output.get("control", {}), dict) else {}
                     app_args = arguments.get("args", arguments) if isinstance(arguments, dict) else {}
                     app_action = app_args.get("action") if isinstance(app_args, dict) else None
-                    if (tool["function"]["name"] == "runtime" and isinstance(arguments, dict) and arguments.get("op") == "app"
+                    if (tool["function"]["name"] == "runtime" and isinstance(arguments, dict)
+                            and (arguments.get("op") == "app" or (arguments.get("op") == "activity" and app_action == "stop"))
                             and ((app_action == "stop" and markers.get("stop_run") is True)
                                  or (app_action == "reset" and markers.get("reset_user") is True))):
                         # Do not execute later calls in the same model response. They
@@ -542,5 +575,6 @@ class Engine:
         for task in self.active_runs.values():
             task.cancel()
         await asyncio.gather(*self.actors.values(), return_exceptions=True)
+        await asyncio.gather(*self.tool_controls, return_exceptions=True)
         await self.tools.browser.close()
         await self.client.aclose()

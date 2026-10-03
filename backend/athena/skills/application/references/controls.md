@@ -5,7 +5,7 @@
 | 需求 | 操作 |
 | --- | --- |
 | 查看当前交互表面 | app `action: list` 列出 clients；`action: snapshot, client_id` 获取有界语义状态与 revision |
-| 打开/关闭菜单、历史、文件、账户、外观、开发面板、密码表单、工作区或组件管理 | app `action: open/close, target: menu/history/files/account/appearance/developer/password/workspace/surfaces` |
+| 打开/关闭菜单、历史、文件、账户、外观、开发面板、密码表单、工作区、组件管理或跨会话进展 | app `action: open/close, target: menu/history/files/account/appearance/developer/password/workspace/surfaces/activity` |
 | 切换到已有对话 | app `action: navigate, session_id` |
 | 预览或下载已有文件 | app `action: preview/download, file_id` |
 | 关闭文件预览 | app `action: close, target: preview` |
@@ -14,6 +14,7 @@
 | 请用户选择本地文件 | app `action: attach`；浏览器可能需要用户点选控件 |
 | 退出当前接收页面的登录 | app `action: sign_out` |
 | 停止当前会话 / 恢复默认并保留聊天文件 | app `action: stop/reset`，由引擎执行 |
+| 查看所有会话的进行中事项、未读结果；停止其中一个会话 | activity `action:list`；`action:stop,session_id`，详见 [activity.md](activity.md) |
 | 新建、改名、fork | 使用已有 `runtime sessions`；新建/fork 后需要显示目标时再 app navigate |
 | 改语言、字体、颜色、显示参数或开发者模式 | 使用已有 `runtime app_settings`，按当前 schema 更新 |
 | 改账户资料或头像、暂停任务 | 使用已有 account / cancel_task |

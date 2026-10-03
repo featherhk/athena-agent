@@ -18,7 +18,7 @@ export type FrontendFacts = {
   helpIds: string[]; choosingFiles: boolean; uploading: boolean; reconnecting: boolean;
   hasError: boolean; hasUnsentChanges: boolean; attachmentIds: string[];
 };
-const views = new Set(['menu', 'history', 'files', 'account', 'appearance', 'developer', 'password', 'workspace', 'preview', 'surfaces', 'authentication']);
+const views = new Set(['menu', 'history', 'files', 'account', 'appearance', 'developer', 'password', 'workspace', 'preview', 'surfaces', 'authentication', 'activity']);
 const componentErrors = new Set(['script_error', 'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']);
 const bounded = (value: number, min = -32768, max = 32768) => Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : 0;
 

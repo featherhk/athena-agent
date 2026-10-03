@@ -84,8 +84,11 @@ RUNTIME_PROPERTIES.update({
 })
 
 RUNTIME_PROPERTIES['op']['enum'].append('agents')
+RUNTIME_PROPERTIES['op']['enum'].append('activity')
 RUNTIME_PROPERTIES['action']['enum'].extend(['spawn', 'wait', 'cancel'])
+RUNTIME_PROPERTIES['action']['enum'].append('ack')
 RUNTIME_PROPERTIES.update({
+    'attention_key': {'type': 'string', 'pattern': '^[a-f0-9]{64}$'},
     'agent_id': {'type': 'string', 'maxLength': 64},
     'agent_ids': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'uniqueItems': True,
                   'items': {'type': 'string', 'maxLength': 64}},

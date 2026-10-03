@@ -237,5 +237,19 @@
   "agents.results": "已收到 {count} 項分工結果",
   "agents.unfinished": "{count} 項未完成",
   "agents.needsHelp": "需要你的協助",
-  "error.agent_limit": "請先收集已有結果，再分配更多任務。"
+  "error.agent_limit": "請先收集已有結果，再分配更多任務。",
+  "continuity.title": "你的任務",
+  "continuity.needsYou": "需要你回答",
+  "continuity.ready": "有結果了，待查看",
+  "continuity.failed": "需要處理",
+  "continuity.stopped": "已停止",
+  "continuity.working": "正在處理",
+  "continuity.count": "{count} 段對話有動態",
+  "continuity.tasks": "{count} 項任務",
+  "continuity.stopChat": "停止這段對話中的任務",
+  "continuity.dismiss": "收起這則動態",
+  "continuity.unavailable": "暫時無法更新任務狀態",
+  "continuity.more": "顯示更多任務",
+  "continuity.history": "在歷史中查看其他對話",
+  "continuity.clear": "所有動態都已查看。"
 }

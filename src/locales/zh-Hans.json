@@ -237,5 +237,19 @@
   "agents.results": "已收到 {count} 项分工结果",
   "agents.unfinished": "{count} 项未完成",
   "agents.needsHelp": "需要你的帮助",
-  "error.agent_limit": "请先收集已有结果，再分配更多任务。"
+  "error.agent_limit": "请先收集已有结果，再分配更多任务。",
+  "continuity.title": "你的任务",
+  "continuity.needsYou": "需要你回答",
+  "continuity.ready": "有结果了，待查看",
+  "continuity.failed": "需要处理",
+  "continuity.stopped": "已停止",
+  "continuity.working": "正在处理",
+  "continuity.count": "{count} 段对话有动态",
+  "continuity.tasks": "{count} 项任务",
+  "continuity.stopChat": "停止这段对话中的任务",
+  "continuity.dismiss": "收起这条动态",
+  "continuity.unavailable": "暂时无法更新任务状态",
+  "continuity.more": "显示更多任务",
+  "continuity.history": "在历史中查看其他对话",
+  "continuity.clear": "所有动态都已查看。"
 }

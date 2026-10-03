@@ -237,5 +237,19 @@
   "agents.results": "Resultados recebidos · {count}",
   "agents.unfinished": "{count} por concluir",
   "agents.needsHelp": "Precisa da sua ajuda",
-  "error.agent_limit": "Consulte os resultados atuais antes de delegar mais tarefas."
+  "error.agent_limit": "Consulte os resultados atuais antes de delegar mais tarefas.",
+  "continuity.title": "As suas tarefas",
+  "continuity.needsYou": "Precisa da sua resposta",
+  "continuity.ready": "Pronto para consultar",
+  "continuity.failed": "Precisa de atenção",
+  "continuity.stopped": "Parado",
+  "continuity.working": "Em curso",
+  "continuity.count": "{count} conversas com novidades",
+  "continuity.tasks": "{count} tarefas",
+  "continuity.stopChat": "Parar as tarefas desta conversa",
+  "continuity.dismiss": "Ocultar esta atualização",
+  "continuity.unavailable": "Estado das tarefas indisponível",
+  "continuity.more": "Mostrar mais tarefas",
+  "continuity.history": "Ver outras conversas no histórico",
+  "continuity.clear": "Todas as novidades foram vistas."
 }

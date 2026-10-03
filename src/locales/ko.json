@@ -237,5 +237,19 @@
   "agents.results": "결과 수신 · {count}개",
   "agents.unfinished": "{count}개 미완료",
   "agents.needsHelp": "도움이 필요해요",
-  "error.agent_limit": "현재 결과를 확인한 다음 추가 작업을 맡겨 주세요."
+  "error.agent_limit": "현재 결과를 확인한 다음 추가 작업을 맡겨 주세요.",
+  "continuity.title": "내 작업",
+  "continuity.needsYou": "답변이 필요해요",
+  "continuity.ready": "완료되어 확인할 수 있어요",
+  "continuity.failed": "확인이 필요해요",
+  "continuity.stopped": "중지됨",
+  "continuity.working": "진행 중",
+  "continuity.count": "대화 {count}개에 새 소식이 있어요",
+  "continuity.tasks": "작업 {count}개",
+  "continuity.stopChat": "이 대화의 작업 중지",
+  "continuity.dismiss": "이 알림 닫기",
+  "continuity.unavailable": "작업 상태를 업데이트할 수 없어요",
+  "continuity.more": "작업 더 보기",
+  "continuity.history": "기록에서 다른 대화 보기",
+  "continuity.clear": "모든 소식을 확인했어요."
 }
