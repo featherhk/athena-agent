@@ -13,8 +13,9 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     if (!owner) return;
     const controller = new AbortController();
     let disposed = false, departing = false, checkingIdentity = false, timer: ReturnType<typeof setTimeout> | undefined, events: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined, reconnectDelay = 5000, channelFailed = false;
     const reporter = new FrontendReporter(clientId, () => {
-      const state = observeFrontend(document, current.current);
+      const state = observeFrontend(document, { ...current.current, reconnecting: current.current.reconnecting || channelFailed });
       return departing ? { ...state, foreground: false } : state;
     }, async observation => {
       const response = await fetch('/api/frontend/observation', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -37,22 +38,44 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
       if (!response.ok || result.accepted !== true) throw new Error('frontend_observation_unavailable');
     });
     channel.current = reporter;
+    const cancelReconnect = () => { if (reconnectTimer !== undefined) clearTimeout(reconnectTimer); reconnectTimer = undefined; };
+    const scheduleReconnect = () => {
+      if (disposed || departing || checkingIdentity || document.hidden || reconnectTimer !== undefined) return;
+      reconnectTimer = setTimeout(() => { reconnectTimer = undefined; report(true); }, reconnectDelay);
+      reconnectDelay = Math.min(30000, reconnectDelay * 2);
+    };
+    const recoverClosed = (source: EventSource | null) => {
+      if (!source || disposed || events !== source || source.readyState !== EventSource.CLOSED) return;
+      source.close(); events = null; channelFailed = true;
+      scheduleReconnect(); enqueue();
+    };
     const connect = () => {
-      if (disposed || departing || checkingIdentity || document.hidden || events) return;
-      events = new EventSource(`/api/frontend/clients/${encodeURIComponent(clientId)}/events`);
+      recoverClosed(events);
+      if (disposed || departing || checkingIdentity || document.hidden || events || reconnectTimer !== undefined) return;
+      const source = new EventSource(`/api/frontend/clients/${encodeURIComponent(clientId)}/events`);
+      events = source;
       const message = (event: MessageEvent) => {
-        if (disposed || checkingIdentity || document.hidden) return;
+        if (disposed || events !== source || checkingIdentity || document.hidden) return;
         try {
           const item = JSON.parse(event.data);
           if (item.type === 'app_action' && item.payload?.target_client_id === clientId) receive.current(item.payload);
         } catch { /* Invalid/disconnected events cannot execute a UI action. */ }
       };
-      events.onmessage = message;
-      events.addEventListener('app_action', message as EventListener);
+      source.onmessage = message;
+      source.addEventListener('app_action', message as EventListener);
+      source.onopen = () => { if (events === source && !disposed) { channelFailed = false; reconnectDelay = 5000; enqueue(); } };
+      source.onerror = () => {
+        // CONNECTING is the browser's own retry. A terminal CLOSED source will
+        // never recover itself, so wait for a fresh observation before replacing it.
+        recoverClosed(source);
+      };
     };
     const report = (force = false) => {
       if (disposed) return;
-      void reporter.report(force).then(value => { if (value) connect(); }).catch(() => { /* Diagnostics must not break the user's work. */ });
+      void reporter.report(force).then(value => { if (value) connect(); }).catch(() => {
+        if (channelFailed) scheduleReconnect();
+        // Diagnostics must not break the user's work.
+      });
     };
     const enqueue = () => {
       // Continuous streaming must not postpone a meaningful view change indefinitely.
@@ -61,25 +84,26 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     };
     schedule.current = enqueue;
     const visibility = () => {
-      if (document.hidden) { events?.close(); events = null; }
+      if (document.hidden) { events?.close(); events = null; cancelReconnect(); }
+      else if (channelFailed) scheduleReconnect();
       report(true);
     };
-    const pagehide = () => { departing = true; events?.close(); events = null; report(true); };
-    const pageshow = () => { departing = false; report(true); };
+    const pagehide = () => { departing = true; events?.close(); events = null; cancelReconnect(); report(true); };
+    const pageshow = () => { departing = false; if (channelFailed) scheduleReconnect(); report(true); };
     const mutations = new MutationObserver(records => {
       if (records.some(record => record.type === 'childList' || record.attributeName !== 'style' || (record.target instanceof Element && record.target.matches('.widget')))) enqueue();
     });
     const app = document.querySelector('.app');
     if (app) mutations.observe(app, { subtree: true, childList: true, attributes: true,
       attributeFilter: ['data-app-view', 'data-component-state', 'data-component-error', 'data-component-instance', 'data-placement', 'style', 'hidden'] });
-    const interval = setInterval(() => { if (!document.hidden && !departing) report(true); }, 30000);
+    const interval = setInterval(() => { if (!document.hidden && !departing) { recoverClosed(events); report(true); } }, 30000);
     window.addEventListener('resize', enqueue); window.visualViewport?.addEventListener('resize', enqueue);
     window.addEventListener('scroll', enqueue, true); window.addEventListener('pointerup', enqueue);
     window.addEventListener('online', visibility); window.addEventListener('pagehide', pagehide); window.addEventListener('pageshow', pageshow);
     document.addEventListener('visibilitychange', visibility);
     report(true);
     return () => {
-      disposed = true; reporter.stop(); controller.abort(); events?.close(); mutations.disconnect(); clearInterval(interval);
+      disposed = true; reporter.stop(); controller.abort(); events?.close(); cancelReconnect(); mutations.disconnect(); clearInterval(interval);
       if (timer !== undefined) clearTimeout(timer);
       if (channel.current === reporter) channel.current = null;
       schedule.current = () => {};

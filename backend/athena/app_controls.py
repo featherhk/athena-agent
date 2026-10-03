@@ -17,6 +17,7 @@ from . import frontend_state
 TARGETS = ("menu", "history", "files", "account", "appearance", "developer", "password", "workspace", "preview", "surfaces")
 OPEN_TARGETS = tuple(target for target in TARGETS if target != "preview")
 ERROR_CODES = ("frontend_conflict", "frontend_unavailable", "unavailable", "user_gesture_required", "file_not_found", "navigation_failed", "execution_failed", "dismissed", "reset", "interrupted")
+INACTIVE_RUN_STATUSES = ("failed", "cancelled", "interrupted", "stopped")
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
 CATALOG = [
     {"action": "list", "optional": ["scope", "session_id", "limit", "offset"], "effect": "Discover application controls, origin requests and files in an owned conversation."},
@@ -214,6 +215,14 @@ async def claim_app_action(store, session_id, user_id, action_id, client_id, aut
         observed = frontend_state.client(db, user_id, client_id, auth_hash)
         if row["status"] != "pending":
             return {"accepted": False, "request": _public(row)}
+        if row["run_id"]:
+            run = db.execute("SELECT status FROM runs WHERE id=? AND session_id=?", (row["run_id"], session_id)).fetchone()
+            if run and run["status"] in INACTIVE_RUN_STATUSES:
+                # Includes old persisted intents created before terminal cleanup.
+                # Claim and run finalization share Store's serialized transaction.
+                cancel_app_actions(db, user_id, session_id=session_id, run_id=row["run_id"], reason="interrupted", pending_only=True)
+                row = db.execute("SELECT * FROM app_actions WHERE id=?", (action_id,)).fetchone()
+                return {"accepted": False, "request": _public(row)}
         try:
             frontend_state.target(db, user_id, session_id, client_id, row["expected_revision"])
             if observed["session_id"] != row["target_session_id"]:
@@ -269,20 +278,25 @@ async def acknowledge_app_action(store, session_id, user_id, action_id, client_i
     return await store.call(acknowledge)
 
 
-def cancel_app_actions(db, user_id, session_id=None, reason="reset"):
-    """Reset must not replay a pending view/download action after recovery."""
+def cancel_app_actions(db, user_id, session_id=None, reason="reset", *, run_id=None, pending_only=False):
+    """Cancel unclaimed intent; cancellation cannot undo an already sent effect."""
     _initialize(db)
     if reason not in ("reset", "interrupted"):
         raise ValueError("Unsupported application cancellation reason.")
-    where, values = "user_id=? AND status IN ('pending','dispatched')", [user_id]
+    where, values = "user_id=? AND " + ("status='pending'" if pending_only else "status IN ('pending','dispatched')"), [user_id]
     if session_id is not None:
         where += " AND session_id=?"
         values.append(session_id)
+    if run_id is not None:
+        where += " AND run_id=?"
+        values.append(run_id)
     if reason == "reset":
         frontend_state.clear(db, user_id)
     rows = db.execute(f"SELECT * FROM app_actions WHERE {where}", values).fetchall()
     for row in rows:
-        db.execute("UPDATE app_actions SET status='dismissed',error_code=?,resolved_at=? WHERE id=?", (reason, now(), row["id"]))
+        receipt = {"effect": "not_dispatched" if row["status"] == "pending" else "unknown",
+                   "may_have_applied": row["status"] == "dispatched"}
+        db.execute("UPDATE app_actions SET status='dismissed',error_code=?,resolved_at=?,receipt=? WHERE id=?", (reason, now(), json.dumps(receipt), row["id"]))
         _event(db, db.execute("SELECT * FROM app_actions WHERE id=?", (row["id"],)).fetchone())
 
 

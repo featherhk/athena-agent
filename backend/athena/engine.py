@@ -359,6 +359,11 @@ class Engine:
                     cancel_waits(db, session_id, run_id)
                     if status != 'complete':
                         cancel_branch(db, session_id, run_id)
+                        from .app_controls import cancel_app_actions
+                        owner = db.execute("SELECT user_id FROM sessions WHERE id=?", (session_id,)).fetchone()
+                        if owner and owner["user_id"]:
+                            cancel_app_actions(db, owner["user_id"], session_id=session_id, run_id=run_id,
+                                               reason="interrupted", pending_only=True)
                     db.execute("UPDATE runs SET status=?,phase=?,error=?,error_code=?,finished_at=? WHERE id=?", (status, "stopped" if status != "complete" else "idle", error, error_code, now(), run_id))
                 await self.store.call(finish)
                 delegated = await self.store.rows('SELECT 1 FROM agent_jobs WHERE child_run_id=?', (run_id,))
