@@ -25,6 +25,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
   const refreshLayout = useRef<() => void>(() => {});
   const [height, setHeight] = useState(240);
   const [failure, setFailure] = useState(false);
+  const [observation, setObservation] = useState<{ instance: string; health: Health } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [dragged, setDragged] = useState<Rect | null>(null);
@@ -121,7 +122,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       void api(`/sessions/${sessionId}/components/${component.id}/report`, value).catch(() => { if (!disposed) lastReport = ''; });
     };
     const timeout = window.setTimeout(() => {
-      if (!health) { health = { state: 'failed', has_content: false, error_code: 'load_timeout' }; setFailure(true); report(); }
+      if (!health) { health = { state: 'failed', has_content: false, error_code: 'load_timeout' }; setFailure(true); setObservation({ instance, health }); report(); }
     }, 5000);
     const listener = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.data?.instance !== instance) return;
@@ -166,6 +167,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
         const { state, has_content, error_code } = event.data;
         if ((state === 'mounted' && error_code === null) || (state === 'failed' && errors.has(error_code))) {
           health = { state, has_content, error_code };
+          setObservation({ instance, health });
           setFailure(state === 'failed'); report();
         }
       }
@@ -208,7 +210,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
   const regions = placement === 'overlay' && !failure && interactions.instance === instance
     ? visibleSurfaceRegions(interactions.regions, canvasSize.width, canvasSize.height) : [];
   const dispatch = (action: SurfaceAction) => frame.current?.contentWindow?.postMessage({ type: 'athena:interaction', instance, action }, '*');
-  return <section ref={wrapper} className={`widget${floating ? ' widget-floating' : ''}${dragged ? ' widget-adjusting' : ''}`} data-placement={placement} data-component-id={component.id} style={rect ? { left: rect.x, top: rect.y, width: rect.width, height: rect.height } : ['workspace', 'fullscreen', 'presence', 'overlay'].includes(placement) ? undefined : { maxWidth: component.view?.width, marginInline: 'auto' }}>
+  return <section ref={wrapper} className={`widget${floating ? ' widget-floating' : ''}${dragged ? ' widget-adjusting' : ''}`} data-placement={placement} data-component-id={component.id} data-component-instance={instance} data-component-state={observation?.instance === instance ? observation.health.state : 'unobserved'} data-component-error={observation?.instance === instance ? observation.health.error_code || undefined : undefined} style={rect ? { left: rect.x, top: rect.y, width: rect.width, height: rect.height } : ['workspace', 'fullscreen', 'presence', 'overlay'].includes(placement) ? undefined : { maxWidth: component.view?.width, marginInline: 'auto' }}>
     <header className="widget-toolbar">
       {floating ? <button className="widget-handle" disabled={saving} aria-label={t('surface.move', { name: component.title })} onPointerDown={event => startDrag(event)} onPointerMove={moveDrag} onPointerUp={event => endDrag(event)} onPointerCancel={event => endDrag(event, true)} onLostPointerCapture={event => endDrag(event, true)} onKeyDown={event => keyMove(event)}>{component.title}</button> : <span className="section-label">{component.title}</span>}
       <ComponentControls component={component} change={view => void change(view)} busy={saving} />

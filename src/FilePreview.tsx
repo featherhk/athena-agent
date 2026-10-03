@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n';
 import { MarkdownContent } from './MessageBody';
+import type { PreviewObservation } from './frontend-observation';
 import './files.css';
 
 export type FileEntry = {
@@ -15,21 +16,35 @@ type Preview = { kind: 'text' | 'markdown' | 'html'; content: string; truncated:
   | { kind: 'unsupported' };
 const framePolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
 
-export function FilePreview({ file, onClose }: { file: FileEntry; onClose?: () => void }) {
+export function FilePreview({ file, onClose, onObservation }: { file: FileEntry; onClose?: () => void; onObservation?: (value: PreviewObservation) => void }) {
   const { t } = useI18n();
   const [preview, setPreview] = useState<Preview | null>(null);
   const [failed, setFailed] = useState(false);
   const [sheetIndex, setSheetIndex] = useState(0);
+  const observe = useRef(onObservation); observe.current = onObservation;
+  const currentFile = useRef(file.id); currentFile.current = file.id;
+  const loadedFile = useRef<string | null>(null);
+  const [mediaReady, setMediaReady] = useState(false);
+  function mediaLoaded(id: string, success: boolean) {
+    if (currentFile.current !== id || loadedFile.current !== id) return;
+    if (success) setMediaReady(true); else setFailed(true);
+  }
   useEffect(() => {
     const controller = new AbortController();
-    setPreview(null); setFailed(false); setSheetIndex(0);
+    loadedFile.current = null;
+    setPreview(null); setFailed(false); setSheetIndex(0); setMediaReady(false);
+    observe.current?.({ file_id: file.id, status: 'loading' });
     void fetch(file.preview_url, { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error('preview_unavailable');
       const value: Preview = await response.json();
-      if (!controller.signal.aborted) setPreview(value);
+      if (!controller.signal.aborted) { loadedFile.current = file.id; setPreview(value); }
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
   }, [file.id, file.preview_url]);
+  useEffect(() => {
+    if (failed || (loadedFile.current === file.id && preview?.kind === 'unsupported')) observe.current?.({ file_id: file.id, status: 'failed', error_code: 'preview_unavailable' });
+    else if (loadedFile.current === file.id && preview && (!['html', 'image'].includes(preview.kind) || mediaReady)) observe.current?.({ file_id: file.id, status: 'ready' });
+  }, [file.id, preview, failed, mediaReady]);
   const sheet = preview?.kind === 'spreadsheet' ? preview.sheets[sheetIndex] : undefined;
   const columns = sheet ? Math.max(0, ...sheet.rows.map(row => row.length)) : 0;
   function columnName(index: number) {
@@ -46,9 +61,9 @@ export function FilePreview({ file, onClose }: { file: FileEntry; onClose?: () =
     {(failed || preview?.kind === 'unsupported') && <p className="empty-note">{t('files.unavailable')}</p>}
     {preview?.kind === 'markdown' && <MarkdownContent content={preview.content} />}
     {preview?.kind === 'text' && <pre className="file-text-preview">{preview.content}</pre>}
-    {preview?.kind === 'html' && <iframe className="file-html-preview" sandbox="" referrerPolicy="no-referrer" title={file.name}
+    {preview?.kind === 'html' && <iframe className="file-html-preview" sandbox="" referrerPolicy="no-referrer" title={file.name} onLoad={() => mediaLoaded(file.id, true)} onError={() => mediaLoaded(file.id, false)}
       srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}"><meta name="referrer" content="no-referrer">${preview.content}`} />}
-    {preview?.kind === 'image' && <img className="file-image-preview" src={preview.url} alt={file.name} />}
+    {preview?.kind === 'image' && <img className="file-image-preview" src={preview.url} alt={file.name} onLoad={() => mediaLoaded(file.id, true)} onError={() => mediaLoaded(file.id, false)} />}
     {preview?.kind === 'spreadsheet' && <div className="spreadsheet-preview">
       {preview.sheets.length > 1 && <div className="spreadsheet-tabs" role="tablist" aria-label={t('files.sheet')}>
         {preview.sheets.map((item, index) => <button key={index} type="button" role="tab" aria-selected={index === sheetIndex} onClick={() => setSheetIndex(index)}>{item.name || `${index + 1}`}</button>)}

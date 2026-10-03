@@ -119,6 +119,23 @@ test('a tab hidden before execution never claims or executes an action', async (
   assert.equal(applied, false); assert.equal(calls, 0);
 });
 
+test('another client cannot claim a directed action', async () => {
+  const result = await consumeAppAction({ ...action, target_client_id: 'other' }, 'one',
+    async () => assert.fail('wrong client claimed'), async () => assert.fail('wrong client executed'), () => true);
+  assert.equal(result, false);
+});
+
+test('observed revision is acknowledged at the original conversation after navigation', async () => {
+  let receipt;
+  const targeted = { ...action, target_client_id: 'one', expected_revision: 3 };
+  const result = await consumeAppAction(targeted, 'one', async (path, body) => {
+    assert.ok(path.startsWith('/sessions/source/app-actions/request/'));
+    if (path.endsWith('/claim')) return { accepted: true, request: targeted };
+    receipt = body; return { completed: true };
+  }, async () => ({ status: 'applied', observed_revision: 4 }), () => true);
+  assert.equal(result, true); assert.deepEqual(receipt, { client_id: 'one', status: 'applied', observed_revision: 4 });
+});
+
 test('logout can reconcile after a visibility/session change without mistaking it for a new login', async () => {
   const logout = { ...action, action: 'sign_out', payload: {} };
   let current = true;

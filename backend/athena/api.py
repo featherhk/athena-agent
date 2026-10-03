@@ -27,6 +27,7 @@ from .user_help import list_help
 from .component_feedback import register_component_routes
 from .trace import register_trace_routes
 from .client_version import register_client_version_route
+from .frontend_state import register_frontend_routes, clear as clear_frontend_clients
 from .app_controls import initialize_app_controls, list_app_actions, register_app_control_routes
 from .voice import VoiceConfig, VoiceService, initialize_voice, register_voice_routes
 
@@ -184,7 +185,11 @@ def create_app(config: Config | None = None):
     async def logout(request: Request):
         if app.state.cloud:
             await app.state.cloud.logout(request.cookies[COOKIE])
-        await app.state.store.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash(request.cookies[COOKIE]),))
+        def revoke(db):
+            hashed = token_hash(request.cookies[COOKIE])
+            clear_frontend_clients(db, request.state.user["id"], hashed)
+            db.execute("DELETE FROM auth_sessions WHERE token_hash=?", (hashed,))
+        await app.state.store.call(revoke)
         response = JSONResponse({"ok": True})
         response.delete_cookie(COOKIE, path="/")
         return response
@@ -376,6 +381,7 @@ def create_app(config: Config | None = None):
     register_voice_routes(app, exists)
     register_client_version_route(app, config)
     register_app_control_routes(app, exists)
+    register_frontend_routes(app)
     dist = config.repo_dir / "dist"
     if (dist / "assets").exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")

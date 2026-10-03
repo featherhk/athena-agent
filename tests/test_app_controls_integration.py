@@ -6,7 +6,8 @@ import httpx
 
 from athena.api import create_app
 from athena.app_controls import app_operation, claim_app_action
-from athena.auth import Auth
+from athena.auth import Auth, COOKIE
+from frontend_fixtures import observe_client, observation
 from athena.preferences import read_preferences, update_preferences
 
 
@@ -21,6 +22,7 @@ async def test_app_action_snapshot_claim_and_ack_are_owned(config):
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:4317") as owner:
             user = (await owner.post("/api/auth/register", json={"username": "app-owner", "password": "test-password"})).json()["user"]
             session = (await owner.post("/api/sessions", json={})).json()["id"]
+            await owner.post("/api/frontend/observation", json=observation(session))
             request = (await app_operation(app.state.store, session, None, {"action": "open", "target": "history"}))["request"]
             path = f"/api/sessions/{session}/app-actions/{request['id']}"
             snapshot = (await owner.get(f"/api/sessions/{session}")).json()
@@ -36,9 +38,10 @@ async def test_app_action_snapshot_claim_and_ack_are_owned(config):
             assert claimed["accepted"] and claimed["request"]["status"] == "dispatched"
             assert (await owner.get(f"/api/sessions/{session}")).json()["app_actions"] == []
             assert (await owner.post(path + "/ack", json={"client_id": "different-tab", "status": "applied"})).status_code == 400
-            acknowledged = await owner.post(path + "/ack", json={"client_id": "browser-one", "status": "applied"})
+            await owner.post("/api/frontend/observation", json=observation(session, revision=2, open_views=["history"]))
+            acknowledged = await owner.post(path + "/ack", json={"client_id": "browser-one", "status": "applied", "observed_revision": 2})
             assert acknowledged.status_code == 200 and acknowledged.json()["completed"]
-            duplicate = (await owner.post(path + "/ack", json={"client_id": "browser-one", "status": "applied"})).json()
+            duplicate = (await owner.post(path + "/ack", json={"client_id": "browser-one", "status": "applied", "observed_revision": 2})).json()
             assert not duplicate["changed"]
             assert not (await owner.post(path + "/claim", json={"client_id": "browser-one"})).json()["accepted"]
             state = await app_operation(app.state.store, session, None, {"action": "read", "id": request["id"]})
@@ -54,11 +57,12 @@ async def test_sign_out_revokes_only_receiving_browser_after_ack(config):
             await first.post("/api/auth/register", json=credentials)
             await second.post("/api/auth/login", json=credentials)
             session = (await first.post("/api/sessions", json={})).json()["id"]
+            await first.post("/api/frontend/observation", json=observation(session, "first-browser"))
             request = (await app_operation(app.state.store, session, None, {"action": "sign_out"}))["request"]
             path = f"/api/sessions/{session}/app-actions/{request['id']}"
             assert (await first.get("/api/auth/me")).json()["user"]
             await first.post(path + "/claim", json={"client_id": "first-browser"})
-            result = await first.post(path + "/ack", json={"client_id": "first-browser", "status": "applied"})
+            result = await first.post(path + "/ack", json={"client_id": "first-browser", "status": "applied", "observed_revision": 1})
             assert result.status_code == 200 and result.json()["completed"]
             assert (await first.get("/api/auth/me")).json()["user"] is None
             assert (await second.get("/api/auth/me")).json()["user"]["username"] == "signout-owner"
@@ -70,11 +74,13 @@ async def test_api_reset_dismisses_pending_and_dispatched_actions_for_only_owner
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://127.0.0.1:4317") as client:
             user = (await client.post("/api/auth/register", json={"username": "reset-actions", "password": "test-password"})).json()["user"]
             session = (await client.post("/api/sessions", json={})).json()["id"]
+            await client.post("/api/frontend/observation", json=observation(session, "browser"))
             pending = (await app_operation(app.state.store, session, None, {"action": "open", "target": "files"}))["request"]
             dispatched = (await app_operation(app.state.store, session, None, {"action": "attach"}))["request"]
             await claim_app_action(app.state.store, session, user["id"], dispatched["id"], "browser")
-            other, _ = await Auth(app.state.store).register("reset-unrelated", "test-password")
+            other, other_token = await Auth(app.state.store).register("reset-unrelated", "test-password")
             other_session = await app.state.store.session(user_id=other["id"])
+            await observe_client(app.state.store, other["id"], other_session, other_token, "other-browser")
             other_request = (await app_operation(app.state.store, other_session, None, {"action": "open", "target": "files"}))["request"]
             assert (await client.post("/api/reset", json={})).status_code == 200
             assert (await client.get(f"/api/sessions/{session}")).json()["app_actions"] == []
@@ -91,6 +97,8 @@ async def test_fixed_stop_dismisses_only_current_session_app_intents(config):
             user = (await client.post("/api/auth/register", json={"username": "stop-actions", "password": "test-password"})).json()["user"]
             session = (await client.post("/api/sessions", json={})).json()["id"]
             other_session = (await client.post("/api/sessions", json={})).json()["id"]
+            await client.post("/api/frontend/observation", json=observation(session, "browser"))
+            await client.post("/api/frontend/observation", json=observation(other_session, "other-browser"))
             pending = (await app_operation(app.state.store, session, None, {"action": "attach"}))["request"]
             dispatched = (await app_operation(app.state.store, session, None, {"action": "open", "target": "files"}))["request"]
             other = (await app_operation(app.state.store, other_session, None, {"action": "open", "target": "files"}))["request"]
@@ -140,13 +148,14 @@ async def test_runtime_stop_closes_pairing_cancels_queue_and_never_awaits_itself
 
 
 async def test_runtime_reset_finishes_own_tool_loop_stops_other_runs_and_keeps_data(engine, store, config, monkeypatch):
-    user, _ = await Auth(store).register("self-reset", "test-password")
+    user, token = await Auth(store).register("self-reset", "test-password")
     session = await store.session(user_id=user["id"])
     other_session = await store.session(user_id=user["id"])
     await update_preferences(store, user["id"], {"ui_palette": "#000000"})
     component = await engine.tools.component({"op": "upsert", "id": "keep-file", "html": "<p>Custom surface</p>"}, session)
     rows = await store.rows("SELECT file_path FROM components WHERE session_id=?", (session,))
     custom_file = config.data_dir / rows[0]["file_path"]
+    await observe_client(store, user["id"], session, token)
     await app_operation(store, session, None, {"action": "open", "target": "history"})
     blocked = asyncio.Event()
     requested = []

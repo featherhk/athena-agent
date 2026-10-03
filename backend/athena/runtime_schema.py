@@ -31,6 +31,8 @@ RUNTIME_PROPERTIES = {
             {"type": "string"}, {"type": "object", "properties": {"encoding": {"type": "string", "enum": ["base64"]},
                 "content": {"type": "string"}}, "required": ["encoding", "content"], "additionalProperties": False}]}},
         "placement": {"type": "string", "enum": list(COMPONENT_PLACEMENTS)},
+        "client_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$"},
+        "expected_revision": {"type": "integer", "minimum": 1},
         "view_revision": {"type": "integer", "minimum": 0},
         "view": {"type": "object", "minProperties": 1, "properties": {
             "hidden": {"type": ["boolean", "null"]},

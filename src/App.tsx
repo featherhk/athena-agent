@@ -28,6 +28,8 @@ import { DraftStore } from './draft-store';
 import type { Draft } from './draft-store';
 import ErrorBoundary from './ErrorBoundary';
 import { useI18n, languages, errorMessage } from './i18n';
+import { useFrontendObservation } from './useFrontendObservation';
+import { observesAppAction, type PreviewObservation } from './frontend-observation';
 
 function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'send' | 'files' | 'stop' }) {
   const paths = {
@@ -71,6 +73,7 @@ export default function App() {
   const surfaceDrafts = useRef(new Map<string, FormDraft>());
   const surfaceBounds = useSurfaceBounds();
   const [preview, setPreview] = useState<FileEntry | null>(null);
+  const [previewObservation, setPreviewObservation] = useState<PreviewObservation | null>(null);
   const [attached, setAttached] = useState<FileEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [reading, setReading] = useState(false);
@@ -121,6 +124,12 @@ export default function App() {
   const presence = components.filter(component => placementOf(component) === 'presence').at(-1);
   const floating = components.filter(component => floatingPlacements.has(placementOf(component)));
   const panelLayout = arrangePanels(floating, surfaceBounds, locale === 'ar', surfaceHeights);
+  const frontendObservation = useFrontendObservation(user?.id || null, appClient.current, {
+    sessionId: session, components: snapshot.components,
+    preview: preview ? previewObservation?.file_id === preview.id ? previewObservation : { file_id: preview.id, status: 'loading' } : null,
+    helpIds: (snapshot.help_requests || []).map(item => item.id), choosingFiles: chooseFiles, uploading, reconnecting,
+    hasError: Boolean(error), hasUnsentChanges: Boolean(text.trim() || attached.length), attachmentIds: attached.map(file => file.id),
+  }, enqueueAppAction, () => { appClient.current = crypto.randomUUID(); setActionWake(old => old + 1); }, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
   const measureWidget = useCallback((id: string, height: number) => setSurfaceHeights(old => old[id] === height ? old : { ...old, [id]: height }), []);
   const styleText = useCallback((key: string, effect: TextStyleEffect | null) => {
     if (effect && !messagesRef.current.some(message => message.id === effect.message_id)) return;
@@ -174,6 +183,8 @@ export default function App() {
   function adjustComponent(component: Component, view: ViewChange) { void changeComponentView(component, view).catch(() => {}); }
   async function applyAppAction(action: AppAction, isCurrent: () => boolean): Promise<AppReceipt> {
     if (!isCurrent()) return interruptedReceipt();
+    if (action.expected_revision != null && frontendObservation.snapshot()?.revision !== action.expected_revision) return { status: 'dismissed', error_code: 'frontend_conflict' };
+    let effectIsCurrent = isCurrent;
     const { target, file } = action.payload;
     if (action.action === 'navigate') {
       const next = action.payload.session_id!;
@@ -181,6 +192,8 @@ export default function App() {
       if (!isCurrent()) return interruptedReceipt();
       setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false);
       navigate(next);
+      // This action's navigation advances the generation; subsequent user navigation still cancels it.
+      const afterNavigation = currentGuard(); effectIsCurrent = () => afterNavigation() && !document.hidden;
     } else if (action.action === 'open' || action.action === 'close') {
       const open = action.action === 'open';
       if (target === 'history') setHistory(open);
@@ -216,9 +229,17 @@ export default function App() {
       changeAttachments(old => old.some(item => item.id === file.id) ? old : [...old, file]);
     } else if (action.action === 'detach' && file) changeAttachments(old => old.filter(item => item.id !== file.id));
     else if (action.action !== 'sign_out') return { status: 'failed', error_code: 'unavailable' };
-    // Let React commit the requested view before reporting the browser effect.
+    // Confirm React's committed shell, then persist that observation before acknowledging.
     await new Promise<void>(resolve => { requestAnimationFrame(() => requestAnimationFrame(() => resolve())); window.setTimeout(resolve, 250); });
-    return { status: 'applied' };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!effectIsCurrent()) return interruptedReceipt();
+      const observation = await frontendObservation.report();
+      if (!effectIsCurrent()) return interruptedReceipt();
+      if (!observation) return { status: 'failed', error_code: 'frontend_unavailable' };
+      if (frontendObservation.snapshot()?.revision !== observation.revision) continue;
+      return observesAppAction(action, observation) ? { status: 'applied', observed_revision: observation.revision } : { status: 'failed', error_code: 'frontend_conflict', observed_revision: observation.revision };
+    }
+    return { status: 'failed', error_code: 'frontend_conflict' };
   }
   const appActionHandler = useRef(applyAppAction); appActionHandler.current = applyAppAction;
   useEffect(() => {
@@ -226,27 +247,30 @@ export default function App() {
     document.addEventListener('visibilitychange', wake);
     return () => document.removeEventListener('visibilitychange', wake);
   }, []);
-  useEffect(() => {
-    if (!user || !session || document.hidden) return;
-    const scopeStillCurrent = currentGuard(), authTicket = authEpoch.current, owner = user.id;
-    const isSameAccount = () => authEpoch.current === authTicket && uiScope.current.owner === owner;
-    for (const action of snapshot.app_actions || []) {
-      if (appActionSeen.current.has(action.id)) continue;
-      appActionSeen.current.add(action.id);
-      appActionQueue.current = appActionQueue.current.then(async () => {
-        const isCurrent = () => scopeStillCurrent() && !document.hidden;
-        appActionActive.current++;
-        try {
-          const applied = await consumeAppAction(action, appClient.current, api, (request, guard) => appActionHandler.current(request, guard), isCurrent, isSameAccount);
-          if (applied && action.action === 'sign_out' && isSameAccount()) acceptUser(null);
-        } finally { appActionActive.current--; }
-      }).catch(() => { /* A dispatched effect is never replayed; unclaimed requests can reconnect. */ })
-        .finally(() => { appActionSeen.current.delete(action.id); });
-    }
-  }, [snapshot.app_actions, session, user?.id, actionWake]);
+  function enqueueAppAction(action: AppAction) {
+    if (!user || document.hidden || appActionSeen.current.has(action.id) || (action.target_client_id && action.target_client_id !== appClient.current)) return;
+    const authTicket = authEpoch.current, owner = user.id, client = appClient.current, control = uiScope.current.control;
+    const isSameAccount = () => authEpoch.current === authTicket && uiScope.current.owner === owner && appClient.current === client;
+    appActionSeen.current.add(action.id);
+    appActionQueue.current = appActionQueue.current.then(async () => {
+      if (!isSameAccount() || uiScope.current.control !== control || document.hidden) return;
+      // A preceding action may have navigated this client to another owned conversation.
+      const scopeStillCurrent = currentGuard();
+      const isCurrent = () => scopeStillCurrent() && isSameAccount() && !document.hidden;
+      appActionActive.current++;
+      try {
+        await frontendObservation.report();
+        const applied = await consumeAppAction(action, client, api, (request, guard) => appActionHandler.current(request, guard), isCurrent, isSameAccount);
+        if (applied && action.action === 'sign_out' && isSameAccount()) acceptUser(null);
+      } finally { appActionActive.current--; }
+    }).catch(() => { /* A dispatched effect is never replayed; unclaimed requests can reconnect. */ })
+      .finally(() => { appActionSeen.current.delete(action.id); });
+  }
+  useEffect(() => { for (const action of snapshot.app_actions || []) enqueueAppAction(action); }, [snapshot.app_actions, session, user?.id, actionWake]);
   function acceptUser(next: User | null, saved?: Preferences) {
     if (uiScope.current.owner !== (next?.id || null)) { surfaceDrafts.current.clear(); setSurfaces(false); }
     const previous = uiScope.current.owner;
+    appClient.current = crypto.randomUUID();
     authEpoch.current++; generation.current++;
     let nextSession: string | null = null;
     try { if (next) nextSession = localStorage.getItem('athena-session:' + next.id); } catch { /* Private browser mode. */ }
@@ -392,7 +416,7 @@ export default function App() {
 
         else if (item.type === 'preferences_changed') { applyPreferences(item.payload); void reload(); }
         else if (item.type === 'status') { setPhase(item.payload.phase || 'thinking'); void reload(); }
-        else { if (item.type === 'reset') setSnapshot(old => ({ ...old, components: [] })); void reload(); }
+        else { if (item.type === 'reset') { setSnapshot(old => ({ ...old, components: [] })); void frontendObservation.report().catch(() => {}); } void reload(); }
       };
     })();
     return () => { disposed = true; source?.close(); };
@@ -500,6 +524,7 @@ export default function App() {
     setResetting(true); setError('');
     try {
       await api('/reset', {});
+      void frontendObservation.report().catch(() => {});
       // Reset broadcasts also invalidate the action scope. Account identity still gates the receipt.
       if (uiScope.current.owner !== owner || authEpoch.current !== authTicket) return;
       if (isCurrent() && session) {
@@ -617,7 +642,7 @@ export default function App() {
     {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
     <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
       {!resetting && components.filter(component => placementOf(component) === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
-      {workspace && !resetting && <section className="workspace-panel">{renderWidget(workspace)}</section>}
+      {workspace && !resetting && <section className="workspace-panel" data-app-view="workspace">{renderWidget(workspace)}</section>}
       <div className="conversation" hidden={Boolean(workspace)}>
         <article className="message assistant greeting"><div>{t('greeting')}</div></article>
         {snapshot.messages.map(message => {
@@ -663,19 +688,19 @@ export default function App() {
         <div className="send-actions"><VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />{(busy || waiting) && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{(busy || waiting) && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={(busy && !waiting) || (help && help.questions.length > 1) ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
       </form>
     </div></footer>
-    {surfaces && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setSurfaces(false); }}><section className="dialog surface-dialog" role="dialog" aria-modal="true" aria-label={t('surface.all')}><div className="dialog-top"><h2>{t('surface.all')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setSurfaces(false)}>×</button></div><div className="surface-list">{snapshot.components.map(component => <div className="surface-row" key={component.id}><button className="surface-open" onClick={() => { adjustComponent(component, { hidden: false }); setSurfaces(false); }}><span>{component.title}</span><small>{t(component.view?.hidden ? 'surface.hidden' : 'surface.visible')}</small></button><ComponentControls component={component} change={view => adjustComponent(component, view)} /></div>)}</div></section></div>}
+    {surfaces && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setSurfaces(false); }}><section className="dialog surface-dialog" data-app-view="surfaces" role="dialog" aria-modal="true" aria-label={t('surface.all')}><div className="dialog-top"><h2>{t('surface.all')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setSurfaces(false)}>×</button></div><div className="surface-list">{snapshot.components.map(component => <div className="surface-row" key={component.id}><button className="surface-open" onClick={() => { adjustComponent(component, { hidden: false }); setSurfaces(false); }}><span>{component.title}</span><small>{t(component.view?.hidden ? 'surface.hidden' : 'surface.visible')}</small></button><ComponentControls component={component} change={view => adjustComponent(component, view)} /></div>)}</div></section></div>}
     {toast && <div className="toast" role="status">{toast}</div>}
     {Boolean(user?.developer_mode) && <ErrorBoundary panel close={() => void developer(false)}><DeveloperPanel session={session} close={() => void developer(false)} /></ErrorBoundary>}
-    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items"><button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
-    {appearance && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{key === 'ui_palette' && preferences.ui_palette.startsWith('#') && <option value={preferences.ui_palette}>{preferences.ui_palette}</option>}{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
-    {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
-    {auth && <div className="overlay centered"><form className="dialog" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {
+    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" data-app-view="menu" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items"><button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
+    {appearance && <div className="overlay centered"><section className="dialog" data-app-view="appearance" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{key === 'ui_palette' && preferences.ui_palette.startsWith('#') && <option value={preferences.ui_palette}>{preferences.ui_palette}</option>}{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
+    {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" data-app-view="history" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
+    {auth && <div className="overlay centered"><form className="dialog" data-app-view="authentication" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {
       event.preventDefault(); const ticket = ++authEpoch.current; invalidateActions(); setSending(true); setError('');
       try { const result = await api<{ user: User; preferences: Preferences }>(`/auth/${auth}`, { username, password }); if (authEpoch.current === ticket) { acceptUser(result.user, result.preferences); setHasUsers(true); } }
       catch (e) { if (authEpoch.current === ticket) setError((e as Error).message); } finally { if (authEpoch.current === ticket) setSending(false); }
     }}><div className="dialog-top"><h2>{auth === 'login' ? t('welcomeBack') : t('niceToMeet')}</h2><button className="icon-button" type="button" aria-label={t('close')} onClick={() => { setAuth(null); setPassword(''); }}>×</button></div><label htmlFor="username">{t('username')}</label><input id="username" autoComplete="username" autoFocus aria-describedby="username-hint" value={username} onChange={event => setUsername(event.target.value)} required minLength={2} maxLength={40} /><p id="username-hint" className="field-hint">{t('usernameHint')}</p><label htmlFor="password">{t('password')}</label><input id="password" type="password" autoComplete={auth === 'login' ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} required minLength={8} maxLength={128} placeholder={t('passwordHint')} />{error && <p className="notice">{error}</p>}<button className="primary wide" disabled={sending}>{sending ? t('wait') : auth === 'login' ? t('signIn') : t('createAccount')}</button><button type="button" className="quiet wide" onClick={() => { setAuth(auth === 'login' ? 'register' : 'login'); setError(''); }}>{auth === 'login' ? t('needAccount') : t('haveAccount')}</button></form></div>}
-    {account && user && <div className="overlay centered"><section className="dialog" role="dialog" aria-modal="true" aria-label={t('account')}><div className="dialog-top"><h2>{user.display_name || user.username}</h2><button className="icon-button" aria-label={t('close')} onClick={closeAccount}>×</button></div><AccountProfile user={user} onChange={next => { if (uiScope.current.owner === next.id) setUser(next); }} passwordRequested={passwordRequested} onPasswordChanged={closeAccount} /><label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>{error && <p className="notice">{error}</p>}<button className="quiet wide logout" onClick={() => void signOut()}>{t('signOut')}</button></section></div>}
-    {files && <div className="overlay centered"><section className="dialog file-dialog" role="dialog" aria-modal="true" aria-label={t('files')}><div className="dialog-top"><h2>{t('files')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setFiles(null)}>×</button></div>{files.length === 0 ? <p className="empty-note">{t('filesEmpty')}</p> : <div className="file-list">{files.map(file => fileCard(file))}</div>}</section></div>}
-    {preview && <div className="overlay centered preview-overlay"><div className="preview-dialog" role="dialog" aria-modal="true" aria-label={preview.name}><FilePreview file={preview} onClose={() => setPreview(null)} /></div></div>}
+    {account && user && <div className="overlay centered"><section className="dialog" data-app-view="account" role="dialog" aria-modal="true" aria-label={t('account')}><div className="dialog-top"><h2>{user.display_name || user.username}</h2><button className="icon-button" aria-label={t('close')} onClick={closeAccount}>×</button></div><AccountProfile user={user} onChange={next => { if (uiScope.current.owner === next.id) setUser(next); }} passwordRequested={passwordRequested} onPasswordChanged={closeAccount} /><label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>{error && <p className="notice">{error}</p>}<button className="quiet wide logout" onClick={() => void signOut()}>{t('signOut')}</button></section></div>}
+    {files && <div className="overlay centered"><section className="dialog file-dialog" data-app-view="files" role="dialog" aria-modal="true" aria-label={t('files')}><div className="dialog-top"><h2>{t('files')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setFiles(null)}>×</button></div>{files.length === 0 ? <p className="empty-note">{t('filesEmpty')}</p> : <div className="file-list">{files.map(file => fileCard(file))}</div>}</section></div>}
+    {preview && <div className="overlay centered preview-overlay"><div className="preview-dialog" data-app-view="preview" role="dialog" aria-modal="true" aria-label={preview.name}><FilePreview key={preview.id} file={preview} onObservation={value => setPreviewObservation(old => JSON.stringify(old) === JSON.stringify(value) ? old : value)} onClose={() => setPreview(null)} /></div></div>}
   </div>;
 }

@@ -14,7 +14,7 @@ export type Component = { id: string; title: string; html: string; version: numb
 export type HelpRequest = { id: string; run_id: string; session_id: string; status: string; reason?: string; delegated_title?: string; questions: { id: string; question: string; options?: { label: string; description?: string }[] }[] };
 export type AgentJob = { id: string; title: string; child_session_id: string; child_run_id: string; parent_run_id: string; root_run_id: string; status: string; phase?: string; cancel_requested: boolean };
 export type Task = { id: string; title: string; due_at: string; status: string; condition_command?: string; last_error?: string; error_code?: string };
-export type AppAction = { id: string; session_id: string; action: string; status: string; payload: { target?: string; session_id?: string; file_id?: string; file?: FileEntry } };
+export type AppAction = { id: string; session_id: string; action: string; status: string; target_client_id?: string | null; expected_revision?: number | null; payload: { target?: string; session_id?: string; file_id?: string; file?: FileEntry } };
 export type Snapshot = { messages: Message[]; runs: Run[]; components: Component[]; tasks: Task[]; cursor: number; preferences?: Preferences; account_action?: { seq: number; action: string } | null; files: FileEntry[]; help_requests?: HelpRequest[]; app_actions?: AppAction[]; agents?: AgentJob[] };
 export type Session = { id: string; title: string; pending: number };
 export const empty = (): Snapshot => ({ messages: [], runs: [], components: [], tasks: [], cursor: 0, files: [] });

@@ -9,17 +9,19 @@ from athena.auth import Auth, token_hash
 from athena.errors import UserError
 from athena.files import initialize_files
 from athena.store import Store, now
+from frontend_fixtures import observe_client
 
 
 @pytest.fixture
 async def account(store):
     user, token = await Auth(store).register("controls", "test-password")
     session = await store.session(user_id=user["id"])
+    await observe_client(store, user["id"], session, token)
     return user["id"], session, token
 
 
 async def test_app_actions_are_pending_until_claimed_and_idempotently_acknowledged(store, account):
-    user, session, _ = account
+    user, session, token = account
     requested = await app_operation(store, session, None, {"action": "open", "target": "history"})
     assert requested["status"] == "requested" and requested["completed"] is False
     identifier = requested["request"]["id"]
@@ -27,15 +29,16 @@ async def test_app_actions_are_pending_until_claimed_and_idempotently_acknowledg
     assert [item["id"] for item in pending] == [identifier]
     event = (await store.rows("SELECT * FROM events WHERE session_id=? ORDER BY seq DESC LIMIT 1", (session,)))[0]
     assert event["type"] == "app_action" and json.loads(event["payload"])["status"] == "pending"
-    results = await asyncio.gather(*(claim_app_action(store, session, user, identifier, client) for client in ("browser-one", "browser-two")))
+    results = await asyncio.gather(*(claim_app_action(store, session, user, identifier, "browser-one") for _ in range(2)))
     assert sum(result["accepted"] for result in results) == 1
-    winner = "browser-one" if results[0]["accepted"] else "browser-two"
+    winner = "browser-one"
+    await observe_client(store, user, session, token, revision=2, open_views=["history"])
     assert await list_app_actions(store, session, user) == []
     assert not (await claim_app_action(store, session, user, identifier, winner))["accepted"]
     read = await app_operation(store, session, None, {"action": "read", "id": identifier})
     assert read["request"]["status"] == "dispatched" and not read["completed"]
-    first = await acknowledge_app_action(store, session, user, identifier, winner, "applied")
-    again = await acknowledge_app_action(store, session, user, identifier, winner, "applied")
+    first = await acknowledge_app_action(store, session, user, identifier, winner, "applied", observed_revision=2)
+    again = await acknowledge_app_action(store, session, user, identifier, winner, "applied", observed_revision=2)
     assert first["changed"] and first["completed"] and not again["changed"]
     with pytest.raises(UserError):
         await acknowledge_app_action(store, session, user, identifier, winner, "failed", "execution_failed")
@@ -86,13 +89,13 @@ async def test_pending_actions_and_uncertain_dispatch_survive_reopen_without_rep
     user, session, _ = account
     pending = await app_operation(store, session, None, {"action": "open", "target": "files"})
     dispatched = await app_operation(store, session, None, {"action": "open", "target": "account"})
-    await claim_app_action(store, session, user, dispatched["request"]["id"], "original-browser")
+    await claim_app_action(store, session, user, dispatched["request"]["id"], "browser-one")
     # A new connection models reopening; pending state and claims live in SQLite.
     reopened = Store(store.path)
     try:
         await reopened.initialize()
         assert [item["id"] for item in await list_app_actions(reopened, session, user)] == [pending["request"]["id"]]
-        result = await claim_app_action(reopened, session, user, dispatched["request"]["id"], "new-browser")
+        result = await claim_app_action(reopened, session, user, dispatched["request"]["id"], "browser-one")
         assert not result["accepted"] and result["request"]["status"] == "dispatched"
         await reopened.call(lambda db: cancel_app_actions(db, user))
         assert await list_app_actions(reopened, session, user) == []
@@ -124,8 +127,8 @@ async def test_signout_ack_only_revokes_receiving_browser_and_control_requires_a
     second_token = await Auth(store).issue(user)
     action = await app_operation(store, session, None, {"action": "sign_out"})
     identifier = action["request"]["id"]
-    await claim_app_action(store, session, user, identifier, "receiving-browser")
-    await acknowledge_app_action(store, session, user, identifier, "receiving-browser", "applied", logout_hash=token_hash(token))
+    await claim_app_action(store, session, user, identifier, "browser-one")
+    await acknowledge_app_action(store, session, user, identifier, "browser-one", "applied", logout_hash=token_hash(token), observed_revision=1)
     assert await Auth(store).current(token) is None
     assert (await Auth(store).current(second_token))["id"] == user
     for name in ("stop", "reset"):

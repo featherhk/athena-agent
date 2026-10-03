@@ -5,9 +5,9 @@ description: "操作 Athena 界面、切换会话与修改设置；区分应用�
 
 # Athena 应用设置
 
-先查看实际能力，再选择已有设置或注册扩展。现有设置不是用户需求的边界；未预先设计的需求也可以组合已有能力、编写扩展并验证结果。
+前端是与用户交互的工具，不是只能装饰的聊天页面。先查看其实际状态与能力，再选择已有设置或注册扩展。现有设置不是用户需求的边界；未预先设计的需求也可以组合已有能力、编写扩展并验证结果。
 
-操作界面（切换会话、打开面板、预览文件等）先用 `runtime {"op":"app","args":{"action":"list"}}` 查看真实目录；详细参数与回执含义见 [references/controls.md](references/controls.md)。切换会话是 `app navigate`，不只是读取历史。既有按钮能完成的事，优先用对应接口实际执行。
+操作界面（切换会话、打开面板、预览文件等）先用 `runtime {"op":"app","args":{"action":"list"}}` 查看真实目录；详细参数与回执含义见 [references/controls.md](references/controls.md)。目录中的 `clients` 是浏览器观察摘要；用 `app snapshot, client_id` 按需查看页面、工作区、组件、等待事项与错误。先观察，再操作，再核对新观察和回执。切换会话是 `app navigate`，不只是读取历史。既有按钮能完成的事，优先用对应接口实际执行。
 
 - 查看：`runtime {"op":"app_settings"}` 返回 `settings` 当前值和 `schema`，后者列出字段、选项、默认值与用途。
 - 修改：`runtime {"op":"app_settings","settings":{"ui_language":"zh-Hans","ui_font":"serif"}}`。只传需要修改的字段，其他设置保留。简体用 `zh-Hans`，繁体用 `zh-Hant`；语言的 `system` 跟随设备，不支持时回退英语。当前也提供字体 `ui_font`、配色 `ui_palette`、减少动效 `reduced_motion`；能力以 schema 为准。
