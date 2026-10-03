@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useI18n } from './i18n';
-import { ActivityFeed, activeActivity, activityGroups, readableActivity } from './task-continuity';
+import { ActivityFeed, activeActivity, activityGroups, readableActivity, requestActivity } from './task-continuity';
 import type { ActivityItem, ActivityState } from './task-continuity';
 import './task-continuity.css';
 
@@ -10,15 +10,8 @@ export function useTaskContinuity(owner: string | null, identityLost: () => void
   const feed = useRef<ActivityFeed | null>(null), lost = useRef(identityLost); lost.current = identityLost;
   useEffect(() => {
     if (!owner) { feed.current = null; setState(emptyState); return; }
-    const source = new ActivityFeed(owner, async (path, signal, body) => {
-      const response = await fetch('/api' + path, { signal, ...(body === undefined ? {} : {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      }) });
-      if (signal.aborted) throw new Error('aborted');
-      if (response.status === 401) { source.stop(); lost.current(); throw new Error('login_required'); }
-      if (!response.ok) throw new Error('activity_unavailable');
-      return response.json();
-    }, setState, () => lost.current());
+    const source = new ActivityFeed(owner, (path, signal, body) => requestActivity(owner, path, signal,
+      () => { source.stop(); lost.current(); }, body), setState, () => lost.current());
     feed.current = source; setState(source.state);
     let departing = false;
     const visible = () => { if (document.hidden || departing) source.pause(); else source.resume(); };

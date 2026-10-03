@@ -113,3 +113,22 @@ test('a current conversation may expose unread results while scrolled away witho
   const groups = activityGroups(rows, 's1', true);
   assert.equal(groups.length, 1); assert.deepEqual(groups[0].map(row => row.run_id), ['r1']);
 });
+
+test('a GET begun during ACK cannot resurrect a result when its stale DB read arrives after the ACK', async () => {
+  const f = fixture(); f.feed.resume(); await f.answer(0);
+  const ack = f.feed.acknowledge(item()); f.feed.refresh();
+  assert.equal(f.requests[2].path, '/activity?limit=30');
+  f.requests[1].resolve({ owner_id: 'david', acknowledged: true, item: null }); await ack;
+  assert.equal(f.feed.state.items.length, 0);
+  await f.answer(2); assert.equal(f.feed.state.items.length, 0); assert.equal(f.requests.length, 4);
+  await f.answer(3, []); assert.equal(f.feed.state.items.length, 0); f.feed.stop();
+});
+
+test('failed ACK settlement also invalidates an overlapping GET until the outcome is reconciled', async () => {
+  const f = fixture(); f.feed.resume(); await f.answer(0);
+  const ack = f.feed.acknowledge(item()); f.feed.refresh();
+  f.requests[1].reject(new Error('receipt lost')); assert.equal(await ack, false);
+  assert.equal(f.feed.state.error, true);
+  await f.answer(2); assert.equal(f.feed.state.error, true); assert.equal(f.requests.length, 4);
+  await f.answer(3, []); assert.equal(f.feed.state.error, false); assert.equal(f.feed.state.items.length, 0); f.feed.stop();
+});

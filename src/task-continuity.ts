@@ -30,6 +30,29 @@ function validItem(value: unknown): value is ActivityItem {
     && typeof item.needs_user === 'boolean' && ['queued', 'running', 'waiting_user', 'waiting_agents', 'complete', 'failed', 'cancelled', 'interrupted'].includes(item.status as string);
 }
 
+/** An old 401 may arrive after another tab renews the shared cookie. Recheck
+ * identity without replaying the original request, which may be a mutation. */
+export async function requestActivity(owner: string, path: string, signal: AbortSignal, identityLost: () => void,
+  body?: unknown, fetcher: typeof fetch = fetch): Promise<unknown> {
+  const response = await fetcher('/api' + path, { signal, ...(body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }) });
+  if (signal.aborted) throw new Error('aborted');
+  if (response.status === 401) {
+    const auth = await fetcher('/api/auth/me', { signal });
+    if (signal.aborted) throw new Error('aborted');
+    if (!auth.ok) throw new Error('identity_unavailable');
+    const identity = await auth.json();
+    if (signal.aborted) throw new Error('aborted');
+    if (!identity || typeof identity !== 'object' || !('user' in identity)
+      || (identity.user !== null && typeof identity.user?.id !== 'string')) throw new Error('identity_unavailable');
+    if (identity.user?.id !== owner) identityLost();
+    throw new Error(identity.user?.id === owner ? 'activity_reauthenticated' : 'login_required');
+  }
+  if (!response.ok) throw new Error('activity_unavailable');
+  return response.json();
+}
+
 export class ActivityFeed {
   state: ActivityState;
   private transport: Transport;
@@ -110,7 +133,12 @@ export class ActivityFeed {
       }
       return value.acknowledged;
     } catch { if (!controller.signal.aborted) this.publish({ error: true }); return false; }
-    finally { this.clock.cancel(deadline); this.requests.delete(controller); this.acknowledging.delete(key); this.refresh(); }
+    finally {
+      // Also invalidate GETs launched while the ACK was in flight: their DB read
+      // may precede its commit even when their response arrives after this one.
+      this.mutation++;
+      this.clock.cancel(deadline); this.requests.delete(controller); this.acknowledging.delete(key); this.refresh();
+    }
   }
   async stopSession(session: string) {
     if (this.disposed) return false;
