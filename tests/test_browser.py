@@ -18,6 +18,7 @@ class FakeBrowser:
     def __init__(self, config):
         self.config, self.calls, self.tabs = config, [], {}
         self.headed = True
+        self.uploads = []
         self.generation, self.active, self.live = 0, None, False
         self.fail, self.pause, self.entered = None, None, asyncio.Event()
 
@@ -61,10 +62,13 @@ class FakeBrowser:
                 self.tabs[self.active] = url
                 return {}
             case ['snapshot', *_]:
-                return {'snapshot': 'button "Submit" [ref=e1]\ntextbox "Name" [ref=e2]',
-                        'origin': self.tabs[self.active], 'refs': {'e1': {}, 'e2': {}}}
-            case ['get', 'attr', _, _]:
-                return {'value': 'text'}
+                return {'snapshot': 'button "Submit" [ref=e1]\ntextbox "Name" [ref=e2]\nbutton "Document" [ref=e3]',
+                        'origin': self.tabs[self.active], 'refs': {'e1': {}, 'e2': {}, 'e3': {}}}
+            case ['get', 'attr', ref, _]:
+                return {'value': 'file' if ref == '@e3' else 'text'}
+            case ['upload', ref, *paths]:
+                self.uploads.append([Path(path).read_bytes() for path in paths])
+                return {'uploaded': len(paths), 'selector': ref}
             case ['screenshot', path] | ['download', _, path]:
                 Path(path).write_bytes(b'synthetic-output')
                 return {}
@@ -307,6 +311,197 @@ async def test_cloud_password_field_does_not_offer_unreachable_login_window(brow
     assert 'no local window' in result['error']['message']
     assert 'never ask for passwords' in result['error']['message']
     assert not any(command[0] == 'fill' for _, command in driver.calls)
+
+
+async def uploaded_record(host, store, session, name='document.pdf', content=b'synthetic PDF bytes'):
+    from athena.files import discover_files, list_files
+    owner = (await store.rows('SELECT user_id FROM sessions WHERE id=?', (session,)))[0]['user_id']
+    directory = host.config.data_dir / 'files' / owner / session
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_bytes(content)
+    await discover_files(host.config, store, owner, session)
+    record = next(row for row in await list_files(store, owner, session) if row['name'] == name)
+    return record, directory / name
+
+
+async def test_upload_selects_owned_file_snapshots_and_retains_them_until_tab_close(browsing, store, engine):
+    import hashlib
+    host, driver, (session, sibling, _) = browsing
+    first, source = await uploaded_record(host, store, session, '报价单.pdf', b'first')
+    second, _ = await uploaded_record(host, store, sibling, 'sheet.xlsx', b'second')
+    page = await open_page(host, session)
+    engine.tools.browser = host
+    result = await engine.tools.execute('runtime', {'op': 'browser', 'args': {
+        'action': 'upload', 'tab_id': page['tab_id'], 'observation_id': page['observation_id'],
+        'ref': '@e3', 'file_ids': [first['id'], second['id']]}}, session, None)
+    assert result['ok'] and result['input_selected'] and result['submission_verified'] is False
+    assert driver.uploads == [[b'first', b'second']]
+    assert result['files'][0]['sha256'] == hashlib.sha256(b'first').hexdigest()
+    paths = [Path(path) for _, command in driver.calls if command[0] == 'upload' for path in command[2:]]
+    assert all('/browser-profiles/' in str(path) and '/uploads/' in str(path) for path in paths)
+    assert paths[0].name == '报价单.pdf'
+    source.write_bytes(b'changed later')
+    assert paths[0].read_bytes() == b'first'  # A later form submission gets the selected version.
+    await act(host, session, result, 'snapshot')
+    assert paths[0].exists()
+    current = await act(host, session, result, 'snapshot')
+    await act(host, session, current, 'close')
+    assert not any(path.exists() for path in paths)
+    assert source.read_bytes() == b'changed later'
+
+
+async def test_upload_rejects_other_accounts_stale_refs_and_non_file_controls(browsing, store):
+    host, driver, (session, _, outsider) = browsing
+    own, _ = await uploaded_record(host, store, session)
+    foreign, _ = await uploaded_record(host, store, outsider)
+    page = await open_page(host, session)
+    rejected = await act(host, session, page, 'upload', ref='@e3', file_id=foreign['id'])
+    assert not rejected['ok'] and rejected['effect_known']
+    page = await act(host, session, page, 'snapshot')
+    wrong_input = await act(host, session, page, 'upload', ref='@e2', file_id=own['id'])
+    assert not wrong_input['ok'] and wrong_input['effect_known']
+    with pytest.raises(ValueError, match='stale'):
+        await act(host, session, page, 'upload', ref='@e3', file_id=own['id'])
+    assert driver.uploads == []
+
+
+async def test_upload_lost_result_keeps_snapshots_and_never_replays(browsing, store):
+    host, driver, (session, _, _) = browsing
+    record, _ = await uploaded_record(host, store, session)
+    page = await open_page(host, session)
+    driver.fail = 'upload'
+    result = await act(host, session, page, 'upload', ref='@e3', file_id=record['id'])
+    assert not result['ok'] and not result['effect_known']
+    command = next(command for _, command in driver.calls if command[0] == 'upload')
+    staged = Path(command[2])
+    assert staged.exists()
+    assert (await store.rows('SELECT status FROM browser_actions WHERE id=?', (result['operation_id'],)))[0]['status'] == 'unknown'
+    await store.initialize()
+    assert sum(command[0] == 'upload' for _, command in driver.calls) == 1
+    assert staged.exists()
+    driver.fail = None
+    current = await act(host, session, page, 'snapshot')
+    await act(host, session, current, 'close')
+    assert not staged.exists()
+
+
+async def test_upload_requires_the_expected_selection_receipt(browsing, store, monkeypatch):
+    host, driver, (session, _, _) = browsing
+    record, _ = await uploaded_record(host, store, session)
+    page = await open_page(host, session)
+    real_run = driver.run
+    async def unrelated_receipt(owner, command, **kwargs):
+        value = await real_run(owner, command, **kwargs)
+        return {'uploaded': 0} if command[0] == 'upload' else value
+    monkeypatch.setattr(driver, 'run', unrelated_receipt)
+    result = await act(host, session, page, 'upload', ref='@e3', file_id=record['id'])
+    assert not result['ok'] and not result['effect_known']
+    assert result['error']['code'] == 'browser_protocol_error'
+    assert len(driver.uploads) == 1 and 'input_selected' not in result
+
+
+@pytest.mark.parametrize('fields', [
+    {'file_ids': []}, {'file_ids': ['same', 'same']}, {'file_ids': ['one'] * 11},
+    {'file_id': '../secret'}, {'file_ids': ['/etc/passwd']}, {'file_id': 'one', 'file_ids': ['two']},
+    {'path': '/private/file.pdf'}, {'file_ids': 'not-an-array'},
+])
+def test_upload_accepts_bounded_file_identities_not_paths(fields):
+    with pytest.raises(ValueError):
+        validate_arguments({'action': 'upload', 'ref': '@e1', **fields})
+
+
+async def test_upload_no_follow_and_batch_limits_precede_dispatch(browsing, store, monkeypatch):
+    from athena import browser_uploads
+    host, driver, (session, _, _) = browsing
+    record, source = await uploaded_record(host, store, session, content=b'12345')
+    page = await open_page(host, session)
+    monkeypatch.setattr(browser_uploads, 'MAX_UPLOAD_BYTES', 4)
+    result = await act(host, session, page, 'upload', ref='@e3', file_id=record['id'])
+    assert not result['ok'] and result['effect_known']
+    owner = (await store.rows('SELECT user_id FROM sessions WHERE id=?', (session,)))[0]['user_id']
+    assert browser_uploads.staged_operations(host.config, owner) == []
+    monkeypatch.setattr(browser_uploads, 'MAX_UPLOAD_BYTES', 40 * 1024 * 1024)
+    victim = source.parent / 'real.txt'
+    victim.write_bytes(b'not selected')
+    source.unlink()
+    source.symlink_to(victim)
+    current = await act(host, session, page, 'snapshot')
+    result = await act(host, session, current, 'upload', ref='@e3', file_id=record['id'])
+    assert not result['ok'] and result['effect_known']
+    assert driver.uploads == [] and victim.read_bytes() == b'not selected'
+
+
+async def test_upload_staging_rejects_hardlinks_and_destination_links(browsing, store, tmp_path):
+    from athena.browser_uploads import stage_upload
+    from fastapi import HTTPException
+    host, _, (session, _, _) = browsing
+    record, source = await uploaded_record(host, store, session, content=b'selected')
+    owned = (await store.rows('SELECT * FROM file_entries WHERE id=?', (record['id'],)))[0]
+    hardlink = source.with_name('hardlink.pdf')
+    os.link(source, hardlink)
+    with pytest.raises(HTTPException):
+        stage_upload(host.config, owned['user_id'], 'hardlink-action', [owned])
+    hardlink.unlink()
+    area = host.config.data_dir / 'browser-profiles' / owned['user_id'] / 'uploads'
+    area.rmdir()
+    outside = tmp_path / 'outside-staging'
+    outside.mkdir()
+    area.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        stage_upload(host.config, owned['user_id'], 'symlink-action', [owned])
+    assert list(outside.iterdir()) == [] and source.read_bytes() == b'selected'
+
+
+async def test_upload_staging_quota_preserves_already_selected_files(browsing, store, monkeypatch):
+    from athena import browser_uploads
+    host, _, (session, _, _) = browsing
+    record, _ = await uploaded_record(host, store, session, content=b'1234')
+    owned = (await store.rows('SELECT * FROM file_entries WHERE id=?', (record['id'],)))[0]
+    monkeypatch.setattr(browser_uploads, 'MAX_STAGED_BYTES', 6)
+    existing = browser_uploads.stage_upload(host.config, owned['user_id'], 'first-action', [owned])
+    with pytest.raises(ValueError, match='staging is full'):
+        browser_uploads.stage_upload(host.config, owned['user_id'], 'second-action', [owned])
+    assert browser_uploads.staged_operations(host.config, owned['user_id']) == ['first-action']
+    assert Path(existing['paths'][0]).read_bytes() == b'1234'
+
+
+@pytest.mark.parametrize('copy_fails', [False, True])
+async def test_stop_during_upload_copy_drains_worker_and_never_dispatches(browsing, store, monkeypatch, copy_fails):
+    import threading
+    import athena.browser as browser
+    from athena.browser_uploads import staged_operations
+    host, driver, (session, _, _) = browsing
+    record, _ = await uploaded_record(host, store, session)
+    page = await open_page(host, session)
+    entered, release = threading.Event(), threading.Event()
+    real_copy = browser.stage_upload
+    def slow_copy(*args):
+        entered.set()
+        assert release.wait(3)
+        if copy_fails:
+            raise ValueError('Synthetic copy failure during stop')
+        return real_copy(*args)
+    monkeypatch.setattr(browser, 'stage_upload', slow_copy)
+    task = asyncio.create_task(act(host, session, page, 'upload', ref='@e3', file_id=record['id']))
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()  # Repeated stop must not release ownership while a thread writes.
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    owner = (await store.rows('SELECT user_id FROM sessions WHERE id=?', (session,)))[0]['user_id']
+    assert staged_operations(host.config, owner) == [] and driver.uploads == []
+    rows = await store.rows("SELECT status FROM browser_actions WHERE action='upload'")
+    assert rows == [{'status': 'interrupted'}]
+
+
+def test_upload_native_protocol_does_not_turn_filenames_into_flags():
+    packet = protocol_command(['upload', '@e2', '/owned/--profile.pdf', '/owned/汉字.pdf'])
+    assert packet['action'] == 'upload' and packet['selector'] == '@e2'
+    assert packet['files'] == ['/owned/--profile.pdf', '/owned/汉字.pdf']
 
 
 async def test_recovery_invalidates_only_newly_interrupted_actions(browsing, store):

@@ -63,7 +63,7 @@ RUNTIME_SCHEMA = {"type": "object", "properties": RUNTIME_PROPERTIES, "required"
 # model-facing runtime envelope. Individual operations validate allowed fields.
 RUNTIME_PROPERTIES['op']['enum'].append('browser')
 RUNTIME_PROPERTIES['op']['enum'].append('capabilities')
-for action in ('status', 'snapshot', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
+for action in ('status', 'snapshot', 'click', 'fill', 'press', 'select', 'check', 'uncheck', 'upload',
                'scroll', 'back', 'forward', 'reload', 'screenshot', 'handoff'):
     if action not in RUNTIME_PROPERTIES['action']['enum']:
         RUNTIME_PROPERTIES['action']['enum'].append(action)
@@ -77,6 +77,8 @@ RUNTIME_PROPERTIES.update({
     'key': {'type': 'string', 'maxLength': 60},
     'direction': {'enum': ['up', 'down', 'left', 'right']},
     'pixels': {'type': 'integer', 'minimum': 1, 'maximum': 3000},
+    'file_ids': {'type': 'array', 'minItems': 1, 'maxItems': 10, 'uniqueItems': True,
+                 'items': {'type': 'string', 'pattern': '^[a-zA-Z0-9_-]{1,64}$'}},
 })
 
 RUNTIME_PROPERTIES['op']['enum'].append('agents')

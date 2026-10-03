@@ -1,5 +1,7 @@
 """Run inside a disposable web-like container beside the Linux execution broker."""
 import asyncio
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -38,7 +40,7 @@ async def main():
                 args = {'action': action, **fields}
                 if page and action != 'open':
                     args.update(tab_id=page['tab_id'], observation_id=page['observation_id'])
-                page = await runner.browser.operate(args, fixture['session'], None)
+                page = await runner.execute('runtime', {'op': 'browser', 'args': args}, fixture['session'], None)
                 assert page.get('ok'), page
                 return page
             def ref(name):
@@ -54,6 +56,45 @@ async def main():
                 await asyncio.sleep(.05)
                 await operate('snapshot')
             assert 'Submitted once' in page['text']
+            # Synthetic account files only. Exercise discovery, the universal
+            # runtime entry, account staging and the real browser's onchange POST.
+            documents = {'报价 单.pdf': b'%PDF-1.4\nAthena synthetic document\n%%EOF\n',
+                         '--profile.xlsx': bytes(range(256))}
+            directory = config.data_dir / 'files' / fixture['owner'] / fixture['session']
+            directory.mkdir(parents=True, exist_ok=True)
+            for name, content in documents.items():
+                (directory / name).write_bytes(content)
+            await discover_files(config, store, fixture['owner'], fixture['session'])
+            files = await runner.execute('runtime', {'op': 'app', 'args': {'action': 'list'}}, fixture['session'], None)
+            selected = [row for row in files['files'] if row['name'] in documents]
+            assert len(selected) == 2, files
+            uploaded = await operate('upload', ref=ref('Documents'), file_ids=[row['id'] for row in selected])
+            assert uploaded['input_selected'] and uploaded['submission_verified'] is False, uploaded
+            assert {row['name']: row['sha256'] for row in uploaded['files']} == {
+                name: hashlib.sha256(content).hexdigest() for name, content in documents.items()}, uploaded
+            staged = config.data_dir / 'browser-profiles' / fixture['owner'] / 'uploads' / uploaded['operation_id']
+            assert staged.is_dir()
+            for _ in range(30):
+                if 'Received documents:' in page['text']:
+                    break
+                await asyncio.sleep(.05)
+                await operate('snapshot')
+            assert 'Received documents:' in page['text'] and all(name in page['text'] for name in documents), page
+
+            async def upload_receipts():
+                downloaded = await operate('download', ref=ref('Download upload receipts'), name='upload-receipts.json')
+                record = (await store.rows('SELECT * FROM file_entries WHERE id=?', (downloaded['file']['id'],)))[0]
+                handle, _ = _open_file(config, record)
+                with handle:
+                    proof = json.load(handle)
+                assert proof['count'] == len(proof['values']) == 2, proof
+                assert {row['selection'] for row in proof['values']} == {'1'}, proof
+                assert {row['name']: base64.b64decode(row['base64'], validate=True) for row in proof['values']} == documents, proof
+                assert all(row['size'] == len(documents[row['name']]) and row['sha256'] == hashlib.sha256(documents[row['name']]).hexdigest()
+                           for row in proof['values']), proof
+                return proof
+
+            upload_proof = await upload_receipts()
             download = await operate('download', ref=ref('Download statement'), name='statement.csv')
             record = (await store.rows('SELECT * FROM file_entries WHERE id=?', (download['file']['id'],)))[0]
             handle, _ = _open_file(config, record)
@@ -72,10 +113,16 @@ async def main():
             page = None
             await operate('open', url='http://127.0.0.1:8123/')
             assert 'Remembered account' in page['text']
+            assert not staged.exists(), 'Old-generation upload snapshots were not released.'
+            assert {name: (directory / name).read_bytes() for name in documents} == documents
+            assert await upload_receipts() == upload_proof, 'Browser restart replayed an upload.'
             await operate('open', url='http://127.0.0.1:8123/receipts')
             assert '\\"count\\": 1' in page['text'] or '"count": 1' in page['text'], page
             print(json.dumps({'real_form': True, 'post_receipts': 1, 'exact_download': True,
-                              'png_screenshot': True, 'cookie_after_browser_restart': True}))
+                              'png_screenshot': True, 'cookie_after_browser_restart': True,
+                              'upload_selections': 1, 'upload_post_receipts': 2, 'exact_upload': True,
+                              'upload_no_replay_after_restart': True, 'upload_staging_released': True,
+                              'upload_originals_preserved': True}))
             return
         auth = Auth(store)
         suffix = uuid.uuid4().hex[:8]

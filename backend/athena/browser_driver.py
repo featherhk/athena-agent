@@ -50,6 +50,8 @@ def protocol_command(command):
             value = {'action': 'screenshot', 'path': path, 'fullPage': False}
         case ['download', ref, path]:
             value = {'action': 'download', 'selector': ref, 'path': path}
+        case ['upload', ref, *paths] if paths:
+            value = {'action': 'upload', 'selector': ref, 'files': paths}
         case ['get', 'attr', ref, attribute]:
             value = {'action': 'getattribute', 'selector': ref, 'attribute': attribute}
         case ['back' | 'forward' | 'reload' | 'close' as action]:

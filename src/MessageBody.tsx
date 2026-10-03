@@ -4,11 +4,12 @@ import { useI18n } from './i18n';
 import './files.css';
 import { textEffectPlugin } from './StyledText';
 import type { TextStyleEffect } from './effects';
+import { remarkReadableAutolinks } from './markdown-autolinks';
 
 const ownedImage = /^\/api\/files\/[a-zA-Z0-9_-]+\/content$/;
 
 export function MarkdownContent({ content, effect }: { content: string; effect?: TextStyleEffect }) {
-  return <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[textEffectPlugin(effect)]} components={{
+  return <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm, remarkReadableAutolinks]} rehypePlugins={[textEffectPlugin(effect)]} components={{
     a: ({ href, children, title }) => <a href={href} title={title} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>,
     img: ({ src, alt }) => typeof src === 'string' && ownedImage.test(src)
       ? <img src={src} alt={alt || ''} loading="lazy" />

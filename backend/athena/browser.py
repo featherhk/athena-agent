@@ -8,13 +8,14 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .browser_driver import browser_driver, BrowserDriverError
 from .capabilities import manual_browser_handoff_available
+from .browser_uploads import upload_ids, stage_upload, discard_upload, staged_operations
 from fastapi import HTTPException
 from .files import _workspace, discover_files, list_files, sanitize_filename, MAX_FILE_BYTES
 from .store import now, uid
 
 ACTIONS = ('status', 'list', 'history', 'open', 'snapshot', 'click', 'fill', 'press', 'select',
-           'check', 'uncheck', 'scroll', 'back', 'forward', 'reload', 'screenshot', 'download', 'close', 'handoff')
-REF_ACTIONS = ('click', 'fill', 'select', 'check', 'uncheck', 'download')
+           'check', 'uncheck', 'scroll', 'back', 'forward', 'reload', 'screenshot', 'download', 'upload', 'close', 'handoff')
+REF_ACTIONS = ('click', 'fill', 'select', 'check', 'uncheck', 'download', 'upload')
 OBSERVED_ACTIONS = (*REF_ACTIONS, 'press', 'scroll', 'back', 'forward', 'reload', 'close')
 
 
@@ -41,6 +42,7 @@ def validate_arguments(args):
         'open': {'url'}, 'snapshot': {'ref'}, 'click': {'ref'}, 'fill': {'ref', 'text'},
         'select': {'ref', 'value'}, 'check': {'ref'}, 'uncheck': {'ref'},
         'press': {'key'}, 'scroll': {'direction', 'pixels'}, 'download': {'ref', 'name'},
+        'upload': {'ref', 'file_id', 'file_ids'},
         'handoff': {'questions', 'reason'},
         'history': {'offset', 'limit'},
     }.get(action, set())
@@ -78,6 +80,8 @@ def validate_arguments(args):
     if action == 'history':
         if type(args.get('limit', 20)) is not int or not 1 <= args.get('limit', 20) <= 100 or type(args.get('offset', 0)) is not int or args.get('offset', 0) < 0:
             raise ValueError('Browser history accepts limit 1–100 and a nonnegative offset.')
+    if action == 'upload':
+        upload_ids(args)
     return action
 
 
@@ -141,7 +145,50 @@ class BrowserHost:
                     if row['target_id'] not in targets:
                         db.execute("UPDATE browser_tabs SET status='closed',observation_id=NULL,refs='[]',updated_at=? WHERE id=?", (now(), row['id']))
         await self.store.call(reconcile)
+        await self._discard_closed_uploads(user_id)
         return identity
+
+    async def _discard_closed_uploads(self, user_id):
+        # A live input may read the file on a later submit. Only a confirmed closed
+        # tab/old browser generation releases its snapshots, including unknown actions.
+        try:
+            operations = await asyncio.to_thread(staged_operations, self.config, user_id)
+            if not operations:
+                return
+            slots = ','.join('?' for _ in operations)
+            rows = await self.store.rows(f"""SELECT a.id FROM browser_actions a JOIN browser_tabs t ON t.id=a.tab_id
+                WHERE t.user_id=? AND t.status='closed' AND a.action='upload' AND a.id IN ({slots})""", (user_id, *operations))
+            for row in rows:
+                await asyncio.to_thread(discard_upload, self.config, user_id, row['id'])
+        except OSError:
+            # Retain an unremovable snapshot; never break unrelated browsing or
+            # follow an unexpected path. A later upload still checks its quota.
+            pass
+
+    async def _stage_upload(self, user_id, operation_id, records):
+        copying = asyncio.create_task(asyncio.to_thread(stage_upload, self.config, user_id, operation_id, records))
+        try:
+            return await asyncio.shield(copying)
+        except asyncio.CancelledError:
+            # A worker thread cannot be cancelled. Finish its bounded copy before
+            # releasing ownership or deleting paths it may still be writing.
+            async def drain():
+                try:
+                    await copying
+                except Exception:
+                    pass  # The stopped request must remain cancelled if its copy failed.
+                try:
+                    await asyncio.to_thread(discard_upload, self.config, user_id, operation_id)
+                except OSError:
+                    pass  # Retain an unremovable snapshot rather than lose cancellation.
+            cleanup = asyncio.create_task(drain())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            cleanup.result()
+            raise
 
     async def _tab(self, user_id, session_id, identifier):
         rows = await self.store.rows('SELECT * FROM browser_tabs WHERE id=? AND user_id=? AND session_id=?', (identifier, user_id, session_id))
@@ -259,6 +306,26 @@ class BrowserHost:
                     await self.driver.run(user_id, ['open', args['url']])
                 elif action == 'snapshot':
                     pass
+                elif action == 'upload':
+                    records = []
+                    for file_id in upload_ids(args):
+                        rows = await self.store.rows("""SELECT f.* FROM file_entries f JOIN sessions s ON s.id=f.session_id
+                            WHERE f.id=? AND f.user_id=? AND s.user_id=?""", (file_id, user_id, user_id))
+                        if not rows:
+                            raise ValueError('The upload file was not found in this account. Use runtime app action=list to discover files; never provide a filesystem path.')
+                        records.append(rows[0])
+                    kind = await self.driver.run(user_id, ['get', 'attr', args['ref'], 'type'])
+                    if not isinstance(kind, dict) or str(kind.get('value', kind.get('attribute', ''))).lower() != 'file':
+                        raise ValueError('Upload requires an observed file input. A custom chooser button or drag-only target is not supported.')
+                    staged = await self._stage_upload(user_id, operation_id, records)
+                    dispatched = True
+                    selected = await self.driver.run(user_id, ['upload', args['ref'], *staged['paths']])
+                    if (not isinstance(selected, dict) or type(selected.get('uploaded')) is not int
+                            or selected['uploaded'] != len(records) or selected.get('selector') != args['ref']):
+                        raise BrowserDriverError('browser_protocol_error', 'The file selection result could not be confirmed.')
+                    result = {'files': staged['files'], 'bytes': staged['bytes'], 'input_selected': True,
+                              'submission_verified': False,
+                              'next': 'File selection may trigger an automatic website upload. Inspect the fresh page for its result before submitting or retrying; selection alone does not confirm website acceptance.'}
                 elif action in ('screenshot', 'download'):
                     name = f"browser-{operation_id}.png" if action == 'screenshot' else f"{operation_id[:8]}-{args['name']}"
                     root, _ = self.driver.paths(user_id)
@@ -289,6 +356,7 @@ class BrowserHost:
                     await self.driver.run(user_id, command)
                 if action == 'close':
                     await self.store.execute("UPDATE browser_tabs SET status='closed',observation_id=NULL,refs='[]',updated_at=? WHERE id=?", (now(), tab['id']))
+                    await self._discard_closed_uploads(user_id)
                     result = {'tab_id': tab['id'], 'closed': True}
                 else:
                     result = {**(result or {}), **await self._observation(user_id, session_id, run_id, tab['id'], args.get('ref') if action == 'snapshot' else None)}
