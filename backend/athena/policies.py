@@ -17,6 +17,7 @@ from .store import now, uid
 
 
 POLICY_TIMEOUT = 3.0
+HOSTED_POLICY_TRANSPORT_TIMEOUT = 45.0
 MAX_OUTPUT_BYTES = 256 * 1024
 
 
@@ -31,6 +32,10 @@ async def initialize_policies(store):
 class _PolicyFailure(Exception):
     def __init__(self, code):
         self.code = code
+
+
+class _PolicyInfrastructureFailure(_PolicyFailure):
+    """The same plugin version may work once its executor is available again."""
 
 
 class PolicyRunner:
@@ -51,10 +56,15 @@ class PolicyRunner:
         if row is None:
             return fallback
         fallback["version"] = row["version"]
+        hosted = sys.platform == "linux" and bool(self.config.execution_socket)
+        deactivate = True
         try:
-            if not _supported():
-                raise _PolicyFailure("unsupported_platform")
-            value = await asyncio.wait_for(self._run(row, payload), timeout=POLICY_TIMEOUT)
+            if not _supported() and not hosted:
+                raise _PolicyInfrastructureFailure("unsupported_platform")
+            # The Linux broker budgets setup separately from the script's 3 s.
+            # This outer deadline bounds transport/cleanup, not plugin execution.
+            value = await asyncio.wait_for(self._run(row, payload),
+                timeout=HOSTED_POLICY_TRANSPORT_TIMEOUT if hosted else POLICY_TIMEOUT)
             try:
                 valid = validator(value)
                 if valid is False:
@@ -66,26 +76,55 @@ class PolicyRunner:
             # Stop/reset must cancel computation, without pretending the policy failed.
             raise
         except TimeoutError:
-            code = "timeout"
+            code, deactivate = ("executor_timeout", False) if hosted else ("timeout", True)
+        except _PolicyInfrastructureFailure as exc:
+            code, deactivate = exc.code, False
         except _PolicyFailure as exc:
             code = exc.code
         except Exception:
             code = "execution_error"
-        await self._disable_failed(row, session_id, code)
+        await self._disable_failed(row, session_id, code, deactivate=deactivate)
         return {**fallback, "error": code}
 
     async def _run(self, row, payload):
+        hosted = sys.platform == "linux" and bool(self.config.execution_socket)
         path = self.registry._path(row, row["user_id"])
         # Isolated Python loads only the standard library, and never imports the
         # user file in the server process or inherits provider environment keys.
         command = "exec " + " ".join(shlex.quote(part) for part in (sys.executable, "-I", "-S", "-B", str(path)))
-        argv = protected_command(command, self.config, [path.parent], [])
-        argv[2] += "\n(deny network*)\n(deny file-write*)\n(deny process-fork)\n(deny signal)\n"
+        argv = protected_command(command, self.config, [path.parent], [], timeout=3)
+        if sys.platform == "darwin":
+            argv[2] += "\n(deny network*)\n(deny file-write*)\n(deny process-fork)\n(deny signal)\n"
         encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
         env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT") if key in os.environ}
-        process = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env,
-            cwd=path.parent, start_new_session=True)
+        try:
+            process = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE if hosted else asyncio.subprocess.DEVNULL,
+                env=env, cwd=path.parent, start_new_session=True)
+        except OSError as exc:
+            raise _PolicyInfrastructureFailure("executor_unavailable") from exc
+        async def receipt():
+            # The broker/shim own stderr; plugin stdout and stderr are both on
+            # stdout. A plugin cannot forge successful executor bookkeeping.
+            chunks, size = [], 0
+            while chunk := await process.stderr.read(1024):
+                size += len(chunk)
+                if size > 4096:
+                    raise _PolicyInfrastructureFailure("executor_protocol_error")
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+            try:
+                value = json.loads(raw)
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise _PolicyInfrastructureFailure("executor_unavailable") from exc
+            status = value.get("execution_status") if isinstance(value, dict) else None
+            if status == "timeout":
+                raise _PolicyFailure("timeout")
+            if status != "complete":
+                known = {"busy": "executor_busy", "resource_limit": "executor_resource_limit",
+                         "setup_timeout": "executor_timeout", "cleanup_unknown": "executor_cleanup_unknown"}
+                raise _PolicyInfrastructureFailure(known.get(status, "executor_unavailable"))
+        receiving = asyncio.create_task(receipt()) if hosted else None
         async def feed():
             try:
                 process.stdin.write(encoded)
@@ -103,7 +142,10 @@ class PolicyRunner:
                     raise _PolicyFailure("output_limit")
                 chunks.append(chunk)
             await feeding
-            if await process.wait() != 0:
+            exit_code = await process.wait()
+            if receiving is not None:
+                await receiving
+            if exit_code != 0:
                 raise _PolicyFailure("process_failed")
             try:
                 def invalid_constant(value):
@@ -115,6 +157,9 @@ class PolicyRunner:
             if not feeding.done():
                 feeding.cancel()
             await asyncio.gather(feeding, return_exceptions=True)
+            if receiving is not None:
+                receiving.cancel()
+                await asyncio.gather(receiving, return_exceptions=True)
             if process.returncode is None:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -122,11 +167,11 @@ class PolicyRunner:
                     pass
                 await process.wait()
 
-    async def _disable_failed(self, row, session_id, code):
+    async def _disable_failed(self, row, session_id, code, *, deactivate=True):
         def fail(db):
             current = db.execute("SELECT version,active FROM harness_policies WHERE user_id=? AND name=? ORDER BY version DESC LIMIT 1",
                                  (row["user_id"], row["name"])).fetchone()
-            disabled = bool(current and current["active"] and current["version"] == row["version"])
+            disabled = bool(deactivate and current and current["active"] and current["version"] == row["version"])
             if disabled:
                 Registry._insert(db, "policy", row["user_id"], row["name"], row["version"] + 1, row, active=False)
             db.execute("INSERT INTO policy_failures VALUES (?,?,?,?,?,?,?,?)",

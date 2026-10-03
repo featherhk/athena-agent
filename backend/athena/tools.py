@@ -133,7 +133,7 @@ class ToolRunner:
             schema = TOOLS[0]["function"]["parameters"]
             chosen = await PolicyRunner(self.config, self.store).apply("execution", session_id, {"default": default}, lambda value: jsonschema.validate(value, schema))
             args = chosen["value"]
-        command = protected_command(args["command"], self.config, [file_area, extension_area], [file_area])
+        command = protected_command(args["command"], self.config, [file_area, extension_area], [file_area], timeout=args.get("timeout_seconds", 120))
         process = await asyncio.create_subprocess_exec(*command, cwd=workspace, env=env, stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
         size, truncated, cancelled = 0, False, False
         async def read():
@@ -191,6 +191,9 @@ class ToolRunner:
         op = args["op"]
         owner = await self.owner(session_id)
         user = owner["user_id"]
+        if op == "capabilities":
+            from .capabilities import execution_capabilities
+            return execution_capabilities(self.config)
         if op == "agents":
             return await self.agents.operate(session_id, run_id, {key: value for key, value in args.items() if key != 'op'})
         if op == "browser":

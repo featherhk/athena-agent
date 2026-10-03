@@ -1,0 +1,15 @@
+[Unit]
+Description=Athena execution network isolation
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/athena/execution-network.env
+ExecStart=/bin/sh /opt/athena/execution-network.sh ${ATHENA_SERVER_PUBLIC_IPV4}
+ExecStop=/usr/bin/rm -f /opt/athena/data/execution-network/ready.json
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service

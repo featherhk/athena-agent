@@ -1,0 +1,37 @@
+# Add after compose.yaml and the operator's immutable image override.
+services:
+  web:
+    environment:
+      ATHENA_EXECUTION_SOCKET: /run/athena-execution/broker.sock
+    volumes:
+      - /opt/athena/data/execution-ipc:/run/athena-execution:ro
+    depends_on:
+      execution:
+        condition: service_healthy
+  execution:
+    image: athena-execution-broker:local
+    environment:
+      ATHENA_EXECUTION_HOST_DATA: /opt/athena/data/web
+      ATHENA_EXECUTION_IMAGE: athena-execution-worker:local
+      ATHENA_EXECUTION_NETWORK: athena-execution
+      ATHENA_EXECUTION_NETWORK_READY: /run/athena-network/ready.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/athena/data/web:/data
+      - /opt/athena/data/execution:/state
+      - /opt/athena/data/execution-ipc:/run/athena-execution
+      - /opt/athena/data/execution-network:/run/athena-network:ro
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/athena-execution/broker.sock'); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped

@@ -213,3 +213,27 @@ class NativeBrowserDriver:
             except (ValueError, OSError, TimeoutError):
                 pass  # A later status check must revalidate live state, never replay.
         await asyncio.gather(*(close_owner(user_id) for user_id in tuple(self.used_users)))
+
+
+class ContainerBrowserDriver(NativeBrowserDriver):
+    """One Linux browser container per account; the same single-send protocol."""
+    def available(self):
+        return bool(self.config.execution_socket) and Path(self.config.execution_socket).is_socket()
+
+    def paths(self, user_id):
+        if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', user_id):
+            raise ValueError('Invalid browser owner')
+        root = self.config.data_dir / 'browser-profiles' / user_id
+        return root, root / 'ipc'
+
+    async def _control(self, user_id, command, *, timeout=35):
+        from .execution_client import control
+        if command not in (['session', 'info'], ['tab', 'list']):
+            raise ValueError('Only browser lifecycle commands may use the broker')
+        self.used_users.add(user_id)
+        return await control(self.config.execution_socket,
+            {'op': 'browser_control', 'owner': user_id, 'command': command}, timeout=max(timeout, 45))
+
+
+def browser_driver(config):
+    return ContainerBrowserDriver(config, headed=False) if sys.platform == 'linux' and config.execution_socket else NativeBrowserDriver(config)

@@ -6,7 +6,8 @@ import re
 import stat
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .browser_driver import NativeBrowserDriver, BrowserDriverError
+from .browser_driver import browser_driver, BrowserDriverError
+from .capabilities import manual_browser_handoff_available
 from fastapi import HTTPException
 from .files import _workspace, discover_files, list_files, sanitize_filename, MAX_FILE_BYTES
 from .store import now, uid
@@ -113,7 +114,7 @@ def publish_browser_file(config, user_id, session_id, source, name):
 class BrowserHost:
     def __init__(self, config, store, driver=None):
         self.config, self.store = config, store
-        self.driver = driver or NativeBrowserDriver(config)
+        self.driver = driver or browser_driver(config)
         self.locks = {}
 
     async def _owner(self, session_id):
@@ -183,6 +184,7 @@ class BrowserHost:
         if action == 'status':
             return {'available': self.driver.available(), 'provider': 'agent-browser',
                     'actions': list(ACTIONS), 'identity_scope': 'account', 'tab_scope': 'conversation',
+                    'manual_handoff': manual_browser_handoff_available(self.config, self.driver),
                     'vision_input': False, 'computer_control': False}
         if action == 'history':
             limit, offset = args.get('limit', 20), args.get('offset', 0)
@@ -207,6 +209,12 @@ class BrowserHost:
                 if args.get('ref') and args['ref'] not in json.loads(tab['refs']):
                     raise ValueError('This element was not present in the current observation.')
             if action == 'handoff':
+                if not manual_browser_handoff_available(self.config, self.driver):
+                    return {'ok': False, 'status': 'manual_handoff_unavailable', 'effect_known': True,
+                            'manual_handoff': False,
+                            'error': {'code': 'manual_browser_handoff_unavailable',
+                                      'message': 'This server or headless browser has no window the user can take over. No local browser was opened and no login handoff was created.'},
+                            'recovery': 'Use runtime user_help separately to ask for non-credential information or files the user chooses to share, or an alternative public source. They can download a document in their own browser and attach it here. Their own browser login does not authenticate this browser. Never request passwords, verification codes, cookies or session tokens.'}
                 from .user_help import request_help
                 await self._select(user_id, tab, force=True)
                 await self.store.execute("UPDATE browser_tabs SET observation_id=NULL,refs='[]' WHERE user_id=?", (user_id,))
@@ -274,6 +282,8 @@ class BrowserHost:
                     if action == 'fill':
                         kind = await self.driver.run(user_id, ['get', 'attr', args['ref'], 'type'])
                         if isinstance(kind, dict) and str(kind.get('value', kind.get('attribute', ''))).lower() == 'password':
+                            if not manual_browser_handoff_available(self.config, self.driver):
+                                raise ValueError('Password entry is unavailable in this server or headless browser. There is no local window to open for login. Use user_help for non-credential information or files; never ask for passwords, verification codes, cookies or session tokens.')
                             raise ValueError('Let the user enter credentials in the managed browser; use handoff.')
                     dispatched = True
                     await self.driver.run(user_id, command)

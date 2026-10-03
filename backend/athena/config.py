@@ -31,6 +31,7 @@ class Config:
     tool_output_chars: int = 12_000
     cloud_url: str = ""
     public_origin: str = ""
+    execution_socket: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -46,6 +47,7 @@ class Config:
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
             cloud_url=os.environ.get("ATHENA_CLOUD_URL", ""),
             public_origin=os.environ.get("ATHENA_PUBLIC_ORIGIN", ""),
+            execution_socket=os.environ.get("ATHENA_EXECUTION_SOCKET", ""),
         )
 
     @property

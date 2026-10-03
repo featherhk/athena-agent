@@ -1,7 +1,12 @@
 import asyncio
+import base64
+from dataclasses import replace
 import json
+from pathlib import Path
 import shutil
 import sys
+import tempfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -189,3 +194,68 @@ async def test_component_placement_is_versioned_and_restored(policy, store):
     read = await registry.operate({"kind": "component", "action": "read", "id": "panel"}, session)
     assert read["placement"] == "workspace" and read["source"] == "<p>Full workspace</p>"
     assert (await store.components(session))[0]["placement"] == "workspace"
+
+
+@pytest.mark.parametrize(("status", "exit_code", "output", "expected", "disabled"), [
+    ("busy", 125, "", "executor_busy", 0),
+    ("resource_limit", 125, "", "executor_resource_limit", 0),
+    ("failed", 125, "", "executor_unavailable", 0),
+    ("setup_timeout", 125, "", "executor_timeout", 0),
+    ("cleanup_unknown", 125, "", "executor_cleanup_unknown", 0),
+    (None, 125, "", "executor_unavailable", 0),
+    ("timeout", 124, "", "timeout", 1),
+    ("complete", 75, "", "process_failed", 1),
+    ("complete", 0, "not JSON", "invalid_json", 1),
+    ("complete", 0, '["plugin-value"]', None, 0),
+])
+async def test_hosted_policy_distinguishes_infrastructure_from_script_failure(
+    policy, store, monkeypatch, status, exit_code, output, expected, disabled,
+):
+    """Real Unix IPC + protected shim, followed by durable registry assertions."""
+    registry, runner, _, session = policy
+    await register(registry, session)
+    linux = SimpleNamespace(platform="linux", executable=sys.executable)
+    monkeypatch.setattr("athena.policies.sys", linux)
+    monkeypatch.setattr("athena.protection.sys", linux)
+    seen = []
+    async def respond(reader, writer):
+        seen.append(json.loads(await reader.readline()))
+        if status is not None:
+            if output:
+                writer.write(json.dumps({"type": "output", "data": base64.b64encode(output.encode()).decode()}).encode() + b"\n")
+            writer.write(json.dumps({"type": "exit", "code": exit_code, "status": status, "error": None}).encode() + b"\n")
+            await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+    with tempfile.TemporaryDirectory(prefix="athena-policy-", dir="/tmp") as directory:
+        path = str(Path(directory) / "broker.sock")
+        runner.config = replace(runner.config, execution_socket=path)
+        server = await asyncio.start_unix_server(respond, path)
+        async with server:
+            result = await runner.apply("memory_recall", session, {"default": ["safe"]}, lambda value: isinstance(value, list))
+    assert len(seen) == 1 and seen[0]["mode"] == "policy"
+    assert result.get("error") == expected
+    if expected is None:
+        assert result["source"] == "plugin" and result["value"] == ["plugin-value"]
+        assert not await store.rows("SELECT * FROM policy_failures")
+    else:
+        assert result["source"] == "default" and result["value"] == ["safe"]
+        failures = await store.rows("SELECT error_code,disabled FROM policy_failures")
+        assert failures == [{"error_code": expected, "disabled": disabled}]
+    versions = await store.rows("SELECT version,active FROM harness_policies ORDER BY version")
+    assert versions == ([{"version": 1, "active": 1}, {"version": 2, "active": 0}] if disabled else [{"version": 1, "active": 1}])
+
+
+async def test_hosted_transport_timeout_keeps_the_registered_plugin_active(policy, store, monkeypatch):
+    registry, runner, _, session = policy
+    await register(registry, session)
+    runner.config = replace(runner.config, execution_socket="/synthetic/execution.sock")
+    monkeypatch.setattr("athena.policies.sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr("athena.policies.HOSTED_POLICY_TRANSPORT_TIMEOUT", 0.02)
+    async def unavailable(row, payload):
+        await asyncio.Event().wait()
+    monkeypatch.setattr(runner, "_run", unavailable)
+    result = await runner.apply("memory_recall", session, {"default": []}, lambda value: True)
+    assert result["error"] == "executor_timeout"
+    assert await store.rows("SELECT version,active FROM harness_policies") == [{"version": 1, "active": 1}]
+    assert (await store.rows("SELECT disabled FROM policy_failures"))[0]["disabled"] == 0

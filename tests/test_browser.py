@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from dataclasses import replace
 
 import pytest
 
@@ -16,6 +17,7 @@ from athena.files import initialize_files
 class FakeBrowser:
     def __init__(self, config):
         self.config, self.calls, self.tabs = config, [], {}
+        self.headed = True
         self.generation, self.active, self.live = 0, None, False
         self.fail, self.pause, self.entered = None, None, asyncio.Event()
 
@@ -125,6 +127,7 @@ async def test_universal_tool_uses_the_same_browser_contract(engine, browsing):
 
 
 async def test_password_entry_is_handed_to_the_person_without_duplicate_audit_text(browsing, store, monkeypatch):
+    monkeypatch.setattr('athena.capabilities.sys.platform', 'darwin')
     host, driver, (session, _, _) = browsing
     page = await open_page(host, session)
     original = driver.run
@@ -227,7 +230,8 @@ async def test_concurrent_conversations_do_not_interleave_native_actions(browsin
     assert actions == ['tab', 'tab', 'open', 'snapshot', 'tab', 'tab', 'open', 'snapshot']
 
 
-async def test_outputs_are_files_and_handoff_is_a_persisted_wait(browsing, store):
+async def test_outputs_are_files_and_handoff_is_a_persisted_wait(browsing, store, monkeypatch):
+    monkeypatch.setattr('athena.capabilities.sys.platform', 'darwin')
     host, _, (session, _, _) = browsing
     page = await open_page(host, session)
     for action, fields in (('screenshot', {}), ('download', {'ref': '@e1', 'name': 'statement.csv'})):
@@ -240,6 +244,69 @@ async def test_outputs_are_files_and_handoff_is_a_persisted_wait(browsing, store
         'questions': [{'id': 'login', 'question': 'Log in in the browser, then reply done.'}]}, session, run)
     assert result['control']['wait_for_user'] == result['request']['id']
     assert (await store.rows('SELECT status FROM user_help WHERE run_id=?', (run,)))[0]['status'] == 'preparing'
+
+
+async def test_cloud_handoff_does_not_create_an_impossible_login_wait(browsing, store):
+    from athena.user_help import request_help
+    host, driver, (session, _, _) = browsing
+    host.config = replace(host.config, execution_socket='/fixture/broker.sock')
+    page = await open_page(host, session)
+    run = await store.enqueue(session, 'Download my bill from the account website.')
+    await store.claim(session)
+    before = list(driver.calls)
+    result = await host.operate({'action': 'handoff', 'tab_id': page['tab_id'],
+        'questions': [{'id': 'login', 'question': 'Log in in the browser I opened on your phone.'}]}, session, run)
+    assert result['ok'] is False and result['effect_known'] is True
+    assert result['error']['code'] == 'manual_browser_handoff_unavailable'
+    assert 'No local browser was opened' in result['error']['message']
+    assert 'Never request passwords' in result['recovery']
+    # Read-only inventory is allowed; no pretend window selection/remote takeover.
+    assert all(command == ['tab', 'list'] for _, command in driver.calls[len(before):])
+    assert await store.rows('SELECT id FROM user_help WHERE run_id=?', (run,)) == []
+    assert (await store.rows('SELECT status FROM runs WHERE id=?', (run,)))[0]['status'] == 'running'
+    assert (await store.rows('SELECT observation_id FROM browser_tabs WHERE id=?', (page['tab_id'],)))[0]['observation_id'] == page['observation_id']
+    status = await host.operate({'action': 'status'}, session, run)
+    assert status['manual_handoff'] is False
+    # Asking for a document remains a durable path in this same run.
+    help_result = await request_help(store, session, run, {'questions': [
+        {'id': 'bill', 'question': 'Could you attach the bill downloaded from your own browser? Do not send login credentials.'}]})
+    assert help_result['control']['wait_for_user'] == help_result['request']['id']
+
+
+@pytest.mark.parametrize('platform,headed,hosted,expected', [
+    ('darwin', True, False, True), ('darwin', False, False, False),
+    ('darwin', True, True, False), ('linux', True, False, False),
+])
+def test_capabilities_distinguish_browser_actions_from_manual_takeover(config, monkeypatch, platform, headed, hosted, expected):
+    from athena.capabilities import execution_capabilities
+    import athena.browser_driver as drivers
+    driver = FakeBrowser(config)
+    driver.headed = headed
+    monkeypatch.setattr('athena.capabilities.sys.platform', platform)
+    monkeypatch.setattr(drivers, 'browser_driver', lambda _: driver)
+    if hosted:
+        config = replace(config, execution_socket='/fixture/broker.sock')
+    status = execution_capabilities(config)
+    assert status['browser'] is True
+    assert status['browser_manual_handoff'] is expected
+    assert status['user_help'] is True
+
+
+async def test_cloud_password_field_does_not_offer_unreachable_login_window(browsing, monkeypatch):
+    host, driver, (session, _, _) = browsing
+    host.config = replace(host.config, execution_socket='/fixture/broker.sock')
+    page = await open_page(host, session)
+    original = driver.run
+    async def password(user, command, **kwargs):
+        if command[0] == 'get':
+            return {'value': 'password'}
+        return await original(user, command, **kwargs)
+    monkeypatch.setattr(driver, 'run', password)
+    result = await act(host, session, page, 'fill', ref='@e2', text='synthetic-only')
+    assert not result['ok'] and result['effect_known']
+    assert 'no local window' in result['error']['message']
+    assert 'never ask for passwords' in result['error']['message']
+    assert not any(command[0] == 'fill' for _, command in driver.calls)
 
 
 async def test_recovery_invalidates_only_newly_interrupted_actions(browsing, store):

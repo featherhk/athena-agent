@@ -5,7 +5,16 @@ import shutil
 import sys
 
 
-def protected_command(command, config, readable, writable):
+def protected_command(command, config, readable, writable, *, timeout=300):
+    if sys.platform == "linux" and config.execution_socket:
+        # The shim is trusted host code. Agent code runs in a separate container,
+        # which never mounts this socket, the application, or its database.
+        owners = {Path(value).resolve().relative_to(config.data_dir).parts[1] for value in readable}
+        if len(owners) != 1:
+            raise ValueError("Execution requires one account scope.")
+        return [sys.executable, str(Path(__file__).with_name("execution_client.py")),
+                config.execution_socket, owners.pop(), str(timeout),
+                "command" if writable else "policy", command]
     if sys.platform != "darwin" or not shutil.which("sandbox-exec"):
         raise ValueError("当前平台尚未配置源码写保护执行器，命令执行已停用。")
     def path(value):

@@ -62,6 +62,7 @@ RUNTIME_SCHEMA = {"type": "object", "properties": RUNTIME_PROPERTIES, "required"
 # Browser contracts are discovered through its skill, not expanded in the stable
 # model-facing runtime envelope. Individual operations validate allowed fields.
 RUNTIME_PROPERTIES['op']['enum'].append('browser')
+RUNTIME_PROPERTIES['op']['enum'].append('capabilities')
 for action in ('status', 'snapshot', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
                'scroll', 'back', 'forward', 'reload', 'screenshot', 'handoff'):
     if action not in RUNTIME_PROPERTIES['action']['enum']:

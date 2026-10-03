@@ -11,12 +11,13 @@ The initial access policy is an operator-funded preview: fund explicitly selecte
 | `edge` | HTTPS, streaming reverse proxy, static downloads | TCP/UDP 443; `/opt/athena/data/tls`, `/opt/athena/data/caddy`; read-only `/opt/athena/downloads` |
 | `gateway` | Central accounts, authentication, account credits, model/audio proxy | `127.0.0.1:4322` → container 4321; `/opt/athena/data/accounts` |
 | `web` | Web client, sessions, files and assistant runtime | `127.0.0.1:4317`; `/opt/athena/data/web` |
+| `execution` (optional) | Trusted container supervisor; account-scoped command/browser workers | Unix socket only; `/opt/athena/data/execution`, `/opt/athena/data/execution-ipc` |
 
 `deploy/Caddyfile` routes `https://chat.athena.featherhk.com/v1/*` to the gateway and other paths on that host to the Linux web runtime. `https://app.athena.featherhk.com` serves the separate app distribution page from `/opt/athena/site`, with `/downloads/*` served from `/opt/athena/downloads`. The main `featherhk.com` marketing website uses the same static site mount on Tencent Cloud; `www.featherhk.com` redirects to it. The website source remains versioned on GitHub. Both Athena subdomains use the same server and automatic HTTPS; port 80 remains with the existing New API service.
 
 The gateway does not import the agent engine or execute user code. Only it mounts the operator's provider key. The web worker and desktop sidecar send an account bearer token to the gateway; the provider key is never distributed to clients. Browser authentication uses an HttpOnly, SameSite=Strict cookie, with Secure enabled for the configured HTTPS public origin. The gateway's bearer endpoints reject browser Origin headers; the application backend mediates browser login and inference.
 
-The web worker is one shared process, not one container per customer. Account ownership checks protect its application records, but this is not a sandbox for arbitrary hosted code. On Linux, the current protected command executor **fails closed** because a supported source-write protection adapter has not been implemented. Commands, script-based conditions and extensions that depend on that executor cannot run there. Do not remove this restriction to make a demo pass.
+The web worker is one shared process. Account ownership checks protect its application records. With the optional [Linux execution adapter](linux-execution.md), model-authored commands run in disposable account-scoped containers and browsers in separate account-scoped containers. The web process has a private broker socket, never the Docker socket. Without a configured broker, Linux commands still fail closed. Do not run model-authored code directly in the shared web process to bypass that condition.
 
 All databases, files, tokens, TLS state and operator secrets live outside the checkout. The two Python services run as UID/GID `10001:10001`, with read-only container roots, bounded temporary storage, dropped capabilities and no-new-privileges. Their database connections retain the dedicated worker-thread ownership used by the local application. Python 3.14T and the GIL-disabled doctor check are part of the image build.
 
@@ -164,7 +165,7 @@ Run these checks against the deployed release, retaining results without credent
 - Voice is honestly unavailable while unconfigured. When enabled, verify listening, automatic send, playback, interruption, permission denial, disconnect and reservation behavior with real audio.
 - Downloaded artifacts match their published checksum and the expected build. A downloadable preview DMG is not evidence of Developer ID signing or Apple notarization; see [distribution](distribution.md).
 
-The public web worker's Linux command-execution limitation must be part of release expectations. It cannot yet promise every local macOS action. Do not describe this deployment as a completed isolated multi-tenant computer-use service.
+The public web worker's actual adapter configuration must be part of release expectations. Linux commands and a managed browser do not provide control of the user's Mac or phone. Do not describe this deployment as a completed multi-tenant desktop-control service.
 
 ## Backup, restart and recovery
 

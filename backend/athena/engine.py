@@ -220,9 +220,13 @@ class Engine:
             if not isinstance(value, list) or any(not isinstance(item, str) for item in value) or len(value) != len(set(value)) or set(value) - identifiers:
                 raise ValueError("Memory policy must select existing candidate IDs")
         policy = await PolicyRunner(self.config, self.store).apply("memory_recall", session_id, {"default": [row["id"] for row in memories], "candidates": memories}, validate)
+        environment = ""
+        if self.config.execution_socket:
+            from .capabilities import execution_capabilities
+            environment = "\nExecution environment for this turn (host facts, superseding older availability reports): " + json.dumps(execution_capabilities(self.config))
         # The admitted input freezes recall before its first model request.
         await self.store.call(lambda db: db.execute("UPDATE messages SET context_note=? WHERE run_id=? AND role='user'",
-            (snapshot_note(db, session_id, policy['value']), run_id)).rowcount)
+            (snapshot_note(db, session_id, policy['value']) + environment, run_id)).rowcount)
 
     async def _run(self, session_id, run_id):
         request_id, message_id = None, None
