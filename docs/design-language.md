@@ -8,6 +8,10 @@ This is a contemporary interpretation, not a historical reconstruction. We take 
 
 The owl is an original line drawing. The wordmark uses restrained, spaced capitals. Avoid temple borders, imitation stone textures, ornamental Greek lettering, mascot expressions and decorative antiquity. Museum images are not embedded in the application.
 
+## Official voice and symbols
+
+Official interface labels, default components, documentation and website copy use plain language without emoji. Use typography and the existing monochrome vector drawing style for hierarchy and functional symbols; do not use emoji as icons or decorative punctuation. This is an authorship convention, not a content filter: preserve user messages, files and explicitly requested expressive content as written.
+
 ## Reading and hierarchy
 
 - The default font stack combines Iowan Old Style, Palatino and Georgia with Songti and available CJK serif fonts; Arabic has a Naskh fallback. Reading text is 17px with a generous line height. Fonts are local; no font service is required.

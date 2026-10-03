@@ -7,6 +7,8 @@ import { measureSurface, parseTextStyleEffect, readSurfaceTheme, type TextStyleE
 import { placementOf, movePanel, resizePanel, panelView, type Rect } from './component-layout';
 import ComponentControls from './ComponentControls';
 import { parseFormDraft, type FormDraft } from './component-forms';
+import CanvasActions from './CanvasActions';
+import { parseSurfaceRegions, visibleSurfaceRegions, type SurfaceRegion, type SurfaceAction } from './surface-interactions';
 import './widgets.css';
 
 type Health = { state: 'mounted' | 'failed'; has_content: boolean; error_code: string | null };
@@ -26,6 +28,8 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [dragged, setDragged] = useState<Rect | null>(null);
+  const [interactions, setInteractions] = useState<{ instance: string; regions: SurfaceRegion[] }>({ instance: '', regions: [] });
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const drag = useRef<{ pointer: number; x: number; y: number; start: Rect; current: Rect; resize: boolean } | null>(null);
   const placement = fallback ? 'inline' : placementOf(component);
   const measuredRef = useRef(onHeight); measuredRef.current = onHeight;
@@ -65,7 +69,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
     void change(panelView((resize ? resizePanel : movePanel)(floating, dx, dy, bounds), bounds));
   }
-  const instance = useMemo(() => crypto.randomUUID(), [component.id, component.version, locale, attempt]);
+  const instance = useMemo(() => crypto.randomUUID(), [sessionId, component.id, component.version, placement, locale, attempt]);
   // Later theme changes use the bridge, preserving forms and animation state.
   const [initialPalette] = useState(() => customPalette(preferences.ui_palette));
   const html = useMemo(() => {
@@ -79,7 +83,8 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
   useEffect(() => { layoutMeta.current = { locale, reduced }; refreshLayout.current(); }, [locale, reduced]);
   useEffect(() => {
     let health: Health | null = null, inView = false, lastReport = '', disposed = false;
-    let observing = false, layoutFrame = 0, styleFrame = 0, lastLayout = '', lastTheme = '';
+    let observing = false, layoutFrame = 0, styleFrame = 0, interactionFrame = 0, lastLayout = '', lastTheme = '';
+    let pendingRegions: SurfaceRegion[] = [];
     const pendingStyles = new Map<string, TextStyleEffect>();
     let clearStyles = false;
     const componentKey = `${component.id}:${component.version}`;
@@ -132,6 +137,16 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       if (event.data.type === 'athena:navigate' && typeof event.data.session_id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(event.data.session_id) && navigator.userActivation?.isActive !== false) navigateRef.current?.(event.data.session_id);
       if (event.data.type === 'athena:observe') { observing = true; lastLayout = ''; scheduleLayout(); }
       if (event.data.type === 'athena:unobserve') observing = false;
+      if (event.data.type === 'athena:interactions') {
+        const regions = parseSurfaceRegions(event.data.regions);
+        if (regions) {
+          pendingRegions = regions;
+          if (!interactionFrame) interactionFrame = requestAnimationFrame(() => {
+            interactionFrame = 0;
+            setInteractions(old => old.instance === instance && JSON.stringify(old.regions) === JSON.stringify(pendingRegions) ? old : { instance, regions: pendingRegions });
+          });
+        }
+      }
       if (event.data.type === 'athena:style-text') {
         const effect = parseTextStyleEffect(event.data.effect);
         if (effect !== undefined) {
@@ -157,11 +172,17 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     };
     const observer = new IntersectionObserver(entries => { inView = entries.some(entry => entry.isIntersecting); report(); });
     if (wrapper.current) observer.observe(wrapper.current);
-    const sizeObserver = new ResizeObserver(scheduleLayout);
+    const sizeObserver = new ResizeObserver(() => {
+      if (frame.current) {
+        const next = { width: frame.current.clientWidth, height: frame.current.clientHeight };
+        setCanvasSize(old => old.width === next.width && old.height === next.height ? old : next);
+      }
+      scheduleLayout();
+    });
     if (app) sizeObserver.observe(app);
     if (frame.current) sizeObserver.observe(frame.current);
     const changeObserver = new MutationObserver(scheduleLayout);
-    if (app) changeObserver.observe(app, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'data-message-id', 'data-message-role'] });
+    if (app) changeObserver.observe(app, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'data-message-id', 'data-message-role', 'data-phase'] });
     const themeObserver = new MutationObserver(() => { sendTheme(); scheduleLayout(); });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-palette', 'data-font'] });
     window.addEventListener('scroll', scheduleLayout, true);
@@ -174,7 +195,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     frame.current?.contentWindow?.postMessage({ type: 'athena:inspect', instance }, '*');
     return () => {
       disposed = true; window.clearTimeout(timeout); observer.disconnect();
-      cancelAnimationFrame(layoutFrame); cancelAnimationFrame(styleFrame);
+      cancelAnimationFrame(layoutFrame); cancelAnimationFrame(styleFrame); cancelAnimationFrame(interactionFrame);
       sizeObserver.disconnect(); changeObserver.disconnect(); themeObserver.disconnect();
       window.removeEventListener('scroll', scheduleLayout, true); window.removeEventListener('resize', scheduleLayout);
       app?.removeEventListener('load', scheduleLayout, true); document.fonts?.removeEventListener('loadingdone', scheduleLayout);
@@ -184,6 +205,9 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     };
   }, [sessionId, component.id, component.version, instance]);
   const rect = dragged || floating;
+  const regions = placement === 'overlay' && !failure && interactions.instance === instance
+    ? visibleSurfaceRegions(interactions.regions, canvasSize.width, canvasSize.height) : [];
+  const dispatch = (action: SurfaceAction) => frame.current?.contentWindow?.postMessage({ type: 'athena:interaction', instance, action }, '*');
   return <section ref={wrapper} className={`widget${floating ? ' widget-floating' : ''}${dragged ? ' widget-adjusting' : ''}`} data-placement={placement} data-component-id={component.id} style={rect ? { left: rect.x, top: rect.y, width: rect.width, height: rect.height } : ['workspace', 'fullscreen', 'presence', 'overlay'].includes(placement) ? undefined : { maxWidth: component.view?.width, marginInline: 'auto' }}>
     <header className="widget-toolbar">
       {floating ? <button className="widget-handle" disabled={saving} aria-label={t('surface.move', { name: component.title })} onPointerDown={event => startDrag(event)} onPointerMove={moveDrag} onPointerUp={event => endDrag(event)} onPointerCancel={event => endDrag(event, true)} onLostPointerCapture={event => endDrag(event, true)} onKeyDown={event => keyMove(event)}>{component.title}</button> : <span className="section-label">{component.title}</span>}
@@ -191,6 +215,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     </header>
     {failure && <div className="widget-failure" role="status"><span>{t('componentUnavailable')}</span><button className="quiet" onClick={() => setAttempt(value => value + 1)}>{t('componentRetry')}</button></div>}
     <iframe ref={frame} title={component.title} sandbox="allow-scripts" srcDoc={html} style={{ height: component.view?.height || height }} onLoad={() => frame.current?.contentWindow?.postMessage({ type: 'athena:inspect', instance }, '*')} />
+    {regions.length > 0 && <CanvasActions key={instance} regions={regions} dispatch={dispatch} />}
     {floating && <button className="widget-resize" disabled={saving} aria-label={t('surface.resize', { name: component.title })} onPointerDown={event => startDrag(event, true)} onPointerMove={moveDrag} onPointerUp={event => endDrag(event)} onPointerCancel={event => endDrag(event, true)} onLostPointerCapture={event => endDrag(event, true)} onKeyDown={event => keyMove(event, true)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 12 7-7m-2 7 2-2" /></svg></button>}
   </section>;
 }

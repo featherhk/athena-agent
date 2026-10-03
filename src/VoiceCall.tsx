@@ -34,6 +34,12 @@ export default function VoiceCall(props: Props) {
   function end() { ticket.current++; call.current?.end(); call.current = null; setState('ended'); }
   useEffect(() => () => { ticket.current++; call.current?.end(); }, []);
   useEffect(() => {
+    // Also invalidate a call still waiting for ensureSession, before a microphone exists.
+    const background = () => end();
+    window.addEventListener('athena:background', background);
+    return () => window.removeEventListener('athena:background', background);
+  }, []);
+  useEffect(() => {
     if (call.current && (props.sessionId !== call.current.sessionId || !props.ownerId)) end();
   }, [props.sessionId, props.ownerId]);
   useEffect(() => { props.onActiveChange?.(active); }, [active]);

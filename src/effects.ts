@@ -9,6 +9,8 @@ export type SurfaceTheme = { tokens: Record<string, string>; font_family: string
 export type SurfaceLayout = {
   viewport: { width: number; height: number };
   messages: { id: string; role: 'user' | 'assistant'; rect: { x: number; y: number; width: number; height: number } }[];
+  anchors: Partial<Record<'presence' | 'conversation' | 'workspace' | 'composer' | 'controls', { x: number; y: number; width: number; height: number }>>;
+  phase: string;
   reduced_motion: boolean; locale: string; theme?: SurfaceTheme;
 };
 const numberIn = (value: unknown, min: number, max: number): value is number =>
@@ -71,14 +73,21 @@ export function measureSurface(app: Element, frame: HTMLIFrameElement, locale: s
   const width = frame.clientWidth, height = frame.clientHeight;
   const scaleX = bounds.width ? width / bounds.width : 1, scaleY = bounds.height ? height / bounds.height : 1;
   const round = (value: number) => Math.round(value * 100) / 100;
+  const relative = (rect: DOMRect) => ({ x: round((rect.left - bounds.left) * scaleX), y: round((rect.top - bounds.top) * scaleY), width: round(rect.width * scaleX), height: round(rect.height * scaleY) });
   const messages: SurfaceLayout['messages'] = [];
   for (const element of app.querySelectorAll<HTMLElement>('[data-message-id][data-message-role]')) {
     const id = element.dataset.messageId, role = element.dataset.messageRole;
     if (!id || (role !== 'user' && role !== 'assistant')) continue;
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= bounds.top || rect.top >= bounds.bottom || rect.right <= bounds.left || rect.left >= bounds.right) continue;
-    messages.push({ id, role, rect: { x: round((rect.left - bounds.left) * scaleX), y: round((rect.top - bounds.top) * scaleY), width: round(rect.width * scaleX), height: round(rect.height * scaleY) } });
+    messages.push({ id, role, rect: relative(rect) });
     if (messages.length === 128) break;
   }
-  return { viewport: { width, height }, messages, reduced_motion: reduced, locale, ...(theme ? { theme } : {}) };
+  const anchors: SurfaceLayout['anchors'] = {};
+  const selectors = { presence: '.agent-presence', conversation: '.conversation', workspace: '.workspace-panel', composer: '.composer-area', controls: '.topbar' } as const;
+  for (const key of Object.keys(selectors) as (keyof typeof selectors)[]) {
+    const rect = app.querySelector(selectors[key])?.getBoundingClientRect();
+    if (rect?.width && rect.height) anchors[key] = relative(rect);
+  }
+  return { viewport: { width, height }, messages, anchors, phase: app.getAttribute('data-phase') || 'idle', reduced_motion: reduced, locale, ...(theme ? { theme } : {}) };
 }

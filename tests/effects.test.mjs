@@ -28,10 +28,10 @@ test('layout exports only visible message geometry in iframe coordinates', () =>
     element('visible', 'assistant', { left: 60, right: 160, top: 100, bottom: 140, width: 100, height: 40 }),
     element('offscreen', 'user', { left: 60, right: 160, top: 500, bottom: 540, width: 100, height: 40 }),
     element('not-message', 'account', { left: 60, right: 160, top: 100, bottom: 140, width: 100, height: 40 }),
-  ] };
+  ], querySelector: () => null, getAttribute: () => 'thinking' };
   const frame = { clientWidth: 400, clientHeight: 600, getBoundingClientRect: () => ({ left: 50, right: 250, top: 80, bottom: 380, width: 200, height: 300 }) };
   assert.deepEqual(measureSurface(app, frame, 'en', true), {
-    viewport: { width: 400, height: 600 }, reduced_motion: true, locale: 'en',
+    viewport: { width: 400, height: 600 }, reduced_motion: true, locale: 'en', anchors: {}, phase: 'thinking',
     messages: [{ id: 'visible', role: 'assistant', rect: { x: 20, y: 40, width: 200, height: 80 } }],
   });
 });
@@ -68,6 +68,19 @@ test('sandbox bridge receives layout only from its host and cleans up subscripti
   assert.equal(context.Athena.navigate('owned-session'), true);
   assert.equal(sent.at(-1).session_id, 'owned-session');
   assert.equal(context.Athena.navigate('../../account'), false);
+  const activated = [], regions = [{id:'pin',label:'Pin this note',rect:{x:5,y:10,width:44,height:44}}];
+  context.Athena.interact(regions, action => activated.push(action));
+  assert.equal(sent.at(-1).type, 'athena:interactions');
+  const action = {id:'pin',kind:'activate',pointer:'keyboard',point:{x:27,y:32}};
+  handlers.get('message')({source:{},data:{type:'athena:interaction',instance:'instance-one',action}});
+  handlers.get('message')({source:parent,data:{type:'athena:interaction',instance:'previous-version',action}});
+  handlers.get('message')({source:parent,data:{type:'athena:interaction',instance:'instance-one',action:{...action,id:'another-widget'}}});
+  assert.equal(activated.length,0);
+  handlers.get('message')({source:parent,data:{type:'athena:interaction',instance:'instance-one',action}});
+  assert.deepEqual(activated,[action]);
+  context.Athena.interact(null);
+  handlers.get('message')({source:parent,data:{type:'athena:interaction',instance:'instance-one',action}});
+  assert.equal(activated.length,1);
   const theme = { tokens: { '--ink': '#dfeee0', '--surface': '#102a18' }, font_family: 'Georgia', scheme: 'dark' };
   handlers.get('message')({ source: parent, data: { type: 'athena:theme', instance: 'instance-one', theme } });
   assert.equal(context.Athena.theme, theme);

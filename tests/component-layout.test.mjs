@@ -41,6 +41,16 @@ test('saved positions adapt to viewport changes and respect RTL logical corners'
   assert.equal(fitPanel({}, 'top-end', bounds, true).x, bounds.x);
 });
 
+test('explicit phone positioning remains floating and adapts above the keyboard', () => {
+  const mobile = {x:12,y:70,width:406,height:340};
+  const chosen = {...component('chosen'),view:{x:.35,y:.7,width:280,height:210}};
+  assert.deepEqual(arrangePanels([chosen],mobile).chosen,fitPanel(chosen.view,chosen.placement,mobile));
+  const keyboard = {...mobile,height:180};
+  assert.deepEqual(arrangePanels([chosen],keyboard).chosen,fitPanel(chosen.view,chosen.placement,keyboard));
+  assert.equal(arrangePanels([chosen],{...mobile,height:100}).chosen,null);
+  assert.equal(arrangePanels([component('automatic')],mobile).automatic,null);
+});
+
 test('last user action keeps its requested position while other panels make room', () => {
   const older = component('older'), current = { ...component('current'), view_updated_at: '2026-10-03T03:00:00Z', view: { x: 0.4, y: 0.3 } };
   const layout = arrangePanels([older, current], bounds);

@@ -19,6 +19,10 @@
 .widget-resize svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1; }
 .widget-failure { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:8px 0; font-size:14px; }.widget-failure .quiet { flex-shrink:0; }
 .scene-overlay .widget-toolbar,.agent-presence .widget-toolbar { display:none; }
+.scene-overlay .widget { position:relative; }
+.canvas-actions { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+.canvas-action { position:absolute; pointer-events:auto; touch-action:none; background:transparent; border:0; padding:0; color:inherit; border-radius:3px; }
+.canvas-action:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; background:color-mix(in srgb,var(--accent) 8%,transparent); }
 .surface-list { display:flex; flex-direction:column; }.surface-row { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--tint); padding:12px 0; position:relative; }.surface-row:last-child { border:0; }
 .surface-open { flex:1; min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:start; border:0; color:var(--ink); background:transparent; padding:0; cursor:pointer; font:16px var(--font); }.surface-open span { overflow-wrap:anywhere; }.surface-open small { font-size:12px; color:var(--muted); }
 .surface-dialog { overflow:visible; }.surface-dialog .surface-list { max-height:65dvh; overflow-y:auto; }

@@ -57,6 +57,8 @@ export class VoiceSession {
 
   async start(messages: readonly Message[]) {
     this.cursor.prime(messages.filter(message => !message.id.startsWith('voice-help:'))); this.latest = messages; this.callbacks.state('connecting');
+    window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('athena:background', this.onPageHide);
     try {
       const response = await checked(await fetch('/api/voice'));
       const service = await response.json();
@@ -78,7 +80,6 @@ export class VoiceSession {
       this.context.onstatechange = () => {
         if (!this.ended && this.context.state === 'suspended') this.fail('voice_suspended');
       };
-      window.addEventListener('pagehide', this.onPageHide);
       this.updateState();
     } catch (error) {
       const name = (error as Error).name;
@@ -202,7 +203,8 @@ export class VoiceSession {
     this.capture?.disconnect(); this.source?.disconnect();
     this.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); });
     void this.context.close().catch(() => {});
-    window.removeEventListener('pagehide', this.onPageHide); this.callbacks.state('ended');
+    window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('athena:background', this.onPageHide); this.callbacks.state('ended');
   }
 
   private fail(code: string) { this.callbacks.error(code); this.end(); }

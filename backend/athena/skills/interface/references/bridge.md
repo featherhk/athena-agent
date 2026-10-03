@@ -8,7 +8,7 @@
 
 - `inline` 是聊天内内容，`workspace` 是主要工作区，`banner` 是提醒。
 - 四角 `top-start/top-end/bottom-start/bottom-end` 是浮动小工具；`sidebar-start/sidebar-end` 会占据侧栏空间，适合导航、待办或辅助信息，避免遮住聊天。start/end 跟随阅读方向。
-- `overlay` 覆盖聊天工作面，默认透明、鼠标穿透，可做小鸭跳过气泡、飘落爱心、粒子等动态效果。动画不能靠固定角落冒充；使用布局锚点计算位置。
+- `overlay` 是自由画布，HTML/SVG/Canvas 可在整个聊天工作面的任意位置绘制，不限于四角。默认透明、鼠标穿透；需要点击、拖动、触摸或键盘交互时用 `Athena.interact` 声明实际交互区域，空白处继续滚动和选字。使用布局锚点跟随内容，不靠固定角落冒充跨气泡动画。
 - `fullscreen` 提供沉浸工作面，保留外层输入和退出控件。用它做播放器、画板等；不是浏览器或系统全屏权限。
 - `presence` 替换默认 Athena 视觉标志，宿主保持状态文字与控制。它可以是自绘形状、Canvas 或动画；不要假设一定是球体。
 
@@ -26,7 +26,7 @@
 {"op":"registry","args":{"kind":"component","action":"layout","id":"notes","version":1,"view_revision":0,"view":{"hidden":false,"placement":"top-end","width":400,"height":300,"x":1,"y":0}}}
 ```
 
-`hidden` 收起/展开；`placement` 覆盖登记时的位置；`width/height` 是 CSS 像素（240–1600 / 160–1600）；`x/y` 是可用区域内的相对位置（0–1，物理左/上为0）。传 null 清除某项覆盖。窗口变化会约束实际尺寸，不能遮挡独立顶部控制和输入区。自动浮窗避开正文和其他组件，空间不足时回到聊天流；用户明确指定 x/y 后可自由覆盖正文。工作区、标志和动画层使用宿主区域，侧栏宽度由页面布局决定。
+`hidden` 收起/展开；`placement` 覆盖登记时的位置；`width/height` 是 CSS 像素（240–1600 / 160–1600）；`x/y` 是可用区域内的相对位置（0–1，物理左/上为0）。传 null 清除某项覆盖。窗口变化会约束实际尺寸，不能遮挡独立顶部控制和输入区。自动浮窗避开正文和其他组件，空间不足时回到聊天流；用户明确指定 x/y 后可自由覆盖正文，手机上也保留明确位置。键盘弹出或帮助表单令空间小于最小可用尺寸时才回到聊天流。工作区、标志和动画层使用宿主区域，侧栏宽度由页面布局决定。
 
 布局单独持久化、审计，不增加源码版本；重新登记内容也不会把用户收起的组件弹出来。布局更新返回的是已保存状态，视觉效果仍需浏览器回报。旧版本或旧 view_revision 会拒绝，读取最新状态后决定是否重试，不可盲目覆盖另一窗口的调整。分叉复制当时布局，之后彼此独立；Reset 停用组件并清除布局覆盖，保留原件。
 
@@ -48,6 +48,9 @@ const unsubscribe = Athena.observe(layout => {
   // layout.messages = [{id,role,rect:{x,y,width,height}}]
   // rect 相对当前 iframe，只有在其范围内可见的 user/assistant 气泡，最多128条
   // layout.reduced_motion, layout.locale, layout.theme
+  // layout.anchors = {presence?, conversation?, workspace?, composer?, controls?}
+  // 语义区域的 rect 与气泡使用同一坐标系；不可见区域缺省，区域也可能在画布外
+  // layout.phase = idle | thinking | executing | responding | waiting | stopped
 });
 ```
 
@@ -72,7 +75,8 @@ function draw(time){
       const step=layout.reduced_motion?0:time/1600, index=Math.floor(step)%anchors.length, t=step%1;
       const a=anchors[index], b=anchors[(index+1)%anchors.length];
       const x=a.x+(b.x-a.x)*t, y=a.y+(b.y-a.y)*t-Math.sin(t*Math.PI)*70;
-      context.font='32px system-ui'; context.textAlign='center'; context.fillText('🦆',x,y);
+      context.fillStyle=layout.theme.tokens['--accent'];
+      context.beginPath(); context.ellipse(x,y-9,5,9,-Math.PI/5,0,Math.PI*2); context.fill();
     }
   }
   if(!layout?.reduced_motion)schedule();
@@ -82,6 +86,32 @@ schedule();
 ```
 
 这个例子只说明锚点使用；按用户的风格设计最终形象。没有可见气泡时，选择自己的空态位置，不要凭空假设坐标。
+
+## 自由画布的交互
+
+画面由你自己的 HTML/SVG/Canvas 绘制，交互区域不局限于预设位置。`Athena.interact(regions, callback)` 提供真实的宿主按钮，支持点击、触摸、拖动、键盘和读屏。它不暴露父页面 DOM。每次调用替换当前区域列表；后续更新位置可以省略 callback。传 null 清除所有区域和回调。
+
+```js
+let pinned = false;
+Athena.observe(layout => {
+  const message = layout.messages.at(-1);
+  if (!message) { Athena.interact([]); return; }
+  // 在同一位置绘制自己的标记；这里仅演示交互声明。
+  const rect = {x:Math.min(layout.viewport.width-44,message.rect.x+message.rect.width),
+                y:message.rect.y,width:44,height:44};
+  Athena.interact([{id:'pin',label:pinned?'取消标记':'标记这段内容',rect,pressed:pinned}], action => {
+    if (action.kind !== 'activate') return;
+    pinned = !pinned;
+    // 更新画面和区域的 pressed；需要持久化时通过明确的用户点击提交实际请求。
+  });
+});
+```
+
+区域结构为 `{id,label,rect:{x,y,width,height},pressed?}`，id 唯一，label 使用用户语言说明动作，最多64个区域。坐标是相对画布的 CSS 像素，随布局、滚动或你自己的动画更新；超出画布的部分同时从画面命中和键盘焦点中裁掉。移动不要调用模型或把每一帧写进数据库。建议触摸区域至少44×44px；不要用不可见的整屏按钮拦截阅读。
+
+回调得到 `{id,kind,point:{x,y},pointer}`；kind 为 activate/press/move/release/cancel，pointer 为 mouse/touch/pen/keyboard。拖动超过阈值后不会再触发一次点击；键盘激活的位置为区域中心。普通表单、输入法、编辑器仍应使用 inline/workspace 或浮窗中的真实 HTML 控件；不要用画布模拟密码表单。`navigate` 需要原 iframe 的直接用户激活，不能从画布回调假装直接导航；可在明确点击后用 `submit` 向 Athena 提出切换请求。
+
+停止、恢复、输入和账户弹窗仍由独立外壳控制。隐藏、移除、重置、源码更新或会话切换会撤销该组件的所有命中区域。错误版本不能留下透明的点击拦截层。
 
 ## 文本外观
 

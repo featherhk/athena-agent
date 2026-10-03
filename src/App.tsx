@@ -284,12 +284,13 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     let stopped = false, checking = false;
+    const readingActivity = () => Boolean(document.querySelector('.run-trace[open], .message-reasoning[open], .trace-original[open]'));
     const check = async () => {
-      if (checking || stopped || document.hidden || !upgradeState.current.safe || appActionActive.current || document.activeElement?.tagName === 'IFRAME') return;
+      if (checking || stopped || document.hidden || !upgradeState.current.safe || appActionActive.current || document.activeElement?.tagName === 'IFRAME' || readingActivity()) return;
       checking = true; const authTicket = authEpoch.current;
       const version = await checkClientVersion();
       const current = upgradeState.current;
-      if (!stopped && version && current.safe && !appActionActive.current && document.activeElement?.tagName !== 'IFRAME' && current.user?.id === user.id && uiScope.current.owner === user.id && authEpoch.current === authTicket) {
+      if (!stopped && version && current.safe && !appActionActive.current && document.activeElement?.tagName !== 'IFRAME' && !readingActivity() && current.user?.id === user.id && uiScope.current.owner === user.id && authEpoch.current === authTicket) {
         try {
           if (!drafts.current!.persist(user.id, uiScope.current.session)) { checking = false; return; }
           sessionStorage.setItem('athena-upgrade-draft', JSON.stringify({ user_id: user.id, session_id: uiScope.current.session, saved_at: Date.now() }));
@@ -596,14 +597,14 @@ export default function App() {
   function renderWidget(component: Component) {
     const rect = floatingPlacements.has(placementOf(component)) ? panelLayout[component.id] : undefined;
     const key = `${user?.id}:${session}:${component.id}:${component.version}`;
-    return <Widget key={`${component.id}-${component.version}`} component={component} sessionId={session!}
+    return <Widget key={key} component={component} sessionId={session!}
       submit={value => void submit(value, 'queue', false)} onStyleText={styleText} onNavigate={navigateFromWidget}
       onView={changeComponentView} floating={rect || undefined} fallback={rect === null} bounds={surfaceBounds} onHeight={measureWidget}
       draft={surfaceDrafts.current.get(key)} onDraft={value => { if (!surfaceDrafts.current.has(key) && surfaceDrafts.current.size >= 64) surfaceDrafts.current.delete(surfaceDrafts.current.keys().next().value!); surfaceDrafts.current.set(key, value); }} />;
   }
   const tracedRuns = new Set<string>();
   const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
-  return <div className="app" data-reading={reading}>
+  return <div className="app" data-reading={reading} data-phase={orbPhase}>
     <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
       <nav aria-label={t('chatControls')}>{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>

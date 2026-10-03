@@ -19,6 +19,12 @@
 .trace-link:focus-visible, .run-trace summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 .trace-original { margin-top: 9px; }
 .trace-original summary { cursor: pointer; margin-bottom: 8px; }
+.trace-result-summary { display:flex; flex-wrap:wrap; gap:6px 14px; margin:0; color:var(--ink); }
+.trace-result-summary > span + span { color:var(--muted); font-size:12px; }
+.trace-result[data-outcome=failed],.trace-result[data-outcome=uncertain] { border-inline-start:2px solid var(--accent); padding-inline-start:10px; }
+.trace-result-message { margin:6px 0; overflow-wrap:anywhere; line-height:1.6; }
+.trace-result .trace-result-preview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:9em; overflow:auto; padding:8px 0; margin:0; font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; background:none; }
+.trace-tool-name { display:inline-block; margin-inline-start:10px; color:var(--ink); overflow-wrap:anywhere; }
 .trace-error { overflow-wrap: anywhere; color: var(--muted); }
 .trace-error code { font-size: 12px; }
 .trace-empty { margin: 9px 0; }

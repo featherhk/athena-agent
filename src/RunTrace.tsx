@@ -4,6 +4,7 @@ import { useI18n, errorMessage } from './i18n';
 import { MarkdownContent } from './MessageBody';
 import { taskOrigin, agentOrigin } from './message-origin';
 import type { MessageOrigin } from './message-origin';
+import { appendTracePage, charCount, traceContent, toolResult, toolRequests, type TracePage } from './trace-format';
 import './run-trace.css';
 
 type Entry = {
@@ -16,31 +17,53 @@ type Trace = {
   run: { status: string; phase?: string; error?: string; error_code?: string };
   entries: Entry[]; total: number; next_after: number; has_more: boolean;
 };
-type Page = { content: string; offset: number; total_chars: number };
-const charCount = (value: string) => Array.from(value).length;
+type Page = TracePage;
 
 function TraceField({ base, entry, field, plain = false }: { base: string; entry: Entry; field: 'content' | 'reasoning' | 'tool_calls'; plain?: boolean }) {
   const { t } = useI18n();
-  const [extra, setExtra] = useState('');
+  const [loaded, setLoaded] = useState({ scope: '', text: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  // Streaming previews are cumulative. If their prefix grows, discard a prior
-  // extension rather than duplicating text at the old preview boundary.
-  useEffect(() => { setExtra(''); }, [entry[field], base, field]);
-  const content = entry[field] + extra;
+  const scope = `${base}/${entry.id}/${field}`;
+  const pending = useRef<symbol | null>(null);
+  const latest = useRef({ scope, preview: entry[field] });
+  latest.current = { scope, preview: entry[field] };
+  const content = traceContent(entry[field], loaded.scope === scope ? loaded.text : '');
   const total = entry[`${field}_chars`];
+  useEffect(() => {
+    pending.current = null; setLoading(false); setError('');
+    return () => { pending.current = null; };
+  }, [scope]);
   async function more() {
+    if (pending.current) return;
+    const ticket = Symbol(); pending.current = ticket;
     setLoading(true); setError('');
     try {
       const page = await api<Page>(`${base}/${entry.id}?field=${field}&offset=${charCount(content)}&limit=12000`);
-      setExtra(old => old + page.content);
-    } catch (error) { setError((error as Error).message); }
-    finally { setLoading(false); }
+      if (pending.current !== ticket || latest.current.scope !== scope) return;
+      const merged = appendTracePage(traceContent(latest.current.preview, content), page);
+      if (merged === undefined) setError(t('trace.contentChanged'));
+      else setLoaded({ scope, text: merged });
+    } catch (error) { if (pending.current === ticket) setError((error as Error).message); }
+    finally { if (pending.current === ticket) { pending.current = null; setLoading(false); } }
   }
   return <div className="trace-field">
     {plain ? <pre>{content}</pre> : <MarkdownContent content={content} />}
     {charCount(content) < total && <button className="trace-link" disabled={loading} onClick={() => void more()}>{t(loading ? 'wait' : 'trace.more')}</button>}
     {error && <p className="trace-error" role="alert">{error}</p>}
+  </div>;
+}
+
+function ToolOutput({ base, entry }: { base: string; entry: Entry }) {
+  const { t } = useI18n();
+  const result = toolResult(entry.content, entry.status);
+  const label = result.outcome === 'failed' ? 'trace.operationFailed' : result.outcome === 'uncertain' ? 'trace.outcomeUnknown'
+    : result.outcome === 'cancelled' ? 'cancelled' : 'trace.resultReceived';
+  return <div className="trace-result" data-outcome={result.outcome}>
+    <p className="trace-result-summary"><span>{t(label)}</span>{result.exitCode !== undefined && <span>{t('trace.exitCode', { code: result.exitCode })}</span>}</p>
+    {result.message && <p className="trace-result-message" dir="auto">{result.message}</p>}
+    {result.output && <pre className="trace-result-preview" dir="auto">{result.output}</pre>}
+    <details className="trace-original"><summary>{t('trace.details')}</summary><TraceField base={base} entry={entry} field="content" plain /></details>
   </div>;
 }
 
@@ -81,8 +104,9 @@ export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin
   const [error, setError] = useState('');
   const refresh = useRef<((next?: boolean) => void) | null>(null);
   const base = `/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/trace`;
-  const live = phase === 'thinking' || phase === 'executing' || phase === 'responding';
   const state = status || trace?.run.status;
+  const live = (phase === 'thinking' || phase === 'executing' || phase === 'responding')
+    && !['complete', 'failed', 'cancelled', 'interrupted', 'waiting_user', 'waiting_agents'].includes(state || '');
   const stateLabel = state === 'complete' ? 'trace.done' : state === 'failed' ? 'trace.failed'
     : state === 'queued' ? 'queued' : state === 'waiting_user' ? 'status.waiting' : state === 'waiting_agents' ? 'agents.waiting'
     : state === 'cancelled' ? 'cancelled' : state === 'interrupted' ? 'stopped' : undefined;
@@ -144,15 +168,15 @@ export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin
       {origin?.kind === 'task' ? <><span className="task-trace-kind">{t(origin.trigger === 'time' ? 'trace.scheduled' : 'trace.condition')}</span><span className="task-trace-title" dir="auto">{origin.title}</span></>
         : label || origin?.kind === 'agent_task' ? <span className="task-trace-title" dir="auto">{label || (origin?.kind === 'agent_task' ? origin.title : '')}</span> : t('trace.title')}
       {live && <span className="trace-live">{t('trace.live')}</span>}
-      {(origin || label) && !live && stateLabel && <span className="trace-state">{t(stateLabel)}</span>}
+      {!live && stateLabel && (origin || label || ['failed', 'cancelled', 'interrupted'].includes(state || '')) && <span className="trace-state">{t(stateLabel)}</span>}
     </summary>
     {open && <div className="trace-timeline">
       {origin?.kind === 'task' && <p className="trace-source">{t('trace.occurrence', { number: origin.occurrence })}</p>}
       {trace?.entries.map((entry, index) => <article className={`trace-entry trace-${entry.role}`} key={entry.id}>
-        <header><span>{t('trace.step', { number: index + 1 })}</span><span>{t(taskOrigin(entry) ? (taskOrigin(entry)!.trigger === 'time' ? 'trace.scheduled' : 'trace.condition') : agentOrigin(entry) ? 'agents.reference' : entry.role === 'user' ? 'trace.user' : entry.role === 'tool' ? 'trace.output' : entry.reasoning ? 'trace.thinking' : 'trace.reply')}</span>{entry.status !== 'complete' && <span>{t(entry.status === 'streaming' ? 'trace.live' : entry.status === 'queued' ? 'queued' : entry.status === 'cancelled' ? 'cancelled' : 'stopped')}</span>}</header>
+        <header><span>{t('trace.step', { number: index + 1 })}</span><span>{t(taskOrigin(entry) ? (taskOrigin(entry)!.trigger === 'time' ? 'trace.scheduled' : 'trace.condition') : agentOrigin(entry) ? 'agents.reference' : entry.role === 'user' ? 'trace.user' : entry.role === 'tool' ? 'trace.output' : entry.reasoning ? 'trace.thinking' : 'trace.reply')}</span>{entry.status !== 'complete' && <span>{t(entry.status === 'streaming' ? 'trace.live' : entry.status === 'queued' ? 'queued' : entry.status === 'failed' ? 'trace.failed' : entry.status === 'cancelled' ? 'cancelled' : 'stopped')}</span>}</header>
         {!!entry.reasoning && <section><h4>{t('trace.thinking')}</h4><TraceField base={base} entry={entry} field="reasoning" /></section>}
-        {!!entry.content && <section>{entry.role === 'assistant' && !!entry.reasoning && <h4>{t('trace.reply')}</h4>}<TraceField base={base} entry={entry} field="content" plain={entry.role === 'tool'} /></section>}
-        {!!entry.tool_calls && <section><h4>{t('trace.tools')}</h4><TraceField base={base} entry={entry} field="tool_calls" plain /></section>}
+        {!!entry.content && <section>{entry.role === 'assistant' && !!entry.reasoning && <h4>{t('trace.reply')}</h4>}{entry.role === 'tool' ? <ToolOutput base={base} entry={entry} /> : <TraceField base={base} entry={entry} field="content" />}</section>}
+        {!!entry.tool_calls && <section><details className="trace-original trace-requests"><summary>{t('trace.tools')}{toolRequests(entry.tool_calls).map((name, index) => <span className="trace-tool-name" key={index} dir="auto">{name}</span>)}</summary><TraceField base={base} entry={entry} field="tool_calls" plain /></details></section>}
         {entry.artifact_id && <OriginalOutput base={base} entry={entry} />}
       </article>)}
       {trace?.run.error_code && <p className="trace-error" role="status">{trace.run.error || errorMessage(trace.run.error_code)} <code>{trace.run.error_code}</code></p>}

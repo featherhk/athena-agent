@@ -38,8 +38,9 @@ export function arrangePanels(components: Component[], bounds: SurfaceBounds, rt
   // The most recently positioned surface keeps the requested place first.
   const ordered = [...components].sort((a, b) => (b.view_updated_at || '').localeCompare(a.view_updated_at || ''));
   for (const component of ordered) {
-    if (bounds.width < 876 || bounds.height < 220) { result[component.id] = null; continue; }
     const manualPosition = component.view?.x !== undefined || component.view?.y !== undefined;
+    // Automatic panels yield on phones; a deliberate placement keeps its meaning.
+    if ((!manualPosition && (bounds.width < 876 || bounds.height < 220)) || bounds.width < 240 || bounds.height < 160) { result[component.id] = null; continue; }
     const reading = !manualPosition ? bounds.reading : undefined;
     const freeWidth = reading ? Math.max(reading.x - bounds.x - 12, bounds.x + bounds.width - reading.x - reading.width - 12) : 320;
     if (reading && freeWidth < 240) { result[component.id] = null; continue; }

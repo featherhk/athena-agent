@@ -26,7 +26,7 @@ function browser() {
     connect() {}
     disconnect() {}
   }
-  Object.defineProperty(globalThis, 'window', { configurable: true, value: { addEventListener() {}, removeEventListener() {} } });
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: new EventTarget() });
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: { getUserMedia: async () => { permissionCalls++; return media; } } } });
   globalThis.AudioContext = Context; globalThis.AudioWorkletNode = Capture;
   return {
@@ -98,4 +98,22 @@ test('a late transcription after hangup cannot submit into the conversation', as
     call.end(); finish(Response.json({ text: 'Too late' })); await tick(); await tick();
     assert.equal(env.tracks[0].stopped, true);
   } finally { call?.end(); env.restore(); }
+});
+
+test('native background ends microphone acquisition without cancelling server work', async () => {
+  const env = browser(), states = []; let allow, interruptions = 0;
+  globalThis.fetch = async () => Response.json({available:true});
+  navigator.mediaDevices.getUserMedia = () => new Promise(resolve => { allow=resolve; });
+  const call = new VoiceSession('sid','en',{state:value=>states.push(value),error:code=>assert.fail(code),transcript(){},submit:async()=>assert.fail('background submission'),interrupt:async()=>{interruptions++;}});
+  try {
+    const pending=call.start([]); await tick();
+    window.dispatchEvent(new Event('athena:background'));
+    allow(env.media); await pending;
+    assert.equal(env.tracks[0].stopped,true);
+    assert.equal(states.at(-1),'ended');
+    assert.equal(interruptions,0);
+    const count=states.length;
+    window.dispatchEvent(new Event('athena:background'));
+    assert.equal(states.length,count,'the ended call detached its native lifecycle listener');
+  } finally {call.end();env.restore();}
 });
