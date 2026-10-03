@@ -2,7 +2,7 @@
 
 Purpose: Athena should route a question about work in progress, pending help or unread results to the durable activity projection. Reading every conversation to reconstruct that state adds cost and can mistake an old question for a current request.
 
-One earlier natural-language trial used nine provider requests and repeated session listing/reading before navigation. That is a diagnostic example, not a measured general failure rate or proof that this skill change improves model quality. The cases below are acceptance rules; they have not been run against a model for this change.
+One earlier natural-language trial used nine provider requests and repeated session listing/reading before navigation. A fresh Chinese pending-question trial now used activity first and obtained an applied navigation receipt in seven requests; the [release receipt](releases/2026-10-04-source-window.md) records the route, cost and remaining calls. These are diagnostic examples, not a measured general failure rate or broad model-quality improvement. The other cases below have not yet been run against a model for this change.
 
 ## Isolated cases
 

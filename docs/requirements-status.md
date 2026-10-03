@@ -143,13 +143,13 @@ The frontend now reports bounded, authenticated semantic observations; runtime a
 
 Background work, requests for help and unread outcomes now remain reachable across conversations and inside file preview. A compact control appears only when relevant; it never navigates automatically or replaces a draft. The universal runtime exposes the same account-scoped discovery, acknowledgement and conversation stop. Durable exact-state read receipts prevent a stale acknowledgement from hiding a newer outcome. See [task continuity](task-continuity.md) for the contract and isolated real-engine browser acceptance, and the [published web/build 8 receipt](releases/2026-10-04-continuity.md) for real-model navigation/help resumption, exact charges and remaining discovery inefficiency. This is in-app continuity, not OS notification delivery or shared files across execution nodes.
 
-## Source-window affinity — current checkout
+## Source-window affinity — 2026-10-04
 
 Messages now wait for the target conversation to commit in the frontend and for its observation to be accepted before binding a source client to the run. Default UI actions use that source after navigation; a lost, stale or invalid source produces an error instead of operating another window. Inputs without source metadata retain the unique-foreground-client fallback. Explicit client targeting remains available after inspecting the current client state. The source summary is exposed through runtime discovery without rewriting the stable prompt prefix.
 
 A help reply resumes the original run with its original source, even when answered in another window. Forks, scheduled inputs and new child runs do not inherit that binding. Reloading a document restores its tab-local conversation selection and drafts, but creates a new client identity; continuing an older run's UI interaction then requires a verified explicit target. A fresh tab may seed its initial selection from shared storage, while existing tabs keep their own place. This is browser-local continuity, not cross-device conversation or file synchronization.
 
-These changes are implemented in the checkout. They do not certify the currently published web image or DMG; record artifact-specific validation and deployment in a release receipt. See [frontend state](frontend-state.md) for targeting and recovery boundaries.
+The web runtime and Mac preview build 9 now share the same tested source. The [release receipt](releases/2026-10-04-source-window.md) records source-window and fault-recovery acceptance, migration preservation, real-model activity discovery, actual charges and exact artifact hashes. See [frontend state](frontend-state.md) for targeting and recovery boundaries.
 
 ## Remaining release gaps
 
