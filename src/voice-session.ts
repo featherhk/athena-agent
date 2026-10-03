@@ -38,6 +38,7 @@ export class VoiceSession {
   private inputQueue: Blob[] = [];
   private speechEpoch = 0;
   private speaking = false;
+  private outputPlaying = false;
   private transcribing = false;
   private speechRequest?: AbortController;
   private inputRequest?: AbortController;
@@ -96,7 +97,7 @@ export class VoiceSession {
     if (this.ended || this.muted) return;
     const milliseconds = samples.length / this.context.sampleRate * 1000;
     let energy = 0; for (const sample of samples) energy += sample * sample;
-    const event = this.detector.update(Math.sqrt(energy / samples.length), milliseconds, this.speaking);
+    const event = this.detector.update(Math.sqrt(energy / samples.length), milliseconds, this.outputPlaying);
     if (this.recording) this.chunks.push(samples);
     else {
       this.pre.push(samples);
@@ -174,8 +175,14 @@ export class VoiceSession {
         const buffer = await this.context.decodeAudioData(await response.arrayBuffer());
         if (this.ended || epoch !== this.speechEpoch) return;
         const speaker = this.context.createBufferSource(); speaker.buffer = buffer; speaker.connect(this.context.destination);
-        this.speaker = speaker;
-        await new Promise<void>(resolve => { speaker.onended = () => { speaker.disconnect(); resolve(); }; speaker.start(); });
+        this.speaker = speaker; this.outputPlaying = true;
+        await new Promise<void>(resolve => {
+          speaker.onended = () => {
+            if (this.speaker === speaker) this.outputPlaying = false;
+            speaker.disconnect(); resolve();
+          };
+          speaker.start();
+        });
         if (this.speaker === speaker) this.speaker = undefined;
       }
     } catch (error) {
@@ -187,6 +194,7 @@ export class VoiceSession {
 
   private cancelSpeech() {
     this.speechEpoch++; this.outputQueue = []; this.speechRequest?.abort(); this.speechRequest = undefined;
+    this.outputPlaying = false;
     try { this.speaker?.stop(); } catch { /* Already ended. */ }
     this.speaker = undefined; this.speaking = false;
   }

@@ -19,6 +19,8 @@ Stop control stops both the task and the call.
 - Browser AudioWorklet captures mono PCM, with echo cancellation requested from
   the browser. Capture uses a small preroll, adaptive energy threshold and a
   750 ms end-of-turn pause. Utterances are bounded to about 29 seconds.
+  The higher echo threshold applies only while a source is actually playing;
+  waiting for synthesis/download/decode must not suppress a quiet interruption.
 - The VAD is an initial energy detector, not a learned semantic endpointing model.
   Background speech, loud speaker echo and very quiet speech need real-device
   acceptance. Headphones reduce feedback during testing. This is a replaceable
@@ -72,6 +74,12 @@ For compatible providers, set `ATHENA_AUDIO_PROVIDER=openai`, an HTTPS
 `ATHENA_AUDIO_STT_MODEL`, `ATHENA_AUDIO_TTS_MODEL`, `ATHENA_AUDIO_VOICE` values.
 Defaults are `gpt-4o-mini-transcribe`, `gpt-4o-mini-tts`, and `coral`; this is a
 protocol default, not an assumption that the account can use those models.
+As checked on 2026-10-04, OpenAI has announced retirement of these transcription
+and speech models in February and January 2027 respectively. These compatibility
+defaults are not a recommendation for new provisioning; see the
+[official deprecation schedule](https://developers.openai.com/api/docs/deprecations).
+Replacing them with a Realtime model requires a protocol adapter, not merely a
+different model ID on the existing `/audio/speech` request.
 
 The browser only calls authenticated same-origin Athena endpoints:
 
@@ -134,3 +142,103 @@ Official protocol references:
 - [Qwen ASR](https://help.aliyun.com/zh/model-studio/qwen-asr-api-reference)
 - [Qwen TTS](https://help.aliyun.com/zh/model-studio/qwen-tts-api)
 - [Alibaba model pricing](https://help.aliyun.com/zh/model-studio/model-pricing)
+
+## Low-cost call direction (2026-10-04)
+
+The first target is a hands-free call inside Athena. Dialling telephone numbers
+would additionally require a telephony/SIP provider and separate carrier charges.
+The direction below is a selection and acceptance plan, not an enabled service.
+
+Use local speech detection, streaming cloud recognition, the existing Athena
+session actor, and streaming synthesis. Keep the text model independent of the
+speech providers. A second conversational agent must not duplicate tool execution,
+memory or history just to give Athena a voice.
+
+| Layer | Initial candidate | Why / boundary |
+| --- | --- | --- |
+| Acoustic speech detection | [Silero VAD](https://github.com/snakers4/silero-vad), client-side ONNX | MIT; no per-minute API charge. Load pinned same-origin assets on demand; benchmark Safari/WKWebView CPU, battery and start-up cost before replacing the energy detector. |
+| End of turn | Bounded silence policy first; evaluate [Smart Turn v3.2](https://github.com/pipecat-ai/smart-turn) | VAD detects speech, not whether the speaker has finished. Smart Turn is a separate BSD-licensed audio turn detector with multilingual support; evaluate it against hesitations and sentence continuations. |
+| Recognition | `qwen3-asr-flash-realtime` | A candidate for partial transcripts while the user speaks; the existing HTTP ASR adapter is not this WebSocket adapter. |
+| Synthesis | `qwen3-tts-flash-realtime` | A candidate for text-in/audio-out streaming; Arabic still needs a separate verified voice route. |
+| Reasoning and actions | Existing configured Athena model | Same session, task state, user-help and credit enforcement as text. |
+
+Model processing should not pull PyTorch/ONNX native dependencies into the
+free-threaded Python core. Prefer browser inference for small detectors; an
+isolated service is an option if measured client constraints require it. Do not
+purchase an always-on GPU merely to avoid inexpensive audio API calls at preview
+traffic levels.
+
+### Cost assumptions
+
+[Alibaba's published prices](https://help.aliyun.com/zh/model-studio/model-pricing),
+checked 2026-10-04, excluding temporary free quotas:
+
+| Realtime model | Beijing | Singapore |
+| --- | --- | --- |
+| `qwen3-asr-flash-realtime` | CNY 0.00033 per input audio second | CNY 0.00066 per input audio second |
+| `qwen3-tts-flash-realtime` | CNY 1 per 10,000 billable characters | CNY 0.954101 per 10,000 billable characters |
+
+For an illustrative 60-minute Chinese conversation with 30 minutes of uploaded
+audio and 6,000 generated Chinese characters (200 per spoken minute), the 12,000
+billable TTS characters produce totals of about **CNY 1.79 / 2.33** respectively.
+Chinese characters count twice under this tariff. If 60 minutes of audio are
+uploaded, the totals become **CNY 2.39 / 3.52**. Punctuation, padding, rounding and
+generated-but-interrupted speech can add cost. These estimates exclude the text
+model, transport, taxes and hosting. Do not equate wall-clock call time, voiced
+time and provider-billed input duration, or silently convert these prices into
+Athena's USD credit tariff.
+
+[Groq Whisper Large v3 Turbo](https://console.groq.com/docs/speech-to-text) is an
+inexpensive alternative at USD 0.04 per audio hour, but each request is billed for
+at least ten seconds. It is a file-transcription option, not a drop-in bidirectional
+streaming ASR service; network latency and many short turns can outweigh the unit
+price advantage. Keep it as a candidate for dictation rather than choosing it
+solely from its hourly headline price.
+
+### Required implementation and acceptance
+
+The present code still has one shared audio provider/key, an RMS-only detector,
+whole-utterance uploads, and buffered synthesis at both gateway and client.
+`httpx.stream` alone does not make playback streaming: the browser currently
+waits for a complete response before decoding it. The realtime model names above
+must not be inserted into the existing HTTP configuration and advertised as done.
+
+Implement and verify in this order:
+
+1. Give recognition and synthesis independent operator profiles, capabilities and
+   tariffs. Validate language/voice compatibility before acquiring the microphone.
+2. Add PCM speech-detector and turn-detector interfaces. Preserve preroll, bounded
+   capture and device cleanup. Pin local assets; fail visibly or use the documented
+   fallback if loading fails. Measure false interruptions, not just speed.
+3. Stream ASR partials as provisional text; only a committed turn can enqueue an
+   action. Stream short TTS buffers with backpressure and a per-turn cancellation
+   epoch. Never play stale audio after interruption, session navigation or hang-up.
+4. Distinguish suspending playback from cancelling a task. Evaluate soft ducking
+   for suspected speech and confirm a new user turn before interrupting execution;
+   the explicit Stop control remains immediate. Track which response audio was
+   actually played so future context need not assume the user heard its tail.
+5. Preserve a recognized utterance when submission fails, scoped to its owner and
+   session. Distinguish definitely-unsent input from an unknown server outcome;
+   neither may cause an automatic duplicate action.
+6. Record content-free latency and billed-unit metrics. Measure speech end to
+   first audible response, local interruption delay, false cutoff rate and cost
+   per call. Initial targets are p95 interruption within 250 ms and first response
+   within 1.5 seconds for a short no-tool reply on a healthy network; these are
+   targets, not current results. Long tasks need truthful progress and background
+   continuity instead of fabricated quick answers.
+
+Release gates include a real 20-turn provider-backed call on Safari/WKWebView and
+mobile clients, low-volume interruption during synthesis and playback, speaker
+echo, pauses mid-sentence, mixed-language speech, permission denial, muted input,
+background/lock transitions, disconnect/reconnect, insufficient credit and
+hang-up during each stage. Check the durable transcript and ledger alongside what
+was heard. A browser tab that ends microphone capture in the background is not
+equivalent to a native phone call that continues while the device is locked;
+native audio-session/background support remains separate work.
+
+The 2026-10-04 playback-threshold fix passed 601 Python tests (7 opt-in tests
+skipped), 148 frontend tests, TypeScript and the production build. Python 3.14.8T
+reports the GIL disabled after imports. New synthetic-audio regressions cover
+quiet interruption while synthesis is pending, suppression of weak playback
+echo, natural completion, cancelled late audio and hang-up. This fix is source
+validation; it neither enables a cloud audio provider nor certifies a real call.

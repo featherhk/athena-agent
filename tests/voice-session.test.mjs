@@ -100,6 +100,80 @@ test('a late transcription after hangup cannot submit into the conversation', as
   } finally { call?.end(); env.restore(); }
 });
 
+test('quiet speech during synthesis interrupts without playing a late audio response', async () => {
+  const env = browser(), states = []; let finishSpeech, speechSignal, interrupts = 0, call;
+  globalThis.fetch = async (url, options) => {
+    if (url === '/api/voice') return Response.json({ available: true });
+    assert.ok(url.endsWith('/voice/speech'));
+    speechSignal = options.signal;
+    // Model an upstream reply arriving despite a locally aborted request.
+    return new Promise(resolve => { finishSpeech = resolve; });
+  };
+  try {
+    call = new VoiceSession('sid', 'en', { state: value => states.push(value), error: code => assert.fail(code), transcript() {}, submit: async () => assert.fail('utterance has not ended'), interrupt: async () => { interrupts++; } });
+    await call.start([]);
+    call.update([{ id: 'reply', run_id: 'run1', role: 'assistant', content: 'Here is your answer.', status: 'streaming' }], true);
+    await tick();
+    assert.ok(finishSpeech);
+    assert.equal(env.speaker, undefined, 'synthesis is pending, so there is no speaker echo');
+    env.samples(.03, 2); await tick();
+    assert.equal(interrupts, 1);
+    assert.equal(speechSignal.aborted, true);
+    assert.equal(states.at(-1), 'hearing');
+    finishSpeech(new Response(new Uint8Array([1, 2, 3]))); await tick(); await tick();
+    assert.equal(env.speaker, undefined, 'cancelled synthesis must never start playback');
+    call.end();
+    assert.equal(env.tracks[0].stopped, true);
+    assert.equal(states.at(-1), 'ended');
+  } finally { call?.end(); env.restore(); }
+});
+
+test('weak echo is suppressed only while audio plays, and natural completion clears the threshold', async () => {
+  const env = browser(); let interrupts = 0, call;
+  globalThis.fetch = async url => url === '/api/voice' ? Response.json({ available: true }) : new Response(new Uint8Array([1, 2, 3]));
+  try {
+    call = new VoiceSession('sid', 'en', { state() {}, error: code => assert.fail(code), transcript() {}, submit: async () => assert.fail('utterance has not ended'), interrupt: async () => { interrupts++; } });
+    await call.start([]);
+    call.update([{ id: 'reply', run_id: 'run1', role: 'assistant', content: 'A reply.', status: 'streaming' }], true);
+    await tick(); await tick();
+    const speaker = env.speaker;
+    assert.ok(speaker);
+    env.samples(.03, 5); await tick();
+    assert.equal(interrupts, 0, 'weak speaker echo must not interrupt actual playback');
+    assert.equal(speaker.stopped, false);
+    speaker.onended(); await tick();
+    env.samples(.03, 2); await tick();
+    assert.equal(interrupts, 1, 'the same quiet voice can interrupt thinking after playback ends');
+  } finally { call?.end(); env.restore(); }
+});
+
+test('cancelling playback clears the echo threshold for the next utterance and hangup is final', async () => {
+  const env = browser(), submissions = [], states = []; let interrupts = 0, call;
+  globalThis.fetch = async url => url === '/api/voice' ? Response.json({ available: true })
+    : url.includes('/transcribe') ? Response.json({ text: 'Another question' }) : new Response(new Uint8Array([1, 2, 3]));
+  try {
+    call = new VoiceSession('sid', 'en', { state: value => states.push(value), error: code => assert.fail(code), transcript() {}, submit: async text => submissions.push(text), interrupt: async () => { interrupts++; } });
+    await call.start([]);
+    call.update([{ id: 'reply', run_id: 'run1', role: 'assistant', content: 'A reply.', status: 'streaming' }], true);
+    await tick(); await tick();
+    const speaker = env.speaker;
+    env.samples(.2, 2); await tick();
+    assert.equal(speaker.stopped, true);
+    assert.equal(interrupts, 1);
+    env.samples(0, 8); await tick(); await tick();
+    assert.deepEqual(submissions, ['Another question']);
+    env.samples(.03, 2); await tick();
+    assert.equal(interrupts, 2, 'cancelled playback must not leave the raised threshold active');
+    call.end();
+    const stateCount = states.length;
+    env.samples(.2, 20); await tick();
+    assert.equal(interrupts, 2);
+    assert.equal(states.length, stateCount);
+    assert.equal(states.at(-1), 'ended');
+    assert.equal(env.tracks[0].stopped, true);
+  } finally { call?.end(); env.restore(); }
+});
+
 test('native background ends microphone acquisition without cancelling server work', async () => {
   const env = browser(), states = []; let allow, interruptions = 0;
   globalThis.fetch = async () => Response.json({available:true});
