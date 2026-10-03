@@ -137,3 +137,22 @@ CREATE TABLE IF NOT EXISTS user_help (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_help_open_session
  ON user_help(session_id) WHERE status IN ('preparing','pending');
+CREATE TABLE IF NOT EXISTS agent_jobs (
+ id TEXT PRIMARY KEY, parent_session_id TEXT NOT NULL REFERENCES sessions(id),
+ parent_run_id TEXT NOT NULL REFERENCES runs(id),
+ child_session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),
+ child_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+ name TEXT NOT NULL, title TEXT NOT NULL, definition TEXT NOT NULL,
+ profile_id TEXT NOT NULL, profile_snapshot TEXT NOT NULL, depth INTEGER NOT NULL,
+ cancel_requested INTEGER NOT NULL DEFAULT 0, observed_at TEXT, created_at TEXT NOT NULL,
+ UNIQUE(parent_run_id,name)
+);
+CREATE INDEX IF NOT EXISTS agent_jobs_parent ON agent_jobs(parent_session_id,parent_run_id);
+CREATE TABLE IF NOT EXISTS agent_waits (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+ run_id TEXT NOT NULL REFERENCES runs(id), targets TEXT NOT NULL, mode TEXT NOT NULL,
+ status TEXT NOT NULL, result_message_id TEXT REFERENCES messages(id),
+ created_at TEXT NOT NULL, finished_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_waits_pending ON agent_waits(run_id)
+ WHERE status IN ('preparing','pending');

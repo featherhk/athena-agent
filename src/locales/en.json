@@ -224,5 +224,12 @@
   "surface.overlay": "Animation layer",
   "surface.fullscreen": "Full workspace",
   "surface.presence": "Athena symbol",
-  "error.componentChanged": "This surface changed in another window. Its latest layout has been restored. Please try again."
+  "error.componentChanged": "This surface changed in another window. Its latest layout has been restored. Please try again.",
+  "agents.progress": "Delegated work · {done}/{count} complete",
+  "agents.waiting": "Waiting for delegated results",
+  "agents.reference": "Delegated work",
+  "agents.results": "Results received · {count}",
+  "agents.unfinished": "{count} unfinished",
+  "agents.needsHelp": "Needs your help",
+  "error.agent_limit": "Collect the current results before delegating more work."
 }

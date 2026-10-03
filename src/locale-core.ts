@@ -24,6 +24,7 @@ export function resolveLocale(preferences: readonly string[]): Locale {
 }
 
 export const errorKeys: Record<string, string> = {
+  agent_limit: 'error.agent_limit',
   component_changed: 'error.componentChanged',
   account_balance_insufficient: 'error.credit', cloud_unavailable: 'error.service',
   not_found: 'error.notFound', invalid_answer: 'error.helpAnswer', help_resolved: 'error.helpClosed',

@@ -16,6 +16,8 @@ Baseline: [official Codex developer commands](https://learn.chatgpt.com/docs/dev
 | Skills/plugins | What can you change? Add a new capability and undo it | Discovery distinguishes active from merely installed; versioned change and restoration have visible effects |
 | Context inspection | Find what I said in another conversation | Same-account ownership, bounded results, source session/message IDs and continuation cursor |
 | Context editing | Stop including that completed attempt; restore it later | Whole-run exclusion/restoration; original UI history remains; tool pairs cannot be split |
+| Delegate | Check two independent parts and combine the results | Separate owned child runs; durable wait without model polling; verified results and files return to the parent |
+| Cancel delegated work | Stop this task, including its subtasks | Stop propagates through the branch; cancelled waits do not wake; partial output remains recoverable |
 
 Status, compaction and model tests have deterministic harness coverage. New/resume/fork flows also require browser-level evidence; a returned ID alone does not demonstrate that navigation happened. See the current [acceptance record](acceptance.md) for observed navigation and rendering checks; the earlier localhost permission block is no longer a current limitation.
 
@@ -27,6 +29,6 @@ Expand the corpus with ambiguous wording, unsupported capabilities, empty data, 
 
 ## Explicit gaps, not passes
 
-Codex-specific Git review/diff and terminal conveniences need task-specific equivalents, not obligatory default buttons. Approval commands conflict with the prototype's explicitly chosen no-approval workflow and are not silently introduced. Cloud execution, goals, subagents, connector lifecycle and full service-provider replacement remain separate milestones. Missing features must be marked unsupported or pending; explaining them is not a successful execution.
+Codex-specific Git review/diff and terminal conveniences need task-specific equivalents, not obligatory default buttons. Approval commands conflict with the prototype's explicitly chosen no-approval workflow and are not silently introduced. Cross-node execution, goals, connector lifecycle and full service-provider replacement remain separate milestones. Bounded local delegation is implemented; running-child follow-up messages and broader delegation quality are not yet verified. Missing features must be marked unsupported or pending; explaining them is not a successful execution.
 
 The live evaluation script covers a small, real-provider intent sample. Unit/integration tests cover deterministic mechanics. Neither justifies claiming arbitrary task success or an already-complete self-evolving harness.

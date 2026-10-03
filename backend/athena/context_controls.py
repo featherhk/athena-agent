@@ -122,11 +122,12 @@ class ContextControls:
             raise UserError('invalid_input', 'Conversation search is limited to 200 characters.')
         pattern = '%' + query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         def listing(db):
-            total = db.execute("SELECT COUNT(*) FROM sessions WHERE user_id=? AND title LIKE ? ESCAPE '\\'", (user_id, pattern)).fetchone()[0]
+            total = db.execute("SELECT COUNT(*) FROM sessions s WHERE user_id=? AND title LIKE ? ESCAPE '\\' AND NOT EXISTS(SELECT 1 FROM agent_jobs j WHERE j.child_session_id=s.id)", (user_id, pattern)).fetchone()[0]
             rows = [dict(row) for row in db.execute('''SELECT s.id,s.title,s.created_at,s.parent_id,
-                (SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','waiting_user')) AS pending,
+                (SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','waiting_user','waiting_agents')) AS pending,
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id=s.id) AS local_message_count
                 FROM sessions s WHERE s.user_id=? AND s.title LIKE ? ESCAPE '\\'
+                AND NOT EXISTS(SELECT 1 FROM agent_jobs j WHERE j.child_session_id=s.id)
                 ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?''', (user_id, pattern, limit, offset))]
             next_offset = min(offset + len(rows), total)
             return {'scope': 'own_account', 'sessions': rows, 'offset': offset, 'next_offset': next_offset,
@@ -139,7 +140,7 @@ class ContextControls:
         offset, limit = _page(args, 12000, 20000)
         def read(db):
             session = _owned(db, target, user_id)
-            history = apply_exclusions(db, target, Store._history(db, target))
+            history = Store._context_history(db, target)
             clips = {row['message_id']: row['content'] for row in db.execute('SELECT message_id,content FROM context_clips WHERE session_id=?', (target,))}
             total = sum(len(clips.get(row['id'], row['content'])) + 1 for row in history)
             end, cursor, messages = min(offset + limit, total), 0, []
@@ -152,8 +153,8 @@ class ContextControls:
                     messages.append({key: row[key] for key in ('id', 'seq', 'role', 'run_id', 'status')}
                                     | {'content': text[start:stop], 'content_offset': start, 'total_chars': len(text),
                                        'clipped': row['id'] in clips, 'original_chars': len(row['content'])})
-                    from .task_events import task_origin
-                    origin = task_origin(row.get('origin')) if row['role'] == 'user' else None
+                    from .task_events import message_origin
+                    origin = message_origin(row)
                     if origin:
                         messages[-1]['origin'] = origin
                     if len(messages) >= 100:
@@ -178,7 +179,7 @@ class ContextControls:
             if target_run not in {row['run_id'] for row in history}:
                 raise UserError('invalid_input', 'The run is not part of this conversation history.')
             run = db.execute('SELECT status FROM runs WHERE id=?', (target_run,)).fetchone()
-            if target_run == source_run_id or not run or run['status'] in {'running', 'queued', 'waiting_user'}:
+            if target_run == source_run_id or not run or run['status'] in {'running', 'queued', 'waiting_user', 'waiting_agents'}:
                 raise UserError('invalid_input', 'Active or queued runs cannot be excluded or restored.')
             previous = db.execute('SELECT version,excluded FROM context_exclusions WHERE session_id=? AND run_id=? ORDER BY version DESC LIMIT 1', (session_id, target_run)).fetchone()
             version = previous['version'] if previous else 0

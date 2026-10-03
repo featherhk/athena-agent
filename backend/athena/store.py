@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def now() -> str:
@@ -67,6 +67,7 @@ class Store:
                 ("messages", "context_note", "TEXT NOT NULL DEFAULT ''"),
                 ("messages", "help_reply", "TEXT"),
                 ("messages", "origin", "TEXT"),
+                ("messages", "context_after_seq", "INTEGER"),
                 ("requests", "tool_versions", "TEXT"),
                 ("events", "encoding", "TEXT NOT NULL DEFAULT 'json'"),
                 ("events", "base_seq", "INTEGER REFERENCES events(seq)"),
@@ -109,6 +110,8 @@ class Store:
             # Only a fully committed waiting transition is resumable. A crash while
             # preparing a question must not strand an invisible, unanswered form.
             db.execute("UPDATE user_help SET status='cancelled',resolved_at=? WHERE status='preparing'", (now(),))
+            from .agents import recover_agents
+            recover_agents(db)
         await self.call(recover)
 
     async def close(self):
@@ -168,12 +171,19 @@ class Store:
 
     async def claim(self, session_id):
         def claim(db):
-            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','waiting_user')", (session_id,)).fetchone():
+            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','waiting_user','waiting_agents')", (session_id,)).fetchone():
                 return None
             row = db.execute("SELECT id FROM runs WHERE session_id=? AND status='queued' ORDER BY rowid LIMIT 1", (session_id,)).fetchone()
             if not row:
                 return None
+            job = db.execute('SELECT j.cancel_requested,r.status FROM agent_jobs j JOIN runs r ON r.id=j.parent_run_id WHERE j.child_run_id=?', (row[0],)).fetchone()
+            if job and (job['cancel_requested'] or job['status'] not in ('running','queued','waiting_user','waiting_agents')):
+                return None
             db.execute("UPDATE runs SET status='running' WHERE id=?", (row[0],))
+            # A queued input has never entered the provider context. Admit it
+            # after all prior output, preserving raw chronology and old prefixes.
+            boundary = db.execute('SELECT COALESCE(MAX(seq),0) FROM messages').fetchone()[0]
+            db.execute("UPDATE messages SET context_after_seq=? WHERE run_id=? AND status='queued'", (boundary, row[0]))
             db.execute("UPDATE messages SET status='complete' WHERE run_id=? AND status='queued'", (row[0],))
             return row[0]
         return await self.call(claim)
@@ -196,7 +206,9 @@ class Store:
     @staticmethod
     def _context_history(db, session_id):
         from .context_controls import apply_exclusions
-        return apply_exclusions(db, session_id, Store._history(db, session_id))
+        history = apply_exclusions(db, session_id, Store._history(db, session_id))
+        return sorted(history, key=lambda row: (row['context_after_seq'] if row.get('context_after_seq') is not None else row['seq'],
+                                               int(row.get('context_after_seq') is not None), row['seq']))
 
     async def context_history(self, session_id):
         return await self.call(lambda db: self._context_history(db, session_id))
@@ -214,7 +226,7 @@ class Store:
 
     async def fork(self, session_id):
         def fork(db):
-            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','queued','waiting_user')", (session_id,)).fetchone():
+            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','queued','waiting_user','waiting_agents')", (session_id,)).fetchone():
                 raise UserError("fork_busy", "请先停下当前任务，再从这里另开对话。")
             history = self._history(db, session_id)
             original = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()

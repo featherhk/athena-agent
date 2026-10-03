@@ -43,10 +43,24 @@ async def evaluate(key_file, selected_cases=None):
             if setup:
                 await setup(session)
             run = await engine.submit(session, text)
-            await asyncio.wait_for(asyncio.gather(*engine.actors.values()), 180)
+            # A delegated wait releases its actor. Observe the durable parent
+            # outcome, including actors created after the original submission.
+            try:
+                async with asyncio.timeout(180):
+                    while True:
+                        status = (await store.rows('SELECT status FROM runs WHERE id=?', (run,)))[0]['status']
+                        if status not in ('queued', 'running', 'waiting_agents'):
+                            break
+                        await asyncio.sleep(.05)
+            except TimeoutError:
+                await engine.stop(session)
+                raise
             status = (await store.rows('SELECT status,error_code FROM runs WHERE id=?', (run,)))[0]
             passed = status['status'] == expected_status and await check(session)
-            requests = await store.rows('SELECT usage FROM requests WHERE run_id=?', (run,))
+            from athena.agents import usage_sessions
+            identifiers = await store.call(lambda db: usage_sessions(db, session))
+            requests = await store.rows('SELECT q.usage FROM requests q JOIN runs r ON r.id=q.run_id WHERE r.session_id IN ('
+                                        + ','.join('?' for _ in identifiers) + ')', identifiers)
             tokens = sum(json.loads(row['usage'] or '{}').get('total_tokens', 0) for row in requests)
             result = {'passed': passed, 'requests': len(requests), 'tokens': tokens, 'error_code': status['error_code']}
             if not passed:
@@ -158,6 +172,14 @@ async def evaluate(key_file, selected_cases=None):
         async def excluded(session):
             run, _ = prepared[session]
             return run not in {row['run_id'] for row in await store.context_history(session)} and run in {row['run_id'] for row in await store.history(session)}
+        async def delegated(session):
+            from athena.agents import branch
+            jobs = await store.call(lambda db: branch(db, session))
+            if len(jobs) != 2 or any(job['status'] != 'complete' for job in jobs):
+                return False
+            history = await store.history(session)
+            reply = next((row['content'] for row in reversed(history) if row['role'] == 'assistant' and row['content']), '')
+            return '630' in reply and '36' in reply and all(job['observed_at'] for job in jobs)
         try:
             cases = [
                 ('application-language', '把这个应用里的按钮、菜单文字都改成简体中文，直接设置就好。', language),
@@ -175,6 +197,7 @@ async def evaluate(key_file, selected_cases=None):
                 ('navigate-conversation', '把我现在打开的界面切换到“装修预算记录”那条会话，直接帮我切过去，不是只读取它的内容。', navigate_chat),
                 ('compact', '把当前模型上下文尽量压缩到约 1000 token，优先裁剪旧工具输出，保留可恢复原文；做完后告诉我是否达到目标。', compacted, prior_attempt),
                 ('context-edit', '把前面已经完成的那一整个“旧草稿”回合从你接下来使用的模型上下文排除，聊天记录和文件要保留。实际操作，不要只是说你会忽略。', excluded, prior_attempt),
+                ('delegation', '把下面两件小事分别交给两个独立子任务处理：一个核对 18 件材料、每件 35 元的总额；另一个把 96 分钟换成小时和分钟。等两者结束再合并给我，别上网，也不用创建界面。', delegated),
             ]
             report = {}
             for name, prompt, check, *setup in cases:
@@ -184,8 +207,6 @@ async def evaluate(key_file, selected_cases=None):
                     report[name] = await ask(prompt, check, setup[0] if setup else None)
                 except TimeoutError:
                     report[name] = {'passed': False, 'error_code': 'timeout'}
-                    for session in list(engine.active_runs):
-                        await engine.stop(session)
                 print(json.dumps({name: report[name]}, ensure_ascii=False), flush=True)
             if selected_cases is None or 'missing-information' in selected_cases:
                 report['missing-information'] = await ask('在页面的左上角显示今天的天气，实时更新。', missing_city, expected_status='waiting_user')

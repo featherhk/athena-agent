@@ -224,5 +224,12 @@
   "surface.overlay": "Camada de animação",
   "surface.fullscreen": "Área de trabalho completa",
   "surface.presence": "Símbolo de Athena",
-  "error.componentChanged": "Este espaço foi alterado. A disposição mais recente foi sincronizada. Tente novamente."
+  "error.componentChanged": "Este espaço foi alterado. A disposição mais recente foi sincronizada. Tente novamente.",
+  "agents.progress": "Tarefas delegadas · {done}/{count} concluídas",
+  "agents.waiting": "A aguardar os resultados delegados",
+  "agents.reference": "Trabalho delegado",
+  "agents.results": "Resultados recebidos · {count}",
+  "agents.unfinished": "{count} por concluir",
+  "agents.needsHelp": "Precisa da sua ajuda",
+  "error.agent_limit": "Consulte os resultados atuais antes de delegar mais tarefas."
 }

@@ -56,8 +56,8 @@ def public_message(message):
     result["attachments"] = [{k: v for k, v in item.items() if k != "workspace_path"} for item in json.loads(message.get("attachments") or "[]")]
     if message.get("help_reply"):
         result["help_reply"] = json.loads(message["help_reply"])
-    from .task_events import task_origin
-    origin = task_origin(message.get('origin')) if message.get('role') == 'user' else None
+    from .task_events import message_origin
+    origin = message_origin(message)
     if origin:
         result['origin'] = origin
     return result
@@ -217,10 +217,13 @@ def create_app(config: Config | None = None):
         extra = ""
         if session_id:
             await exists(session_id, request)
-            extra = " AND s.id=?"
-            args.append(session_id)
+            from .agents import usage_sessions
+            identifiers = await app.state.store.call(lambda db: usage_sessions(db, session_id))
+            extra = ' AND s.id IN (' + ','.join('?' for _ in identifiers) + ')'
+            args.extend(identifiers)
         rows = await app.state.store.rows("SELECT q.* FROM requests q JOIN runs r ON r.id=q.run_id JOIN sessions s ON s.id=r.session_id WHERE s.user_id=?" + extra + " ORDER BY q.created_at", tuple(args))
         result = summarize(rows)
+        result['includes_delegated_work'] = True
         result["service"] = await app.state.engine.models.diagnostic(session_id)
         return result
 
@@ -249,7 +252,7 @@ def create_app(config: Config | None = None):
 
     @app.get("/api/sessions")
     async def sessions(request: Request):
-        return await app.state.store.rows("SELECT s.*,(SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','waiting_user')) AS pending FROM sessions s WHERE s.user_id=? ORDER BY created_at DESC", (request.state.user["id"],))
+        return await app.state.store.rows("SELECT s.*,(SELECT COUNT(*) FROM runs r WHERE r.session_id=s.id AND r.status IN ('queued','running','waiting_user','waiting_agents')) AS pending FROM sessions s WHERE s.user_id=? AND NOT EXISTS(SELECT 1 FROM agent_jobs j WHERE j.child_session_id=s.id) ORDER BY created_at DESC", (request.state.user["id"],))
 
     @app.post("/api/sessions")
     async def new_session(request: Request):
@@ -260,6 +263,7 @@ def create_app(config: Config | None = None):
         await exists(session_id, request)
         def snapshot(db):
             from .component_views import active_components
+            from .agents import branch, public_job
             history = Store._history(db, session_id)
             return {
                 "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant")],
@@ -267,12 +271,18 @@ def create_app(config: Config | None = None):
                 "components": active_components(db, session_id),
                 "tasks": [dict(row) for row in db.execute("SELECT * FROM tasks WHERE session_id=? AND status!='done' ORDER BY due_at", (session_id,))],
                 "cursor": db.execute("SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=?", (session_id,)).fetchone()[0],
+                "agents": [public_job(job) for job in branch(db, session_id)],
             }
         result = await app.state.store.call(snapshot)
         result["account_action"] = await pending_account_action(app.state.store, request.state.user["id"])
         result["preferences"] = await read_preferences(app.state.store, request.state.user["id"])
         result["files"] = await list_session_files(app.state.store, config, request.state.user["id"], session_id)
         result["help_requests"] = await list_help(app.state.store, session_id, request.state.user["id"])
+        from .agents import delegated_help
+        result['help_requests'] += await delegated_help(app.state.store, session_id, request.state.user['id'])
+        from .files import list_files
+        for job in result['agents']:
+            result['files'] += [file for file in await list_files(app.state.store, request.state.user['id'], job['child_session_id']) if file['source'] == 'output']
         result["app_actions"] = await list_app_actions(app.state.store, session_id, request.state.user["id"])
         return result
 
@@ -280,7 +290,17 @@ def create_app(config: Config | None = None):
     async def answer_help(session_id: str, help_id: str, body: HelpAnswer, request: Request):
         await exists(session_id, request)
         attachments = await attachment_info(app.state.store, config, request.state.user["id"], session_id, body.file_ids)
-        return await app.state.engine.answer_help(session_id, request.state.user["id"], help_id, body.answers, attachments)
+        from .agents import help_target
+        target = await help_target(app.state.store, session_id, request.state.user['id'], help_id)
+        return await app.state.engine.answer_help(target, request.state.user["id"], help_id, body.answers, attachments)
+
+    @app.post('/api/sessions/{session_id}/agents/{agent_id}/cancel')
+    async def cancel_agent(session_id: str, agent_id: str, request: Request):
+        await exists(session_id, request)
+        result = await app.state.engine.tools.agents.operate(session_id, None, {'action': 'cancel', 'agent_id': agent_id})
+        await app.state.engine.reconcile_agents()
+        await app.state.engine.emit(session_id, 'agents_changed', {})
+        return result
 
     @app.post("/api/sessions/{session_id}/messages")
     async def submit(session_id: str, body: Input, request: Request):

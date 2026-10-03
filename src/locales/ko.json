@@ -224,5 +224,12 @@
   "surface.overlay": "애니메이션 레이어",
   "surface.fullscreen": "전체 작업 공간",
   "surface.presence": "Athena 심볼",
-  "error.componentChanged": "이 화면이 변경되어 최신 배치로 동기화했습니다. 다시 시도해 주세요."
+  "error.componentChanged": "이 화면이 변경되어 최신 배치로 동기화했습니다. 다시 시도해 주세요.",
+  "agents.progress": "분담 작업 · {done}/{count} 완료",
+  "agents.waiting": "분담 작업의 결과를 기다리는 중",
+  "agents.reference": "분담 작업 기록",
+  "agents.results": "결과 수신 · {count}개",
+  "agents.unfinished": "{count}개 미완료",
+  "agents.needsHelp": "도움이 필요해요",
+  "error.agent_limit": "현재 결과를 확인한 다음 추가 작업을 맡겨 주세요."
 }

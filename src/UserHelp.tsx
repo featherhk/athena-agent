@@ -22,6 +22,7 @@ export default function UserHelp({ request, select, answer, busy }: {
   const single = request.questions.length === 1;
   return <section className="user-help" aria-label={t('help.title')}>
     <p className="help-heading">{t('help.title')}</p>
+    {request.delegated_title && <p className="help-reason" dir="auto">{request.delegated_title}</p>}
     {request.reason && <p className="help-reason" dir="auto">{request.reason}</p>}
     <form onSubmit={event => { event.preventDefault(); if (!busy) void answer(answers); }}>
       {request.questions.map(question => <fieldset key={question.id} disabled={busy}>

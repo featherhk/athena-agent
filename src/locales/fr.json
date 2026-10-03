@@ -224,5 +224,12 @@
   "surface.overlay": "Couche d’animation",
   "surface.fullscreen": "Espace de travail complet",
   "surface.presence": "Symbole Athena",
-  "error.componentChanged": "Cet espace a changé. La dernière disposition a été synchronisée. Réessayez."
+  "error.componentChanged": "Cet espace a changé. La dernière disposition a été synchronisée. Réessayez.",
+  "agents.progress": "Tâches déléguées · {done}/{count} terminées",
+  "agents.waiting": "En attente des résultats délégués",
+  "agents.reference": "Travail délégué",
+  "agents.results": "Résultats reçus · {count}",
+  "agents.unfinished": "{count} non terminées",
+  "agents.needsHelp": "Votre aide est nécessaire",
+  "error.agent_limit": "Consultez les résultats en cours avant de déléguer davantage de tâches."
 }

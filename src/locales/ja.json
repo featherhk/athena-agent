@@ -224,5 +224,12 @@
   "surface.overlay": "アニメーション層",
   "surface.fullscreen": "全面の作業領域",
   "surface.presence": "Athena のシンボル",
-  "error.componentChanged": "この画面は変更されています。最新のレイアウトを同期しました。もう一度お試しください。"
+  "error.componentChanged": "この画面は変更されています。最新のレイアウトを同期しました。もう一度お試しください。",
+  "agents.progress": "分担作業 · {done}/{count} 完了",
+  "agents.waiting": "分担作業の結果を待っています",
+  "agents.reference": "分担作業の記録",
+  "agents.results": "結果を受信 · {count} 件",
+  "agents.unfinished": "{count} 件未完了",
+  "agents.needsHelp": "確認をお願いします",
+  "error.agent_limit": "現在の結果を確認してから、次の作業を依頼してください。"
 }

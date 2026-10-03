@@ -3,6 +3,14 @@ import json
 import re
 
 
+def message_origin(message):
+    message = dict(message)
+    if message.get('role') != 'user':
+        return None
+    from .agents import agent_origin
+    return task_origin(message.get('origin')) or agent_origin(message.get('origin'))
+
+
 def task_origin(raw):
     """Only recognized metadata can replace a user bubble or its speaker label."""
     if not raw:

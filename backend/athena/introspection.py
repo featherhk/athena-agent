@@ -214,11 +214,16 @@ class Introspection:
                 raise ValueError("Session not found")
             if scope == "account" and not session["user_id"]:
                 raise ValueError("Account usage requires an account")
-            clause, owner = ("r.session_id=?", session_id) if scope == "session" else ("s.user_id=?", session["user_id"])
+            from .agents import usage_sessions
+            if scope == 'session':
+                identifiers = usage_sessions(db, session_id)
+                clause, owners = 'r.session_id IN (' + ','.join('?' for _ in identifiers) + ')', identifiers
+            else:
+                clause, owners = 's.user_id=?', [session['user_id']]
             rows = [dict(row) for row in db.execute(
                 "SELECT q.* FROM requests q JOIN runs r ON r.id=q.run_id JOIN sessions s ON s.id=r.session_id WHERE "
                 + clause + " AND julianday(q.created_at)>=julianday(?) AND julianday(q.created_at)<=julianday(?) "
-                "ORDER BY julianday(q.created_at),q.rowid", (owner, start.isoformat(), end.isoformat()),
+                "ORDER BY julianday(q.created_at),q.rowid", (*owners, start.isoformat(), end.isoformat()),
             )]
             snapshot = self._snapshot(db, session_id, profile, epoch)
             return rows, snapshot["measured_request"]
@@ -226,7 +231,7 @@ class Introspection:
         rows, measured = await self.store.call(inspect)
         return {**summarize(rows), "window": {"scope": scope, "seconds": window_seconds,
                 "from": start.isoformat(), "to": end.isoformat(), "time_basis": "request_started_at"},
-                "usage_measurement": "provider_reported", "cost_measurement": "estimated_not_billed",
+                "usage_measurement": "provider_reported", "cost_measurement": "estimated_not_billed", "includes_delegated_work": True,
                 "last_context_from_request": _last_context(measured, profile)}
 
     async def context_status(self, session_id):

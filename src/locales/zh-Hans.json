@@ -224,5 +224,12 @@
   "surface.overlay": "动画层",
   "surface.fullscreen": "完整工作区",
   "surface.presence": "Athena 标志",
-  "error.componentChanged": "这个界面已发生变化，已同步最新布局，请重试。"
+  "error.componentChanged": "这个界面已发生变化，已同步最新布局，请重试。",
+  "agents.progress": "分工 · 已完成 {done}/{count}",
+  "agents.waiting": "正在等待分工结果",
+  "agents.reference": "分工记录",
+  "agents.results": "已收到 {count} 项分工结果",
+  "agents.unfinished": "{count} 项未完成",
+  "agents.needsHelp": "需要你的帮助",
+  "error.agent_limit": "请先收集已有结果，再分配更多任务。"
 }

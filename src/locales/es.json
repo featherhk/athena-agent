@@ -224,5 +224,12 @@
   "surface.overlay": "Capa de animación",
   "surface.fullscreen": "Área de trabajo completa",
   "surface.presence": "Símbolo de Athena",
-  "error.componentChanged": "Esta superficie ha cambiado. Se ha sincronizado el diseño más reciente. Inténtalo de nuevo."
+  "error.componentChanged": "Esta superficie ha cambiado. Se ha sincronizado el diseño más reciente. Inténtalo de nuevo.",
+  "agents.progress": "Tareas delegadas · {done}/{count} completadas",
+  "agents.waiting": "Esperando los resultados delegados",
+  "agents.reference": "Trabajo delegado",
+  "agents.results": "Resultados recibidos · {count}",
+  "agents.unfinished": "{count} sin completar",
+  "agents.needsHelp": "Necesita tu ayuda",
+  "error.agent_limit": "Revisa los resultados actuales antes de delegar más tareas."
 }

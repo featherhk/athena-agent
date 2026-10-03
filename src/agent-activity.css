@@ -1,0 +1,7 @@
+.agent-activity, .agent-receipt { margin: 14px 0 22px; color: var(--muted); font-size: 13px; }
+.agent-activity > summary, .agent-receipt > summary { cursor: pointer; padding: 7px 0; }
+.agent-activity > summary:focus-visible, .agent-receipt > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.agent-job { position: relative; padding-inline-end: 56px; border-inline-start: 1px solid color-mix(in srgb, var(--muted) 20%, transparent); padding-inline-start: 14px; }
+.agent-job > .run-trace { margin-block: 9px; }
+.agent-stop { position: absolute; inset-inline-end: 0; top: 0; font-size: 12px; }
+.agent-receipt .run-trace { margin: 10px 0 10px 12px; }

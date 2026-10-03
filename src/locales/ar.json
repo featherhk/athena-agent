@@ -224,5 +224,12 @@
   "surface.overlay": "طبقة الحركة",
   "surface.fullscreen": "مساحة العمل الكاملة",
   "surface.presence": "رمز Athena",
-  "error.componentChanged": "تغيرت هذه المساحة وتمت مزامنة أحدث تخطيط. يرجى المحاولة مجددًا."
+  "error.componentChanged": "تغيرت هذه المساحة وتمت مزامنة أحدث تخطيط. يرجى المحاولة مجددًا.",
+  "agents.progress": "المهام المفوّضة · اكتملت {done}/{count}",
+  "agents.waiting": "بانتظار نتائج المهام المفوّضة",
+  "agents.reference": "سجل المهام المفوّضة",
+  "agents.results": "النتائج المستلمة · {count}",
+  "agents.unfinished": "{count} غير مكتملة",
+  "agents.needsHelp": "تحتاج إلى مساعدتك",
+  "error.agent_limit": "راجع النتائج الحالية قبل تفويض مزيد من المهام."
 }

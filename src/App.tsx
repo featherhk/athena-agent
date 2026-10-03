@@ -16,7 +16,8 @@ import { AccountProfile } from './AccountProfile';
 import UserHelp, { HelpReceipt } from './UserHelp';
 import VoiceCall from './VoiceCall';
 import { RunTrace } from './RunTrace';
-import { taskOrigin } from './message-origin';
+import { taskOrigin, agentOrigin } from './message-origin';
+import { AgentActivity, AgentResults } from './AgentActivity';
 import { StyledText } from './StyledText';
 import type { TextStyleEffect } from './effects';
 import { mergeSnapshot } from './snapshot-sync';
@@ -102,7 +103,8 @@ export default function App() {
   const scrollIntent = useRef(0);
   const upgradeState = useRef({ user, session, text, attached, safe: false });
   upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !menu && !surfaces };
-  const busy = snapshot.runs.some(run => ['running', 'queued'].includes(run.status));
+  const busy = snapshot.runs.some(run => ['running', 'queued', 'waiting_agents'].includes(run.status));
+  const waitingAgents = snapshot.runs.some(run => run.status === 'waiting_agents');
   const help = snapshot.help_requests?.[0];
   const waiting = Boolean(help);
   const voiceAnswers = help && voiceHelpAnswers.id === help.id ? voiceHelpAnswers.answers : {};
@@ -609,7 +611,7 @@ export default function App() {
     <div className="workspace-layout">
       {!resetting && components.some(component => placementOf(component) === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{components.filter(component => placementOf(component) === 'sidebar-start').map(component => renderWidget(component))}</aside>}
       <div className="reading-pane">
-    {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
+    {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
     {!resetting && floating.filter(component => panelLayout[component.id]).map(component => renderWidget(component))}
     {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
     <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
@@ -620,18 +622,20 @@ export default function App() {
         {snapshot.messages.map(message => {
           const trace = message.run_id && !tracedRuns.has(message.run_id);
           if (trace) tracedRuns.add(message.run_id!);
-          const origin = trace ? taskOrigin(message) : undefined;
+          const origin = taskOrigin(message) || agentOrigin(message);
           const run = message.run_id ? runsById.get(message.run_id) : undefined;
           const visible = Boolean(message.content || message.attachments?.length);
           return <Fragment key={message.id}>
             {trace && message.role === 'assistant' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} />}
             {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(file => fileCard(file))}</div>}</>}
+            {origin?.kind === 'agent_results' && <AgentResults origin={origin} />}
             {visible && !message.help_reply && !origin && <article className={`message ${message.role}`}>
               <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
               {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
               {['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}
             </article>}
             {trace && message.role === 'user' && <RunTrace sessionId={session!} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} origin={origin} />}
+            {trace && Boolean(snapshot.agents?.some(job => job.root_run_id === message.run_id)) && <AgentActivity sessionId={session!} revision={snapshot.cursor} jobs={snapshot.agents!.filter(job => job.root_run_id === message.run_id)} />}
           </Fragment>;
         })}
         {!resetting && components.filter(component => placementOf(component) === 'inline' || (floatingPlacements.has(placementOf(component)) && !panelLayout[component.id])).map(component => renderWidget(component))}
@@ -645,7 +649,7 @@ export default function App() {
     </div>
     <footer className="composer-area" ref={composer}><div className="composer-wrap">
       {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
-      {busy && !waiting && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
+      {busy && !waiting && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : waitingAgents ? t('agents.waiting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
       {error && <div className="notice" role="alert">{error}{!ready && <button className="quiet" onClick={() => void loadAccount()}>{t('retry')}</button>}</div>}
       {!error && serviceMessage && <div className="notice" role="status">{serviceMessage}</div>}
       {attached.length > 0 && <div className="attachment-tray" aria-label={t('files.attached')}>{attached.map(file => fileCard(file, true))}</div>}

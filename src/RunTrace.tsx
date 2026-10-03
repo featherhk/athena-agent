@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { useI18n, errorMessage } from './i18n';
 import { MarkdownContent } from './MessageBody';
-import { taskOrigin } from './message-origin';
-import type { TaskOrigin } from './message-origin';
+import { taskOrigin, agentOrigin } from './message-origin';
+import type { MessageOrigin } from './message-origin';
 import './run-trace.css';
 
 type Entry = {
   id: string; seq: number; role: string; status: string; created_at: string;
   content: string; content_chars: number; reasoning: string; reasoning_chars: number;
   tool_calls: string; tool_calls_chars: number; tool_call_id?: string; artifact_id?: string;
-  origin?: TaskOrigin;
+  origin?: MessageOrigin;
 };
 type Trace = {
   run: { status: string; phase?: string; error?: string; error_code?: string };
@@ -73,7 +73,7 @@ function OriginalOutput({ base, entry }: { base: string; entry: Entry }) {
   </details>;
 }
 
-export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin }: { sessionId: string; runId: string; revision?: number; phase?: string; status?: string; origin?: TaskOrigin }) {
+export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin, label }: { sessionId: string; runId: string; revision?: number; phase?: string; status?: string; origin?: MessageOrigin; label?: string }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [trace, setTrace] = useState<Trace | null>(null);
@@ -84,7 +84,7 @@ export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin
   const live = phase === 'thinking' || phase === 'executing' || phase === 'responding';
   const state = status || trace?.run.status;
   const stateLabel = state === 'complete' ? 'trace.done' : state === 'failed' ? 'trace.failed'
-    : state === 'queued' ? 'queued' : state === 'waiting_user' ? 'status.waiting'
+    : state === 'queued' ? 'queued' : state === 'waiting_user' ? 'status.waiting' : state === 'waiting_agents' ? 'agents.waiting'
     : state === 'cancelled' ? 'cancelled' : state === 'interrupted' ? 'stopped' : undefined;
 
   useEffect(() => {
@@ -139,16 +139,17 @@ export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin
 
   useEffect(() => { if (open) refresh.current?.(); }, [revision, phase, open]);
 
-  return <details className={`run-trace${origin ? ' task-trace' : ''}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+  return <details className={`run-trace${origin || label ? ' task-trace' : ''}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary><span className={`trace-indicator${live ? ' active' : ''}`} aria-hidden="true" />
-      {origin ? <><span className="task-trace-kind">{t(origin.trigger === 'time' ? 'trace.scheduled' : 'trace.condition')}</span><span className="task-trace-title" dir="auto">{origin.title}</span></> : t('trace.title')}
+      {origin?.kind === 'task' ? <><span className="task-trace-kind">{t(origin.trigger === 'time' ? 'trace.scheduled' : 'trace.condition')}</span><span className="task-trace-title" dir="auto">{origin.title}</span></>
+        : label || origin?.kind === 'agent_task' ? <span className="task-trace-title" dir="auto">{label || (origin?.kind === 'agent_task' ? origin.title : '')}</span> : t('trace.title')}
       {live && <span className="trace-live">{t('trace.live')}</span>}
-      {origin && !live && stateLabel && <span className="trace-state">{t(stateLabel)}</span>}
+      {(origin || label) && !live && stateLabel && <span className="trace-state">{t(stateLabel)}</span>}
     </summary>
     {open && <div className="trace-timeline">
-      {origin && <p className="trace-source">{t('trace.occurrence', { number: origin.occurrence })}</p>}
+      {origin?.kind === 'task' && <p className="trace-source">{t('trace.occurrence', { number: origin.occurrence })}</p>}
       {trace?.entries.map((entry, index) => <article className={`trace-entry trace-${entry.role}`} key={entry.id}>
-        <header><span>{t('trace.step', { number: index + 1 })}</span><span>{t(taskOrigin(entry) ? (entry.origin!.trigger === 'time' ? 'trace.scheduled' : 'trace.condition') : entry.role === 'user' ? 'trace.user' : entry.role === 'tool' ? 'trace.output' : entry.reasoning ? 'trace.thinking' : 'trace.reply')}</span>{entry.status !== 'complete' && <span>{t(entry.status === 'streaming' ? 'trace.live' : entry.status === 'queued' ? 'queued' : entry.status === 'cancelled' ? 'cancelled' : 'stopped')}</span>}</header>
+        <header><span>{t('trace.step', { number: index + 1 })}</span><span>{t(taskOrigin(entry) ? (taskOrigin(entry)!.trigger === 'time' ? 'trace.scheduled' : 'trace.condition') : agentOrigin(entry) ? 'agents.reference' : entry.role === 'user' ? 'trace.user' : entry.role === 'tool' ? 'trace.output' : entry.reasoning ? 'trace.thinking' : 'trace.reply')}</span>{entry.status !== 'complete' && <span>{t(entry.status === 'streaming' ? 'trace.live' : entry.status === 'queued' ? 'queued' : entry.status === 'cancelled' ? 'cancelled' : 'stopped')}</span>}</header>
         {!!entry.reasoning && <section><h4>{t('trace.thinking')}</h4><TraceField base={base} entry={entry} field="reasoning" /></section>}
         {!!entry.content && <section>{entry.role === 'assistant' && !!entry.reasoning && <h4>{t('trace.reply')}</h4>}<TraceField base={base} entry={entry} field="content" plain={entry.role === 'tool'} /></section>}
         {!!entry.tool_calls && <section><h4>{t('trace.tools')}</h4><TraceField base={base} entry={entry} field="tool_calls" plain /></section>}

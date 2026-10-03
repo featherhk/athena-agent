@@ -40,6 +40,10 @@ class Engine:
         self.check_owner()
         event = await self.store.event(session_id, kind, payload)
         self.broadcast(session_id, event)
+        from .agents import parent_sessions
+        for parent in await self.store.call(lambda db: parent_sessions(db, session_id)):
+            update = await self.store.event(parent, 'agents_changed', {'session_id': session_id})
+            self.broadcast(parent, update)
         return event
 
     def broadcast(self, session_id, event):
@@ -101,17 +105,26 @@ class Engine:
         def cancel_queue(db):
             from .user_help import cancel_help
             from .app_controls import cancel_app_actions
+            from .agents import cancel_branch, cancel_waits
             cancel_help(db, session_id)
+            cancel_waits(db, session_id)
+            cancel_branch(db, session_id)
             owner = db.execute("SELECT user_id FROM sessions WHERE id=?", (session_id,)).fetchone()
             if owner and owner["user_id"]:
                 cancel_app_actions(db, owner["user_id"], session_id=session_id, reason=app_action_reason)
-            db.execute("UPDATE runs SET status='cancelled',phase='stopped',finished_at=? WHERE session_id=? AND status IN ('queued','waiting_user')", (now(), session_id))
+            db.execute("UPDATE runs SET status='cancelled',phase='stopped',finished_at=? WHERE session_id=? AND status IN ('queued','waiting_user','waiting_agents')", (now(), session_id))
             db.execute("UPDATE messages SET status='cancelled' WHERE session_id=? AND status='queued'", (session_id,))
         await self.store.call(cancel_queue)
         task = self.active_runs.get(session_id)
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        # Re-read after the parent tool finishes cancellation: a committed spawn
+        # must not escape just because it raced the initial stop transaction.
+        from .agents import cancel_branch
+        children = await self.store.call(lambda db: cancel_branch(db, session_id))
+        for child in children:
+            await self.stop(child, app_action_reason=app_action_reason)
 
     async def answer_help(self, session_id, user_id, help_id, answers, attachments=None):
         from .user_help import answer_help
@@ -148,6 +161,8 @@ class Engine:
             finally:
                 if self.active_runs.get(session_id) is task:
                     del self.active_runs[session_id]
+            if not self.closing:
+                await self.reconcile_agents()
             if control in ("stop", "reset") and not self.closing:
                 # The model task and all of its tool-result slots have finished.
                 # Running reset/stop here means neither can await/cancel itself.
@@ -264,6 +279,13 @@ class Engine:
                 await self.store.execute("UPDATE requests SET status='complete',response=?,usage=?,response_model=?,finished_at=? WHERE id=?", (json.dumps(assistant, ensure_ascii=False), json.dumps(result["usage"]), result.get("model"), now(), request_id))
                 request_id, message_id = None, None
                 if not outstanding:
+                    from .agents import finish_or_wait
+                    waiting = await finish_or_wait(self.store, session_id, run_id)
+                    if waiting == 'ready':
+                        continue
+                    if waiting == 'waiting':
+                        status = 'waiting_agents'
+                        return
                     break
                 while outstanding:
                     tool = outstanding[0]
@@ -278,6 +300,8 @@ class Engine:
                         output = {"error": f"工具执行失败：{type(exc).__name__}"}
                     await self.store.message(session_id, run_id, "tool", json.dumps(output, ensure_ascii=False), tool_call_id=tool["id"])
                     outstanding.pop(0)
+                    if tool['function']['name'] == 'runtime' and isinstance(arguments, dict) and arguments.get('op') == 'agents':
+                        await self.reconcile_agents()
                     markers = output.get("control", {}) if isinstance(output, dict) and isinstance(output.get("control", {}), dict) else {}
                     app_args = arguments.get("args", arguments) if isinstance(arguments, dict) else {}
                     app_action = app_args.get("action") if isinstance(app_args, dict) else None
@@ -301,6 +325,13 @@ class Engine:
                         status = "waiting_user"
                         await self.emit(session_id, "user_help", request)
                         return
+                    wait_id = markers.get('wait_for_agents')
+                    if wait_id and tool['function']['name'] == 'runtime' and arguments.get('op') == 'agents':
+                        from .agents import activate_wait
+                        await activate_wait(self.store, session_id, run_id, wait_id, outstanding)
+                        outstanding = []
+                        status = 'waiting_agents'
+                        return
                     await self.emit(session_id, "refresh", {})
             else:
                 raise UserError("step_limit", "这件事已经连续处理了很多步骤，先停在这里。你可以让我继续。")
@@ -316,15 +347,51 @@ class Engine:
                 await self.store.execute("UPDATE requests SET status=?,error=?,error_code=?,finished_at=? WHERE id=?", (status, error, error_code, now(), request_id))
             if message_id:
                 await self.store.execute("UPDATE messages SET status=? WHERE id=? AND tool_calls IS NULL", (status, message_id))
-            if status != "waiting_user":
+            if status not in ('waiting_user', 'waiting_agents'):
                 def finish(db):
                     from .user_help import cancel_help
+                    from .agents import cancel_waits, cancel_branch
                     cancel_help(db, session_id, run_id)
+                    cancel_waits(db, session_id, run_id)
+                    if status != 'complete':
+                        cancel_branch(db, session_id, run_id)
                     db.execute("UPDATE runs SET status=?,phase=?,error=?,error_code=?,finished_at=? WHERE id=?", (status, "stopped" if status != "complete" else "idle", error, error_code, now(), run_id))
                 await self.store.call(finish)
+                delegated = await self.store.rows('SELECT 1 FROM agent_jobs WHERE child_run_id=?', (run_id,))
+                if delegated:
+                    from .files import initialize_files, discover_files
+                    await initialize_files(self.store)
+                    owner = await self.tools.owner(session_id)
+                    await discover_files(self.config, self.store, owner['user_id'], session_id)
             await self.emit(session_id, "refresh", {})
 
+    async def reconcile_agents(self):
+        """Reconcile durable cancellation and waits; no provider is polled."""
+        if self.closing:
+            return
+        from .agents import cancel_orphans, resume_waits
+        def pending(db):
+            cancel_orphans(db)
+            return [row[0] for row in db.execute("SELECT j.child_session_id FROM agent_jobs j JOIN runs r ON r.id=j.child_run_id WHERE j.cancel_requested=1 AND r.status IN ('queued','running','waiting_user','waiting_agents')")]
+        children_to_stop = await self.store.call(pending)
+        # Reconciliation also runs at tool boundaries. If this very model task
+        # was cancelled meanwhile, unwind it before acquiring its stop lock;
+        # awaiting its own teardown would deadlock parent/child cancellation.
+        current = asyncio.current_task()
+        if any(self.active_runs.get(child) is current for child in children_to_stop):
+            raise asyncio.CancelledError
+        for child in children_to_stop:
+            await self.stop(child)
+        resumed = await self.store.call(resume_waits)
+        for session_id in resumed:
+            await self.emit(session_id, 'agents_ready', {})
+            self.kick(session_id)
+        children = await self.store.rows("SELECT j.child_session_id FROM agent_jobs j JOIN runs r ON r.id=j.child_run_id WHERE j.cancel_requested=0 AND r.status='queued'")
+        for child in children:
+            self.kick(child['child_session_id'])
+
     async def tick(self):
+        await self.reconcile_agents()
         resetting = frozenset(self.resetting_users)
         def wake(db):
             stamp = datetime.now(timezone.utc)

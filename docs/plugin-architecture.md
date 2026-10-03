@@ -29,6 +29,7 @@ The launcher and independent recovery path form a minimal control plane, not a p
 - Inline, banner, workspace/fullscreen, sidebars, anchored corners, overlays and replaceable presence, with version-scoped browser loading/visibility reports. Components receive theme tokens and bounded message geometry, and can apply reversible text styles. Arbitrary hex themes derive readable shell colors; presets are shortcuts. The shell owns input, stop and reset.
 - Discoverable application actions through the existing runtime tool: navigation, fixed views, file previews/downloads and attachment selection, with durable claim/acknowledgement. User clicks and agent requests reach the same underlying features; secrets remain in fixed forms.
 - Durable requests for user information or manual assistance. Waiting releases the model stream, answers resume the same run once, and stop/reset cancels outstanding requests without deleting history.
+- Bounded delegated runs behind the same runtime envelope, with durable waits, branch cancellation, main-conversation questions/files and referenced results. This uses the current concrete Engine and Store, not a replaceable execution provider; see [delegation](delegation.md).
 - Durable events and context projection boundaries, recoverable originals, fixed model/default recovery, and account-scoped state.
 
 ## What remains before “everything is replaceable” is true

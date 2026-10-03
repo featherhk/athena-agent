@@ -77,3 +77,13 @@ RUNTIME_PROPERTIES.update({
     'direction': {'enum': ['up', 'down', 'left', 'right']},
     'pixels': {'type': 'integer', 'minimum': 1, 'maximum': 3000},
 })
+
+RUNTIME_PROPERTIES['op']['enum'].append('agents')
+RUNTIME_PROPERTIES['action']['enum'].extend(['spawn', 'wait', 'cancel'])
+RUNTIME_PROPERTIES.update({
+    'agent_id': {'type': 'string', 'maxLength': 64},
+    'agent_ids': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'uniqueItems': True,
+                  'items': {'type': 'string', 'maxLength': 64}},
+    'context': {'type': 'string', 'maxLength': 30000},
+    'mode': {'enum': ['all', 'any']},
+})
