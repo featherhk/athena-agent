@@ -1,5 +1,6 @@
 """Managed browser work: owned tabs, observed targets and durable action receipts."""
 import asyncio
+from collections import Counter
 import json
 import os
 import re
@@ -317,12 +318,34 @@ class BrowserHost:
                     kind = await self.driver.run(user_id, ['get', 'attr', args['ref'], 'type'])
                     if not isinstance(kind, dict) or str(kind.get('value', kind.get('attribute', ''))).lower() != 'file':
                         raise ValueError('Upload requires an observed file input. A custom chooser button or drag-only target is not supported.')
+                    input_identity = await self.driver.run(user_id, ['get', 'attr', args['ref'], 'id'])
+                    identifier = input_identity.get('value') if isinstance(input_identity, dict) else None
+                    if identifier is None:
+                        identifier = ''
+                    before = await self.driver.run(user_id, ['get', 'files', identifier])
+                    probe = before.get('result') if isinstance(before, dict) else None
+                    if (not isinstance(probe, dict) or probe.get('matched') != 1
+                            or type(probe.get('multiple')) is not bool):
+                        raise ValueError('This file input cannot be uniquely verified in the current document. No upload was dispatched; embedded or ambiguous file controls are not supported.')
+                    if len(records) > 1 and not probe['multiple']:
+                        raise ValueError('This file input accepts only one file. No upload was dispatched.')
                     staged = await self._stage_upload(user_id, operation_id, records)
                     dispatched = True
                     selected = await self.driver.run(user_id, ['upload', args['ref'], *staged['paths']])
                     if (not isinstance(selected, dict) or type(selected.get('uploaded')) is not int
                             or selected['uploaded'] != len(records) or selected.get('selector') != args['ref']):
                         raise BrowserDriverError('browser_protocol_error', 'The file selection result could not be confirmed.')
+                    after = await self.driver.run(user_id, ['get', 'files', identifier])
+                    observed = after.get('result') if isinstance(after, dict) else None
+                    actual = observed.get('files') if isinstance(observed, dict) else None
+                    if (not isinstance(observed, dict) or observed.get('matched') != 1
+                            or type(observed.get('count')) is not int or observed['count'] != len(records)
+                            or not isinstance(actual, list) or len(actual) != len(records)
+                            or any(not isinstance(item, dict) or not isinstance(item.get('name'), str)
+                                   or type(item.get('size')) is not int for item in actual)
+                            or Counter((item['name'], item['size']) for item in actual)
+                               != Counter((item['name'], item['size']) for item in staged['files'])):
+                        raise BrowserDriverError('browser_upload_unverified', 'The actual file input did not retain every requested name and size. The website may already have received some or all files, or cleared the input. Inspect its receipt before doing anything else; do not repeat the upload automatically.')
                     result = {'files': staged['files'], 'bytes': staged['bytes'], 'input_selected': True,
                               'submission_verified': False,
                               'next': 'File selection may trigger an automatic website upload. Inspect the fresh page for its result before submitting or retrying; selection alone does not confirm website acceptance.'}

@@ -14,6 +14,25 @@ MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 DRIVER_VERSION = '0.38.2'
 
 
+def file_input_probe(identifier):
+    """Host-owned read-only observation; no model/page-supplied JavaScript."""
+    if not isinstance(identifier, str) or len(identifier) > 1024:
+        raise ValueError('The file input identity cannot be verified.')
+    # JSON string encoding is deliberate: an observed DOM id is untrusted data.
+    # Without an id, accept only the document's single file input. Do not guess
+    # among controls or traverse an inaccessible frame.
+    return '''(() => {
+        const identifier = ''' + json.dumps(identifier) + ''';
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        const candidates = identifier ? inputs.filter(input => input.id === identifier) : inputs;
+        if (candidates.length !== 1) return {matched: candidates.length};
+        const input = candidates[0];
+        const files = input.files;
+        return {matched: 1, multiple: input.multiple, count: files.length,
+            files: Array.from(files).slice(0, 11).map(file => ({name: file.name, size: file.size}))};
+    })()'''
+
+
 def protocol_command(command):
     """Small, pinned native protocol adapter; never pass page text as CLI flags.
 
@@ -54,6 +73,8 @@ def protocol_command(command):
             value = {'action': 'upload', 'selector': ref, 'files': paths}
         case ['get', 'attr', ref, attribute]:
             value = {'action': 'getattribute', 'selector': ref, 'attribute': attribute}
+        case ['get', 'files', identifier]:
+            value = {'action': 'evaluate', 'script': file_input_probe(identifier)}
         case ['back' | 'forward' | 'reload' | 'close' as action]:
             value = {'action': action}
         case _:

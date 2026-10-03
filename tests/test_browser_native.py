@@ -5,6 +5,7 @@ No provider calls, personal browser profile or external website is used.
 """
 import asyncio
 import hashlib
+import html
 import json
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -75,17 +76,18 @@ def ref(page, name):
 
 
 @pytest.fixture
-def upload_page_server():
+def upload_page_server(request):
     lock, receipts = threading.Lock(), []
+    identifier = getattr(request, 'param', 'documents')
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
         def do_GET(self):
             body = '''<!doctype html><meta charset="utf-8"><title>File upload fixture</title>
-            <h1>Upload documents</h1><label>Documents<input id="documents" type="file" multiple></label>
+            <h1>Upload documents</h1><label>Documents<input id="__INPUT_ID__" type="file" multiple></label>
             <p id="result">No documents received</p><script>
-            document.querySelector('#documents').addEventListener('change', async (event) => {
+            document.querySelector('input[type=file]').addEventListener('change', async (event) => {
                 const names = [];
                 for (const file of event.target.files) {
                     const response = await fetch('/upload', {method:'POST', body:file,
@@ -95,7 +97,7 @@ def upload_page_server():
                 }
                 document.querySelector('#result').textContent = 'Received ' + names.join(', ');
             });
-            </script>'''.encode()
+            </script>'''.replace('__INPUT_ID__', html.escape(identifier, quote=True)).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
@@ -119,6 +121,7 @@ def upload_page_server():
 
 
 @pytest.mark.parametrize('lose_reply', [False, True])
+@pytest.mark.parametrize('upload_page_server', ['documents', '', '\";fetch("/upload",{method:"POST",body:"injected",headers:{"X-Fixture-Name":"injected"}});//'], indirect=True)
 async def test_native_upload_exact_files_once_even_when_reply_is_lost(config, store, upload_page_server, monkeypatch, lose_reply):
     root = Path(os.environ.get('ATHENA_TEST_BROWSER_ROOT', Path(__file__).resolve().parents[1]))
     config = replace(config, repo_dir=root.resolve())

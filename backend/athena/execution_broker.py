@@ -479,6 +479,7 @@ class Broker:
                 await self.docker_call("run", "-d", *self.limits(name, browser=True),
                     "--mount", self.mount("browser-profiles", owner),
                     "--env", f"HOME={container_root}/home", "--env", f"AGENT_BROWSER_SOCKET_DIR={container_root}/ipc",
+                    "--env", "LANG=C.UTF-8", "--env", "LC_ALL=C.UTF-8",
                     "--env", "AGENT_BROWSER_DEFAULT_TIMEOUT=20000", self.image, "/bin/sleep", "infinity")
             return await self.browser_command(name, owner, request["command"])
 

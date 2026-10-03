@@ -19,6 +19,7 @@ class FakeBrowser:
         self.config, self.calls, self.tabs = config, [], {}
         self.headed = True
         self.uploads = []
+        self.selected_files = []
         self.generation, self.active, self.live = 0, None, False
         self.fail, self.pause, self.entered = None, None, asyncio.Event()
 
@@ -64,10 +65,15 @@ class FakeBrowser:
             case ['snapshot', *_]:
                 return {'snapshot': 'button "Submit" [ref=e1]\ntextbox "Name" [ref=e2]\nbutton "Document" [ref=e3]',
                         'origin': self.tabs[self.active], 'refs': {'e1': {}, 'e2': {}, 'e3': {}}}
+            case ['get', 'attr', _, 'id']:
+                return {'value': 'documents'}
             case ['get', 'attr', ref, _]:
                 return {'value': 'file' if ref == '@e3' else 'text'}
+            case ['get', 'files', _]:
+                return {'result': {'matched': 1, 'multiple': True, 'count': len(self.selected_files), 'files': self.selected_files}}
             case ['upload', ref, *paths]:
                 self.uploads.append([Path(path).read_bytes() for path in paths])
+                self.selected_files = [{'name': Path(path).name, 'size': Path(path).stat().st_size} for path in paths]
                 return {'uploaded': len(paths), 'selector': ref}
             case ['screenshot', path] | ['download', _, path]:
                 Path(path).write_bytes(b'synthetic-output')
@@ -400,6 +406,49 @@ async def test_upload_requires_the_expected_selection_receipt(browsing, store, m
     assert len(driver.uploads) == 1 and 'input_selected' not in result
 
 
+@pytest.mark.parametrize('observed', [
+    {'matched': 1, 'count': 1, 'files': [{'name': 'sheet.xlsx', 'size': 6}]},
+    {'matched': 1, 'count': 2, 'files': [{'name': '报价单.pdf', 'size': 0}, {'name': 'sheet.xlsx', 'size': 6}]},
+    {'matched': 1, 'count': 0, 'files': []},
+    {'matched': 0},
+])
+async def test_upload_does_not_trust_requested_count_over_actual_filelist(browsing, store, monkeypatch, observed):
+    host, driver, (session, _, _) = browsing
+    first, _ = await uploaded_record(host, store, session, '报价单.pdf', b'first')
+    second, _ = await uploaded_record(host, store, session, 'sheet.xlsx', b'second')
+    page = await open_page(host, session)
+    real_run = driver.run
+    async def changed_input(owner, command, **kwargs):
+        value = await real_run(owner, command, **kwargs)
+        if command[:2] == ['get', 'files'] and driver.uploads:
+            return {'result': observed}
+        return value
+    monkeypatch.setattr(driver, 'run', changed_input)
+    result = await act(host, session, page, 'upload', ref='@e3', file_ids=[first['id'], second['id']])
+    assert not result['ok'] and not result['effect_known']
+    assert result['error']['code'] == 'browser_upload_unverified' and 'input_selected' not in result
+    assert len(driver.uploads) == 1
+    assert (await store.rows('SELECT status FROM browser_actions WHERE id=?', (result['operation_id'],)))[0]['status'] == 'unknown'
+    await store.initialize()
+    assert len(driver.uploads) == 1
+
+
+@pytest.mark.parametrize('probe', [{'matched': 0}, {'matched': 2}, {'matched': 1, 'multiple': False}])
+async def test_upload_refuses_unverifiable_or_single_file_controls_before_dispatch(browsing, store, monkeypatch, probe):
+    host, driver, (session, _, _) = browsing
+    first, _ = await uploaded_record(host, store, session, 'first.pdf')
+    second, _ = await uploaded_record(host, store, session, 'second.pdf')
+    page = await open_page(host, session)
+    real_run = driver.run
+    async def unavailable_input(owner, command, **kwargs):
+        value = await real_run(owner, command, **kwargs)
+        return {'result': probe} if command[:2] == ['get', 'files'] else value
+    monkeypatch.setattr(driver, 'run', unavailable_input)
+    result = await act(host, session, page, 'upload', ref='@e3', file_ids=[first['id'], second['id']])
+    assert not result['ok'] and result['effect_known'] and 'No upload was dispatched' in result['error']['message']
+    assert not driver.uploads
+
+
 @pytest.mark.parametrize('fields', [
     {'file_ids': []}, {'file_ids': ['same', 'same']}, {'file_ids': ['one'] * 11},
     {'file_id': '../secret'}, {'file_ids': ['/etc/passwd']}, {'file_id': 'one', 'file_ids': ['two']},
@@ -502,6 +551,19 @@ def test_upload_native_protocol_does_not_turn_filenames_into_flags():
     packet = protocol_command(['upload', '@e2', '/owned/--profile.pdf', '/owned/汉字.pdf'])
     assert packet['action'] == 'upload' and packet['selector'] == '@e2'
     assert packet['files'] == ['/owned/--profile.pdf', '/owned/汉字.pdf']
+
+
+def test_filelist_probe_json_encodes_dom_identifiers_and_exposes_no_generic_eval():
+    identifier = '\";fetch("https://invalid.example");//\n\\雅典娜'
+    packet = protocol_command(['get', 'files', identifier])
+    encoded = packet['script'].split('const identifier = ', 1)[1].split(';\n', 1)[0]
+    assert json.loads(encoded) == identifier
+    assert packet['action'] == 'evaluate' and 'input.files' in packet['script']
+    assert identifier not in packet['script']
+    with pytest.raises(ValueError):
+        protocol_command(['eval', identifier])
+    with pytest.raises(ValueError):
+        validate_arguments({'action': 'get', 'files': identifier})
 
 
 async def test_recovery_invalidates_only_newly_interrupted_actions(browsing, store):

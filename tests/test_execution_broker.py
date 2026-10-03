@@ -327,7 +327,7 @@ async def test_withdrawn_network_proof_after_create_prevents_container_start(bro
 
 class BrowserContainers:
     def __init__(self):
-        self.containers, self.removed = {}, []
+        self.containers, self.removed, self.launches = {}, [], []
 
     async def __call__(self, *args, **kwargs):
         await asyncio.sleep(0)  # Make separate-account admission races observable.
@@ -336,6 +336,7 @@ class BrowserContainers:
         if args[0] == "ps":
             return 0, "\n".join(self.containers).encode()
         if args[0] == "run":
+            self.launches.append(args)
             name = args[args.index("--name") + 1]
             self.containers[name] = False
             return 0, name.encode()
@@ -367,6 +368,9 @@ async def test_browser_capacity_is_atomic_across_accounts_and_closed_slots_recla
     await start("carol")
     assert set(docker.containers) == {"athena-1-browser-bob", "athena-1-browser-carol"}
     assert docker.removed == ["athena-1-browser-alice"]
+    # Chromium resolves non-ASCII upload filenames using its process locale.
+    # A POSIX locale silently omitted the Chinese PDF in the Linux fixture.
+    assert all('LANG=C.UTF-8' in call and 'LC_ALL=C.UTF-8' in call for call in docker.launches)
 
 
 async def test_uncertain_browser_identity_does_not_authorize_reclamation(tmp_path):
