@@ -141,7 +141,7 @@ The frontend now reports bounded, authenticated semantic observations; runtime a
 
 ## Task continuity — 2026-10-04
 
-Background work, requests for help and unread outcomes now remain reachable across conversations and inside file preview. A compact control appears only when relevant; it never navigates automatically or replaces a draft. The universal runtime exposes the same account-scoped discovery, acknowledgement and conversation stop. Durable exact-state read receipts prevent a stale acknowledgement from hiding a newer outcome. See [task continuity](task-continuity.md) for the contract and isolated real-engine browser acceptance. This is in-app continuity, not OS notification delivery or shared files across execution nodes.
+Background work, requests for help and unread outcomes now remain reachable across conversations and inside file preview. A compact control appears only when relevant; it never navigates automatically or replaces a draft. The universal runtime exposes the same account-scoped discovery, acknowledgement and conversation stop. Durable exact-state read receipts prevent a stale acknowledgement from hiding a newer outcome. See [task continuity](task-continuity.md) for the contract and isolated real-engine browser acceptance, and the [published web/build 8 receipt](releases/2026-10-04-continuity.md) for real-model navigation/help resumption, exact charges and remaining discovery inefficiency. This is in-app continuity, not OS notification delivery or shared files across execution nodes.
 
 ## Remaining release gaps
 
