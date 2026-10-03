@@ -9,7 +9,7 @@ Build on macOS with Xcode command line tools, Node, and uv installed:
 ```sh
 uv sync --python 3.14t
 npm ci
-uv run python scripts/build-macos.py --cloud-url https://app.featherhk.com/v1
+uv run python scripts/build-macos.py --cloud-url https://chat.athena.featherhk.com/v1
 ```
 
 The optional `--cloud-url` selects the public HTTPS account/model gateway and writes it into `Contents/Resources/bundle-config.json` before signing. It accepts no credentials, query string or fragment. The launcher reads only this non-secret bundle configuration; it never falls back to local authentication if the selected cloud service is unavailable. Omitting the option creates an isolated local development preview without provider credentials. The DNS and TLS endpoint must be verified before distributing the cloud build.
@@ -41,7 +41,7 @@ Apple’s [notarization documentation](https://developer.apple.com/documentation
 
 ## Cloud and account boundary
 
-Planned public application origin: `https://app.featherhk.com`; gateway base: `https://app.featherhk.com/v1`. The endpoint is not permission to package a provider key. Hosted authentication and a server-side model gateway must enforce account entitlement and reserve/settle balance for each request. Only explicitly enabled preview accounts have access; other accounts start with zero credit, and there is no recharge UI. An API key configured in a customer’s local SQLite database would defeat this design.
+Hosted conversation origin: `https://chat.athena.featherhk.com`; gateway base: `https://chat.athena.featherhk.com/v1`. The separate `https://app.athena.featherhk.com` site provides application downloads. The gateway endpoint is not permission to package a provider key. Hosted authentication and a server-side model gateway must enforce account entitlement and reserve/settle balance for each request. Only explicitly enabled preview accounts have access; other accounts start with zero credit, and there is no recharge UI. An API key configured in a customer’s local SQLite database would defeat this design.
 
 A cloud-configured preview sidecar uses the central account and credit gateway implemented in `cloud_client.py`; provider credentials remain on the server. It does not inherit the developer’s key, create a default user account, or grant arbitrary accounts a balance. A build with no cloud URL retains isolated local authentication for development. This integration must pass before a customer build is published:
 

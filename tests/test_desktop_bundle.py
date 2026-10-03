@@ -54,7 +54,7 @@ def test_cloud_bundle_configuration_is_https_only(tmp_path, monkeypatch):
     import os
     monkeypatch.setenv("ATHENA_CLOUD_URL", "https://untrusted.invalid/v1")
     path = tmp_path / "bundle-config.json"
-    valid = "https://app.featherhk.com/v1"
+    valid = "https://chat.athena.featherhk.com/v1"
     assert validate(valid + "/") == valid
     path.write_text(json.dumps({"version": 1, "cloud_url": valid}))
     configure(tmp_path)

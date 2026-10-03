@@ -12,7 +12,7 @@ The initial access policy is an operator-funded preview: fund **explicitly enabl
 | `gateway` | Central accounts, authentication, account credits, model/audio proxy | `127.0.0.1:4322` → container 4321; `/opt/athena/data/accounts` |
 | `web` | Web client, sessions, files and assistant runtime | `127.0.0.1:4317`; `/opt/athena/data/web` |
 
-`deploy/Caddyfile` routes `https://app.featherhk.com/v1/*` to the gateway, `/downloads/*` to static files, and other paths to the web service. `featherhk.com` and its GitHub-hosted marketing website are separate from this application subdomain.
+`deploy/Caddyfile` routes `https://chat.athena.featherhk.com/v1/*` to the gateway and other paths on that host to the Linux web runtime. `https://app.athena.featherhk.com` serves the separate app distribution page from `/opt/athena/site`, with `/downloads/*` served from `/opt/athena/downloads`. The main `featherhk.com` marketing website uses the same static site mount on Tencent Cloud; `www.featherhk.com` redirects to it. The website source remains versioned on GitHub. Both Athena subdomains use the same server and automatic HTTPS; port 80 remains with the existing New API service.
 
 The gateway does not import the agent engine or execute user code. Only it mounts the operator's provider key. The web worker and desktop sidecar send an account bearer token to the gateway; the provider key is never distributed to clients. Browser authentication uses an HttpOnly, SameSite=Strict cookie, with Secure enabled for the configured HTTPS public origin. The gateway's bearer endpoints reject browser Origin headers; the application backend mediates browser login and inference.
 
@@ -37,7 +37,7 @@ Create private runtime directories on the server. Keep source, release files, se
 ```sh
 sudo install -d -o 10001 -g 10001 -m 0700 /opt/athena/data/accounts /opt/athena/data/web
 sudo install -d -m 0700 /opt/athena/secrets /opt/athena/data/tls /opt/athena/data/caddy
-sudo install -d -m 0755 /opt/athena/downloads
+sudo install -d -m 0755 /opt/athena/downloads /opt/athena/site
 ```
 
 Provision `/opt/athena/secrets/model-key` from an existing private operator file using a secure transfer or hidden input. Its owner must be UID 10001 and its mode should be `0400`. Never paste the key into shell arguments, checked-in Compose files, screenshots, logs, or release archives. The supplied Compose file mounts this file read-only in the gateway only.
@@ -127,7 +127,7 @@ services:
       ATHENA_GATEWAY_PROVIDER_URL: https://api.deepseek.com
 ```
 
-For a cloud-connected local service, set `ATHENA_CLOUD_URL=https://app.featherhk.com/v1`. Hosted web additionally uses `ATHENA_PUBLIC_ORIGIN=https://app.featherhk.com` and `ATHENA_DEPLOYMENT=hosted`. The public origin is the exact HTTPS origin, without a path. The default supplied Compose configuration already sets these values for web. Do not place `DEEPSEEK_API_KEY` or audio keys in that service or in a distributed app.
+For a cloud-connected local service, set `ATHENA_CLOUD_URL=https://chat.athena.featherhk.com/v1`. Hosted web additionally uses `ATHENA_PUBLIC_ORIGIN=https://chat.athena.featherhk.com` and `ATHENA_DEPLOYMENT=hosted`. The public origin is the exact HTTPS origin, without a path. The default supplied Compose configuration already sets these values for web. Do not place `DEEPSEEK_API_KEY` or audio keys in that service or in a distributed app.
 
 ## Audio configuration and present limits
 
@@ -156,7 +156,7 @@ The worker/desktop forwards authenticated audio requests to the gateway without 
 Run these checks against the deployed release, retaining results without credentials or user content:
 
 - `http://127.0.0.1:4322/v1/health` responds locally; `configured: true` confirms a key is loaded, not that an upstream call succeeded.
-- `https://app.featherhk.com/` has a valid certificate, loads its assets, and preserves streamed responses through edge.
+- `https://chat.athena.featherhk.com/` has a valid certificate, loads its assets, and preserves streamed responses through edge.
 - An unauthenticated account/model request returns 401. A newly registered, unfunded account cannot incur a model charge. No recharge path is offered.
 - preview-user can log in, complete one authorized model request, and inspect a balance that matches one settled ledger entry. A concurrent reservation and a repeated request ID cannot spend twice.
 - Browser reconnect and conversation switching recover the active stream; logout/expired central credentials stop further authenticated access.

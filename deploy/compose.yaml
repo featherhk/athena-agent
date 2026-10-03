@@ -26,8 +26,8 @@ services:
       ATHENA_PROCESS: web
       ATHENA_DEPLOYMENT: hosted
       ATHENA_DATA_DIR: /data
-      ATHENA_PUBLIC_ORIGIN: https://app.featherhk.com
-      ATHENA_CLOUD_URL: https://app.featherhk.com/v1
+      ATHENA_PUBLIC_ORIGIN: https://chat.athena.featherhk.com
+      ATHENA_CLOUD_URL: https://chat.athena.featherhk.com/v1
     volumes:
       - /opt/athena/data/web:/data
     ports: ["127.0.0.1:4317:4317"]
@@ -46,6 +46,7 @@ services:
       - /opt/athena/data/tls:/data
       - /opt/athena/data/caddy:/config
       - /opt/athena/downloads:/srv/downloads:ro
+      - /opt/athena/site:/srv/site:ro
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
