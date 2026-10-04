@@ -83,49 +83,52 @@ class Engine:
         self.check_owner()
         return self.stop_epochs.get(session_id, 0)
 
-    async def submit(self, session_id, text, mode="queue", attachments=None, *, frontend_client_id=None, frontend_auth_hash=None, _admission_epoch=None):
-        self.check_owner()
-        stop_epoch = self.submission_epoch(session_id) if _admission_epoch is None else _admission_epoch
-        began = self.reset_clock
-        owner = await self.tools.owner(session_id)
-        if owner["user_id"] in self.resetting_users:
-            raise UserError("resetting", "正在恢复默认状态，请稍后再发。")
-        profile, _ = await self.models.selected(session_id)
-        if self.cloud:
-            await self.cloud.require_credit(owner['user_id'])
-        else:
-            await self.models.require_key(profile)
-        async with self.controls.setdefault(session_id, asyncio.Lock()):
-            if owner["user_id"] in self.resetting_users or self.user_reset_versions.get(owner["user_id"], 0) > began:
-                raise UserError("resetting", "This input was superseded by reset. Send it again when ready.")
-            if self.stop_epochs.get(session_id, 0) != stop_epoch:
-                raise UserError("submission_stopped", "Stop cancelled this pending submission. You can send it again when ready.")
-            from .frontend_state import capture_source
-            source = None
-            if frontend_client_id is not None:
-                source = await self.store.call(lambda db: capture_source(db, session_id, frontend_client_id, frontend_auth_hash))
-                if owner["user_id"] in self.resetting_users or self.user_reset_versions.get(owner["user_id"], 0) > began:
-                    raise UserError("resetting", "This input was superseded by reset. Send it again when ready.")
-            if mode == "interrupt":
-                await self._stop(session_id)
-            run_id = await self.store.enqueue(session_id, text, attachments, frontend_source=source)
-        await self.emit(session_id, "refresh", {})
-        self.kick(session_id)
-        return run_id
+    async def submit(self, session_id, text, mode="queue", attachments=None, *, frontend_client_id=None,
+                     frontend_auth_hash=None, _admission_epoch=None, submission=None, load_attachments=None):
+        from .submissions import submit_input
+        return await submit_input(self, session_id, text, mode, attachments,
+                                  frontend_client_id=frontend_client_id, frontend_auth_hash=frontend_auth_hash,
+                                  _admission_epoch=_admission_epoch, submission=submission, load_attachments=load_attachments)
 
-    async def stop(self, session_id, *, app_action_reason="interrupted"):
+    async def stop(self, session_id, *, app_action_reason="interrupted", stop_intent=None):
         self.check_owner()
+        if stop_intent is not None:
+            # HTTP disconnection must not abandon a committed Stop between its
+            # durable fence and active-task cancellation. The engine owns this
+            # control operation until it releases the session lock.
+            from .submissions import lookup_stop
+            async def apply():
+                async with self.controls.setdefault(session_id, asyncio.Lock()):
+                    receipt = await self.store.call(lambda db: lookup_stop(db, session_id, stop_intent.user_id, stop_intent.client_stop_id))
+                    if receipt is not None:
+                        return receipt
+                    revision = await self._stop(session_id, app_action_reason=app_action_reason, stop_intent=stop_intent)
+                try:
+                    await self.emit(session_id, 'refresh', {})
+                except Exception as exc:
+                    raise ServiceError('stop_acknowledgement_unavailable', 'Check the receipt for this Stop.', 503) from exc
+                return {'client_stop_id': stop_intent.client_stop_id, 'submission_revision': revision}
+            task = asyncio.create_task(apply(), name=f'athena-stop-{session_id}')
+            self.tool_controls.add(task)
+            def done(finished):
+                self.tool_controls.discard(finished)
+                if not finished.cancelled() and finished.exception():
+                    self.loop.call_exception_handler({'message': 'Athena durable Stop failed', 'exception': finished.exception()})
+            task.add_done_callback(done)
+            return await asyncio.shield(task)
         async with self.controls.setdefault(session_id, asyncio.Lock()):
-            await self._stop(session_id, app_action_reason=app_action_reason)
+            revision = await self._stop(session_id, app_action_reason=app_action_reason)
         await self.emit(session_id, "refresh", {})
+        return revision
 
-    async def _stop(self, session_id, *, app_action_reason="interrupted"):
+    async def _stop(self, session_id, *, app_action_reason="interrupted", stop_intent=None):
         self.check_owner()
         # Invalidate admissions still awaiting owner/model/credit preflight.
         # An interrupt checks its epoch first, then enqueues its own replacement
         # under the same lock after stopping the older work.
         self.stop_epochs[session_id] = self.stop_epochs.get(session_id, 0) + 1
         def cancel_queue(db):
+            db.execute("UPDATE sessions SET submission_revision=submission_revision+1 WHERE id=?", (session_id,))
             from .user_help import cancel_help
             from .app_controls import cancel_app_actions
             from .agents import cancel_branch, cancel_waits
@@ -137,7 +140,12 @@ class Engine:
                 cancel_app_actions(db, owner["user_id"], session_id=session_id, reason=app_action_reason)
             db.execute("UPDATE runs SET status='cancelled',phase='stopped',finished_at=? WHERE session_id=? AND status IN ('queued','waiting_user','waiting_agents')", (now(), session_id))
             db.execute("UPDATE messages SET status='cancelled' WHERE session_id=? AND status='queued'", (session_id,))
-        await self.store.call(cancel_queue)
+            from .submissions import record_stop, revision
+            current = revision(db, session_id)
+            if stop_intent is not None:
+                record_stop(db, session_id, stop_intent, current)
+            return current
+        submission_revision = await self.store.call(cancel_queue)
         task = self.active_runs.get(session_id)
         if task:
             task.cancel()
@@ -148,6 +156,7 @@ class Engine:
         children = await self.store.call(lambda db: cancel_branch(db, session_id))
         for child in children:
             await self.stop(child, app_action_reason=app_action_reason)
+        return submission_revision
 
     async def stop_from_tool(self, source_session, source_run, target_session):
         """An awaited, engine-owned stop survives cancellation of its requester."""
@@ -280,20 +289,29 @@ class Engine:
 
     async def prepare_memory(self, session_id, run_id):
         from .policies import PolicyRunner
-        from .memory import current_memories, snapshot_note
-        memories = await self.store.call(lambda db: current_memories(db, session_id))
-        identifiers = {row["id"] for row in memories}
+        from .memory import recall_candidates, snapshot_note
+        def prepare(db):
+            if db.execute('SELECT 1 FROM requests WHERE run_id=?', (run_id,)).fetchone():
+                return None
+            message = db.execute("SELECT content FROM messages WHERE session_id=? AND run_id=? AND role='user' ORDER BY seq LIMIT 1", (session_id, run_id)).fetchone()
+            if message is None:
+                raise ValueError('Memory recall requires an admitted input in this session')
+            return recall_candidates(db, session_id, message['content'])
+        payload = await self.store.call(prepare)
+        if payload is None:
+            return
+        identifiers = set(payload['default'])
         def validate(value):
             if not isinstance(value, list) or any(not isinstance(item, str) for item in value) or len(value) != len(set(value)) or set(value) - identifiers:
                 raise ValueError("Memory policy must select existing candidate IDs")
-        policy = await PolicyRunner(self.config, self.store).apply("memory_recall", session_id, {"default": [row["id"] for row in memories], "candidates": memories}, validate)
+        policy = await PolicyRunner(self.config, self.store).apply("memory_recall", session_id, payload, validate)
         environment = ""
         if self.config.execution_socket:
             from .capabilities import execution_capabilities
             environment = "\nExecution environment for this turn (host facts, superseding older availability reports): " + json.dumps(execution_capabilities(self.config))
         # The admitted input freezes recall before its first model request.
-        await self.store.call(lambda db: db.execute("UPDATE messages SET context_note=? WHERE run_id=? AND role='user'",
-            (snapshot_note(db, session_id, policy['value']) + environment, run_id)).rowcount)
+        await self.store.call(lambda db: db.execute("UPDATE messages SET context_note=? WHERE session_id=? AND run_id=? AND role='user' AND NOT EXISTS(SELECT 1 FROM requests WHERE run_id=?)",
+            (snapshot_note(db, session_id, policy['value'], candidate_ids=payload['default']) + environment, session_id, run_id, run_id)).rowcount)
 
     async def _run(self, session_id, run_id):
         request_id, message_id = None, None

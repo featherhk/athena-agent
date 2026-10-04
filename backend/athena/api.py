@@ -39,11 +39,17 @@ class Input(BaseModel):
     file_ids: list[str] = Field(default_factory=list, max_length=10)
     mode: Literal["queue", "interrupt"] = "queue"
     frontend_client_id: str | None = Field(default=None, max_length=64, min_length=1, pattern=r"^[a-zA-Z0-9_-]+$")
+    client_submission_id: str | None = Field(default=None, max_length=128, min_length=1, pattern=r"^[a-zA-Z0-9_-]+$")
+    expected_submission_revision: int | None = Field(default=None, ge=0, le=2**53 - 1, strict=True)
 
 
 class Credentials(BaseModel):
     username: str = Field(min_length=2, max_length=40, pattern=r"^[\w\-]+$")
     password: str = Field(min_length=8, max_length=128)
+
+
+class StopInput(BaseModel):
+    client_stop_id: str | None = Field(default=None, max_length=128, min_length=1, pattern=r'^[a-zA-Z0-9_-]+$')
 
 
 class DeveloperInput(BaseModel):
@@ -264,7 +270,7 @@ def create_app(config: Config | None = None):
 
     @app.post("/api/sessions")
     async def new_session(request: Request):
-        return {"id": await app.state.store.session(user_id=request.state.user["id"])}
+        return {"id": await app.state.store.session(user_id=request.state.user["id"]), "submission_revision": 0}
 
     @app.get("/api/sessions/{session_id}")
     async def snapshot(session_id: str, request: Request):
@@ -274,6 +280,7 @@ def create_app(config: Config | None = None):
             from .agents import branch, public_job
             history = Store._history(db, session_id)
             return {
+                "submission_revision": db.execute("SELECT submission_revision FROM sessions WHERE id=?", (session_id,)).fetchone()[0],
                 "messages": [public_message(row) for row in history if row["role"] in ("user", "assistant")],
                 "runs": [dict(row) for row in db.execute("SELECT * FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 50", (session_id,))],
                 "components": active_components(db, session_id),
@@ -314,6 +321,18 @@ def create_app(config: Config | None = None):
     async def submit(session_id: str, body: Input, request: Request):
         admission_epoch = app.state.engine.submission_epoch(session_id)
         await exists(session_id, request)
+        if (body.client_submission_id is None) != (body.expected_submission_revision is None):
+            raise ServiceError('invalid_submission_intent', 'Submission identity and revision must be supplied together.', 422)
+        if body.client_submission_id is not None:
+            from .submissions import SubmissionIntent
+            intent = SubmissionIntent(request.state.user['id'], body.client_submission_id, body.text,
+                                      body.mode, tuple(body.file_ids), body.expected_submission_revision)
+            async def load_attachments():
+                return await attachment_info(app.state.store, config, request.state.user['id'], session_id, body.file_ids)
+            return await app.state.engine.submit(session_id, body.text.strip(), body.mode,
+                _admission_epoch=admission_epoch, submission=intent, load_attachments=load_attachments,
+                frontend_client_id=body.frontend_client_id,
+                frontend_auth_hash=token_hash(request.cookies[COOKIE]) if body.frontend_client_id is not None else None)
         if not body.text.strip() and not body.file_ids:
             raise UserError("empty_message", "请写下你想做的事")
         attachments = await attachment_info(app.state.store, config, request.state.user["id"], session_id, body.file_ids)
@@ -322,11 +341,34 @@ def create_app(config: Config | None = None):
                 frontend_client_id=body.frontend_client_id,
                 frontend_auth_hash=token_hash(request.cookies[COOKIE]) if body.frontend_client_id is not None else None)}
 
-    @app.post("/api/sessions/{session_id}/stop")
-    async def stop(session_id: str, request: Request):
+    @app.get('/api/sessions/{session_id}/submissions/{client_submission_id}')
+    async def submission_receipt(session_id: str, client_submission_id: str, request: Request):
         await exists(session_id, request)
-        await app.state.engine.stop(session_id)
-        return {"ok": True}
+        from .submissions import lookup, revision
+        def read(db):
+            receipt = lookup(db, session_id, request.state.user['id'], client_submission_id)
+            if receipt is not None:
+                return {'found': True, **receipt}
+            return {'found': False, 'client_submission_id': client_submission_id,
+                    'submission_revision': revision(db, session_id, request.state.user['id'])}
+        return await app.state.store.call(read)
+
+    @app.post("/api/sessions/{session_id}/stop")
+    async def stop(session_id: str, request: Request, body: StopInput | None = None):
+        await exists(session_id, request)
+        if body is not None and body.client_stop_id is not None:
+            from .submissions import StopIntent
+            receipt = await app.state.engine.stop(session_id, stop_intent=StopIntent(request.state.user['id'], body.client_stop_id))
+            return {'ok': True, **receipt}
+        submission_revision = await app.state.engine.stop(session_id)
+        return {"ok": True, "submission_revision": submission_revision}
+
+    @app.get('/api/sessions/{session_id}/stops/{client_stop_id}')
+    async def stop_receipt(session_id: str, client_stop_id: str, request: Request):
+        await exists(session_id, request)
+        from .submissions import lookup_stop
+        receipt = await app.state.store.call(lambda db: lookup_stop(db, session_id, request.state.user['id'], client_stop_id))
+        return {'found': True, **receipt} if receipt is not None else {'found': False, 'client_stop_id': client_stop_id}
 
     @app.post("/api/sessions/{session_id}/fork")
     async def fork(session_id: str, request: Request):

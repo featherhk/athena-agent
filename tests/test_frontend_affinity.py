@@ -394,7 +394,8 @@ async def test_schema_13_upgrade_adds_only_empty_source_table_and_preserves_orig
         assert await restored.call(lambda db: originals(db, before)) == before
         assert set(await restored.call(originals)) - set(before) == {'run_frontend_sources'}
         assert not await restored.rows('SELECT * FROM run_frontend_sources')
-        assert (await restored.rows('PRAGMA user_version'))[0]['user_version'] == 14
+        from athena.store import SCHEMA_VERSION
+        assert (await restored.rows('PRAGMA user_version'))[0]['user_version'] == SCHEMA_VERSION
         assert (await restored.rows('PRAGMA integrity_check'))[0]['integrity_check'] == 'ok'
     finally:
         await restored.close()

@@ -6,6 +6,8 @@ import ts from 'typescript';
 import { DraftStore } from '../src/draft-store.ts';
 import { HelpDraftStore } from '../src/help-drafts.ts';
 import { SubmissionBarrier } from '../src/submission-barrier.ts';
+import { SubmissionIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected } from '../src/submission-intents.ts';
+import { frontendRequest } from '../src/frontend-request.ts';
 import { VoiceSubmissionError, VoiceSubmissionReceipt } from '../src/voice-recovery.ts';
 import { SubmissionSourceError } from '../src/frontend-submission.ts';
 import { scopeGuard } from '../src/app-actions.ts';
@@ -26,7 +28,7 @@ const lifecycle = app.body.statements.slice(app.body.statements.findIndex(node =
   .filter(node => !declares(node, ['rendererIdentity', 'rendererActivation', 'rendererRevision'])).map(node => node.getText(source)).join('\n');
 const compiled = ts.transpileModule(`function bind({user,session,renderer,rendererKey,snapshot,orbPhase,locale,reduced,sending,uploading,resetting,text,attached,help,activeRendererActivation}) {
   ${variable('helpDraftScope')}
-  ${['currentGuard', 'submissionScope', 'showDraft', 'editDraft', 'submit', 'invalidateActions', 'stop', 'openFiles', 'returnToDefault'].map(fn).join('\n')}
+  ${['currentGuard', 'submissionScope', 'showDraft', 'editDraft', 'acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'invalidateActions', 'stop', 'openFiles', 'returnToDefault'].map(fn).join('\n')}
   ${variable('surfaceScope')}
   ${variable('surfaceHost')}
   return surfaceHost;
@@ -48,11 +50,15 @@ const copy = value => structuredClone(value);
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const file = id => ({ id, name: `${id}.md`, content_url: `/api/files/${id}/content` });
 const rejects = (promise, code) => assert.rejects(promise, error => error instanceof SurfaceError && error.message === code);
-const ticks = async () => { for (let tick = 0; tick < 5; tick++) await Promise.resolve(); };
+const ticks = async () => { for (let tick = 0; tick < 15; tick++) await Promise.resolve(); };
+const receipt = (body, run_id = 'accepted-run', revision = body.expected_submission_revision) => ({
+  accepted: true, run_id, status: 'queued', client_submission_id: body.client_submission_id,
+  submission_revision: revision, replayed: false,
+});
 
 function fixture() {
   const state = { user: { id: 'alice' }, session: 'travel', renderer: { id: 'canvas' }, rendererKey: 'alice:travel:canvas:1:en',
-    snapshot: { cursor: 5, messages: [{ id: 'message', role: 'assistant', content: 'Real answer', reasoning: 'Visible reasoning', status: 'complete' }],
+    snapshot: { cursor: 5, submission_revision: 0, messages: [{ id: 'message', role: 'assistant', content: 'Real answer', reasoning: 'Visible reasoning', status: 'complete' }],
       runs: [{ id: 'run', status: 'complete', phase: 'responding', error_code: null, provider_request: 'must stay private' }],
       help_requests: [], files: [file('report')], components: [{ id: 'canvas', placement: 'surface', version: 1, view_revision: 0 }] },
     orbPhase: 'idle', locale: 'en', reduced: true, sending: false, uploading: false, resetting: false, text: '', attached: [], help: null,
@@ -60,12 +66,17 @@ function fixture() {
   const uiScope = { current: { owner: 'alice', session: 'travel', generation: 1, control: 0 } };
   const rendererIdentity = { current: state.rendererKey }, rendererRevision = { current: 0 }, rendererActivation = { current: 1 }, drafts = { current: new DraftStore() }, helpDrafts = { current: new HelpDraftStore() };
   const submissions = { current: new SubmissionBarrier() }, calls = [], views = [], errors = [];
-  let transport = async path => path.endsWith('/messages') ? { run_id: 'accepted-run' } : path.endsWith('/stop') ? { ok: true } : { files: [] };
+  const intents = { current: new SubmissionIntents() }, reconcilingIntents = { current: new Set() };
+  intents.current.observe('alice', 'travel', state.snapshot.submission_revision);
+  let transport = async (path, body) => path.endsWith('/messages') ? receipt(body)
+    : path.endsWith('/stop') ? { ok: true, client_stop_id: body.client_stop_id, submission_revision: 1 } : { files: [], submission_revision: 0 };
   let prepare = async (_, client) => client;
   let layoutTransport = async () => {};
   let fileTransport = async () => new Response(JSON.stringify({ kind: 'text', content: 'File content', truncated: false }));
   const surfaceFileSnapshot = { current: state.snapshot };
   const env = { drafts, helpDrafts, uiScope, rendererIdentity, rendererRevision, rendererActivation, submissions, VoiceSubmissionError, VoiceSubmissionReceipt, SubmissionSourceError,
+    intents, reconcilingIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected, frontendRequest,
+    AbortController, crypto: globalThis.crypto, refreshIntents() {},
     SurfaceError, messagePage, scopeGuard, selectedSurface, dismissSurfaces, surfacesDismissed, surfaceFailed, findSurfaceFile, surfaceFileSnapshot,
     readSurfaceFile: (...args) => readSurfaceFile(...args, (...fetchArgs) => fileTransport(...fetchArgs)), appClient: { current: 'client-one' },
     conversationScroll: { policy: { resume() {} } }, input: { current: null },
@@ -86,6 +97,7 @@ function fixture() {
   };
   const context = vm.createContext(env); vm.runInContext(compiled, context);
   return { state, uiScope, rendererIdentity, rendererRevision, rendererActivation, drafts, calls, views, errors,
+    receipt: (runId, index = 0) => receipt(calls.filter(call => call.path.endsWith('/messages'))[index].body, runId),
     render: () => { surfaceFileSnapshot.current = state.snapshot; return context.bind({ ...state, attached: [...state.attached], activeRendererActivation: rendererActivation.current }); },
     selected: () => context.selection(state),
     observation: () => copy(context.observation(state)), health: (key, revision, value, activation = rendererActivation.current) => context.healthHandler()(key, revision, activation, value),
@@ -124,11 +136,14 @@ test('surface send waits for a real receipt and clears only the submitted canoni
   f.transport(() => gate.promise);
   const host = f.render(), pending = host.call('request', { action: 'send', expected_revision: saved.revision, mode: 'queue' });
   await ticks();
-  assert.deepEqual(f.calls, [{ path: '/sessions/travel/messages', body: { text: saved.text, mode: 'queue', file_ids: ['trip'], frontend_client_id: 'client-one' } }]);
+  assert.equal(f.calls.length, 1);
+  assert.match(f.calls[0].body.client_submission_id, /^[a-zA-Z0-9_-]+$/);
+  assert.deepEqual(f.calls, [{ path: '/sessions/travel/messages', body: { text: saved.text, mode: 'queue', file_ids: ['trip'], frontend_client_id: 'client-one',
+    client_submission_id: f.calls[0].body.client_submission_id, expected_submission_revision: 0 } }]);
   assert.deepEqual(f.drafts.current.read('alice', 'travel'), saved);
   await rejects(host.call('request', { action: 'send', expected_revision: saved.revision }), 'not_sent');
   assert.equal(f.calls.length, 1, 'A second concurrent request cannot dispatch the same draft again');
-  gate.resolve({ run_id: 'durable-run' });
+  gate.resolve(f.receipt('durable-run'));
   assert.deepEqual(copy(await pending), { status: 'accepted', run_id: 'durable-run' });
   const after = f.drafts.current.read('alice', 'travel'); assert.equal(after.text, ''); assert.deepEqual(after.attached, []);
 });
@@ -139,9 +154,9 @@ test('a new edit while send is pending survives its old receipt', async () => {
   const host = f.render(), pending = host.call('request', { action: 'send', expected_revision: first.revision });
   await ticks();
   f.draft({ text: 'Next request still being written', attached: [file('first'), file('next')] });
-  gate.resolve({ run_id: 'first-run' }); await pending;
+  gate.resolve(f.receipt('first-run')); await pending;
   const after = f.drafts.current.read('alice', 'travel');
-  assert.equal(after.text, 'Next request still being written'); assert.deepEqual(after.attached, [file('next')]);
+  assert.equal(after.text, 'Next request still being written'); assert.deepEqual(after.attached, [file('first'), file('next')]);
 });
 
 test('lost or malformed send receipts preserve the draft and never cause an automatic retry', async () => {
@@ -149,8 +164,10 @@ test('lost or malformed send receipts preserve the draft and never cause an auto
     const f = fixture(); const original = f.draft({ text: 'One real instruction', attached: [file('keep')] });
     f.transport(transport);
     await rejects(f.render().call('request', { action: 'send', expected_revision: original.revision }), 'delivery_unknown');
-    assert.deepEqual(f.drafts.current.read('alice', 'travel'), original); assert.equal(f.calls.length, 1);
-    await ticks(); assert.equal(f.calls.length, 1); assert.equal(f.state.sending, false);
+    assert.deepEqual(f.drafts.current.read('alice', 'travel'), original);
+    assert.equal(f.calls.filter(call => call.path.endsWith('/messages')).length, 1);
+    assert.equal(f.calls.filter(call => call.path.includes('/submissions/')).length, 1, 'Only a read-only receipt lookup follows an uncertain POST');
+    await ticks(); assert.equal(f.calls.length, 2); assert.equal(f.state.sending, false);
   }
 });
 
@@ -178,6 +195,7 @@ test('Stop during frontend preparation prevents send and preserves the surface d
   const f = fixture(), gate = deferred(); const original = f.draft({ text: 'Do not start after stopping', attached: [file('keep')] });
   f.prepare(() => gate.promise);
   const host = f.render(), pending = host.call('request', { action: 'send', expected_revision: original.revision });
+  await ticks();
   assert.deepEqual(copy(await host.call('request', { action: 'stop' })), { status: 'applied' });
   gate.resolve('client-one'); await rejects(pending, 'not_sent');
   assert.deepEqual(f.calls.map(item => item.path), ['/sessions/travel/stop']);

@@ -13,6 +13,7 @@ type Props = {
   busy: boolean;
   disabled?: boolean;
   ensureSession: () => Promise<string | null>;
+  hasPendingDelivery?: (text: string) => boolean;
   submit: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
   onActiveChange?: (active: boolean) => void;
@@ -76,6 +77,7 @@ export default function VoiceCall(props: Props) {
         recover: (text, delivery) => {
           // Logout retires outstanding promises as well as visible recovery data.
           recovery.current.selectOwner(current.current.ownerId);
+          if (delivery === 'unknown' && current.current.hasPendingDelivery?.(text)) return;
           if (recovery.current.retain(recoveryScope, text, new VoiceSubmissionError(delivery))) refreshRecovery(value => value + 1);
         },
         submit: text => ownsCall() ? current.current.submit(text) : Promise.reject(new VoiceSubmissionError('not_sent')),

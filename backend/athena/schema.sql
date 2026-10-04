@@ -15,7 +15,7 @@ INSERT OR IGNORE INTO projects VALUES ('personal', '我的事情');
 CREATE TABLE IF NOT EXISTS sessions (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL,
  parent_id TEXT REFERENCES sessions(id), fork_seq INTEGER, created_at TEXT NOT NULL,
- user_id TEXT REFERENCES users(id)
+ user_id TEXT REFERENCES users(id), submission_revision INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS runs (
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -31,6 +31,22 @@ CREATE TABLE IF NOT EXISTS requests (
  id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), model TEXT NOT NULL,
  input TEXT NOT NULL, status TEXT NOT NULL, response TEXT, usage TEXT, error TEXT,
  created_at TEXT NOT NULL, finished_at TEXT
+);
+CREATE TABLE IF NOT EXISTS submission_receipts (
+ user_id TEXT NOT NULL REFERENCES users(id),
+ session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ client_submission_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
+ run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+ message_id TEXT NOT NULL REFERENCES messages(id),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(user_id,session_id,client_submission_id)
+);
+CREATE TABLE IF NOT EXISTS stop_receipts (
+ user_id TEXT NOT NULL REFERENCES users(id),
+ session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ client_stop_id TEXT NOT NULL, submission_revision INTEGER NOT NULL,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(user_id,session_id,client_stop_id)
 );
 CREATE TABLE IF NOT EXISTS events (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id),

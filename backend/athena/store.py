@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def now() -> str:
@@ -59,6 +59,7 @@ class Store:
                 ("components", "placement", "TEXT NOT NULL DEFAULT 'inline'"),
                 ("sessions", "model_profile_id", "TEXT NOT NULL DEFAULT 'default'"),
                 ("sessions", "model_epoch", "INTEGER NOT NULL DEFAULT 0"),
+                ("sessions", "submission_revision", "INTEGER NOT NULL DEFAULT 0"),
                 ("requests", "profile_snapshot", "TEXT"), ("requests", "context_epoch", "INTEGER"),
                 ("requests", "response_model", "TEXT"), ("requests", "error_code", "TEXT"),
                 ("runs", "error_code", "TEXT"),
@@ -174,8 +175,13 @@ class Store:
             db.execute("UPDATE sessions SET title=? WHERE id=? AND title='新的事情'", (text[:24], session_id))
         return identifier
 
-    async def enqueue(self, session_id, text, attachments=None, *, frontend_source=None):
-        return await self.call(lambda db: self._enqueue(db, session_id, text, attachments, frontend_source=frontend_source))
+    async def enqueue(self, session_id, text, attachments=None, *, frontend_source=None,
+                      submission=None, admission_revision=None):
+        if submission is None:
+            return await self.call(lambda db: self._enqueue(db, session_id, text, attachments, frontend_source=frontend_source))
+        from .submissions import accept
+        return await self.call(lambda db: accept(db, session_id, text, attachments, frontend_source,
+                                                submission, admission_revision))
 
     async def claim(self, session_id):
         def claim(db):

@@ -6,6 +6,9 @@ import type { Phase } from './Orb';
 import TaskContinuity, { useTaskContinuity, useVisibleActivity } from './TaskContinuity';
 import type { ActivityItem } from './task-continuity';
 import { SubmissionSourceError } from './frontend-submission';
+import { frontendRequest } from './frontend-request';
+import { SubmissionIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected } from './submission-intents';
+import type { SubmissionIntent, SubmissionReceipt, StopIntent } from './submission-intents';
 import Widget from './Widget';
 import { selectedSurface, surfaceRecovery, messagePage, dismissSurfaces, surfacesDismissed, surfaceFailed, SurfaceError, type SurfaceHealth, type SurfaceDismissal, type SurfaceHost, type SurfaceState } from './surface-runtime';
 import { findSurfaceFile, readSurfaceFile } from './surface-files';
@@ -110,6 +113,9 @@ export default function App() {
   const authEpoch = useRef(0);
   const uiScope = useRef<AppScope>({ owner: null, session: null, generation: 0, control: 0 });
   const drafts = useRef<DraftStore | null>(null);
+  const intents = useRef<SubmissionIntents | null>(null);
+  const [, refreshIntents] = useState(0);
+  const reconcilingIntents = useRef(new Set<string>());
   const helpDrafts = useRef<HelpDraftStore | null>(null);
   const [, setHelpDraftRevision] = useState(0);
   const selection = useRef<SessionSelection | null>(null);
@@ -122,6 +128,7 @@ export default function App() {
   if (!drafts.current) {
     let storage: Storage | null = null; try { storage = sessionStorage; } catch { /* Use memory. */ }
     drafts.current = new DraftStore(storage);
+    intents.current = new SubmissionIntents(storage);
     helpDrafts.current = new HelpDraftStore(storage);
   }
   const appActionSeen = useRef(new Set<string>());
@@ -135,8 +142,10 @@ export default function App() {
   const composer = useRef<HTMLElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const conversationScroll = useConversationScroll(setReading);
+  const pendingIntents = user && session ? intents.current!.list(user.id, session) : [];
+  const pendingStops = user && session ? intents.current!.pendingStops(user.id, session) : [];
   const upgradeState = useRef({ user, session, text, attached, safe: false });
-  upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !activity && !menu && !surfaces };
+  upgradeState.current = { user, session, text, attached, safe: pendingIntents.length === 0 && pendingStops.length === 0 && !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !activity && !menu && !surfaces };
   const busy = snapshot.runs.some(run => ['running', 'queued', 'waiting_agents'].includes(run.status));
   const waitingAgents = snapshot.runs.some(run => run.status === 'waiting_agents');
   const help = snapshot.help_requests?.[0];
@@ -469,6 +478,7 @@ export default function App() {
           again = false;
           const next = await api<Snapshot>(`/sessions/${session}`);
           if (disposed || ticket !== generation.current) return;
+          intents.current!.observe(user.id, session, next.submission_revision);
           if (next.cursor >= structuralFloor) { seen = Math.max(seen, next.cursor); setSnapshot(old => mergeSnapshot(old, next, messageVersions, structuralFloor) || old); if (next.preferences) applyPreferences(next.preferences); if (next.account_action) receiveAction(next.account_action); const active = next.runs.find(run => run.status === 'running'); if (active?.phase) setPhase(active.phase as Phase); }
           else again = true;
         } while (again && !disposed);
@@ -524,9 +534,83 @@ export default function App() {
     return () => { disposed = true; clearInterval(timer); };
   }, [history, user?.id]);
 
+  useEffect(() => {
+    if (!user || !session) return;
+    const owner = user.id, sid = session;
+    const check = () => {
+      if (document.hidden || uiScope.current.owner !== owner || uiScope.current.session !== sid) return;
+      for (const intent of intents.current!.pendingStops(owner, sid)) void reconcileStop(intent);
+      for (const intent of intents.current!.list(owner, sid)) void reconcileSubmission(intent);
+    };
+    check();
+    window.addEventListener('online', check);
+    document.addEventListener('visibilitychange', check);
+    return () => { window.removeEventListener('online', check); document.removeEventListener('visibilitychange', check); };
+  }, [user?.id, session]);
+
+  function acceptSubmission(intent: SubmissionIntent, receipt: SubmissionReceipt) {
+    intents.current!.observe(intent.owner, intent.session, receipt.submission_revision);
+    const stored = intents.current!.list(intent.owner, intent.session).find(item => item.id === intent.id);
+    if (stored && !stored.preserveDraft && intent.draft) {
+      const remaining = drafts.current!.acknowledged(intent.owner, intent.session, intent.draft);
+      if (uiScope.current.owner === intent.owner && uiScope.current.session === intent.session) showDraft(remaining);
+    }
+    intents.current!.remove(intent); refreshIntents(old => old + 1);
+  }
+  async function reconcileSubmission(intent: SubmissionIntent): Promise<SubmissionReceipt | null> {
+    const key = JSON.stringify([intent.owner, intent.session, intent.id]);
+    if (reconcilingIntents.current.has(key) || uiScope.current.owner !== intent.owner) return null;
+    reconcilingIntents.current.add(key);
+    try {
+      const raw = await frontendRequest(new AbortController().signal, signal => api(`/sessions/${intent.session}/submissions/${intent.id}`, undefined, signal));
+      if (uiScope.current.owner !== intent.owner) return null;
+      const receipt = readSubmissionLookup(raw, intent.id);
+      intents.current!.observe(intent.owner, intent.session, receipt.submission_revision);
+      if (!receipt.found) return null;
+      acceptSubmission(intent, receipt); return receipt;
+    } catch { return null; /* A missing or unreachable receipt is still uncertain. */ }
+    finally { reconcilingIntents.current.delete(key); }
+  }
+  async function submissionRevision(owner: string, sid: string): Promise<number> {
+    await Promise.all(intents.current!.pendingStops(owner, sid).map(intent => reconcileStop(intent)));
+    if (intents.current!.needsStopReceipt(owner, sid) || intents.current!.pendingStops(owner, sid).length) throw new Error(t('send.stopUnknown'));
+    const cached = intents.current!.revision(owner, sid);
+    if (cached !== undefined) return cached;
+    const epoch = intents.current!.epoch(owner, sid);
+    const next = await frontendRequest(new AbortController().signal, signal => api<Snapshot>(`/sessions/${sid}`, undefined, signal));
+    return intents.current!.refreshed(owner, sid, next.submission_revision, epoch);
+  }
+  async function reconcileStop(intent: StopIntent): Promise<number | null> {
+    if (uiScope.current.owner !== intent.owner) return null;
+    try {
+      const raw = await frontendRequest(new AbortController().signal, signal => api(`/sessions/${intent.session}/stops/${intent.id}`, undefined, signal));
+      if (uiScope.current.owner !== intent.owner) return null;
+      const revision = readStopReceipt(raw, intent.id, true);
+      if (revision === null) return null;
+      intents.current!.confirmStop(intent, revision); refreshIntents(old => old + 1);
+      return revision;
+    } catch { return null; }
+  }
+  async function stopSession(owner: string, sid: string, retry?: StopIntent) {
+    const intent = retry || { id: crypto.randomUUID(), owner, session: sid };
+    if (intent.owner !== owner || intent.session !== sid) throw new Error('submission_conflict');
+    if (retry && await reconcileStop(intent) !== null) return;
+    intents.current!.addStop(intent); intents.current!.stopStarted(owner, sid); refreshIntents(old => old + 1);
+    let revision: number | undefined;
+    try {
+      const receipt = await frontendRequest(new AbortController().signal, signal => api(`/sessions/${sid}/stop`, { client_stop_id: intent.id }, signal), 20000);
+      revision = readStopReceipt(receipt, intent.id)!;
+      intents.current!.confirmStop(intent, revision);
+    } catch (error) {
+      const found = await reconcileStop(intent);
+      if (found === null) throw error;
+      revision = found;
+    } finally { intents.current!.stopFinished(owner, sid, revision); refreshIntents(old => old + 1); }
+  }
+
   function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
-  async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false) {
-    if ((!value.trim() && (!fromComposer || attached.length === 0)) || sending || resetting || uploading) {
+  async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false, retryIntent?: SubmissionIntent) {
+    if ((!value.trim() && (!fromComposer || attached.length === 0) && !retryIntent) || sending || resetting || uploading) {
       if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       return;
     }
@@ -535,6 +619,7 @@ export default function App() {
     if (!submission) { if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy')); return; }
     const voiceReceipt = throwOnError ? new VoiceSubmissionReceipt() : null;
     let acceptedReceipt: { status: 'accepted'; run_id?: string; help_id?: string } | undefined;
+    let intent: SubmissionIntent | undefined, dispatched = false, retrying = false;
     const owner = user.id, control = uiScope.current.control;
     let isCurrent = currentGuard(), sid = session;
     let sentDraft = drafts.current!.read(owner, sid);
@@ -548,7 +633,12 @@ export default function App() {
         navigate(sid, true); submissions.current.move(submission, submissionScope()); isCurrent = currentGuard(); setSending(true);
         sentDraft = { ...sentDraft, revision: unchanged ? drafts.current!.read(owner, sid).revision : -1 };
       }
-      if (help && fromComposer && mode === 'queue' && help.questions.length === 1) {
+      intent = retryIntent || (fromComposer ? intents.current!.forDraft(owner, sid, sentDraft) : undefined);
+      if (!intent && help && fromComposer && mode === 'queue' && help.questions.length === 1) {
+        if (intents.current!.pendingStops(owner, sid).length || intents.current!.needsStopReceipt(owner, sid)) {
+          await submissionRevision(owner, sid);
+          if (!isCurrent()) { if (throwOnError) throw new VoiceSubmissionError('not_sent'); return; }
+        }
         const sentAnswers = helpDraftScope ? helpDrafts.current!.read(helpDraftScope) : null;
         voiceReceipt?.dispatch();
         const accepted = await api(`/sessions/${sid}/help/${help.id}/answer`, { answers: { [help.questions[0].id]: value }, file_ids: [...sentFiles] });
@@ -559,24 +649,56 @@ export default function App() {
         voiceReceipt?.confirm();
         acceptedReceipt = { status: 'accepted', help_id: help.id };
       } else {
+        if (intent && (intent.owner !== owner || intent.session !== sid)) throw new Error('submission_conflict');
+        retrying = Boolean(intent);
+        if (intent) {
+          const known = await reconcileSubmission(intent);
+          if (known) { voiceReceipt?.confirm(); return { status: 'accepted' as const, run_id: known.run_id }; }
+        }
+        // Freeze the server fence before asynchronous frontend preparation. A
+        // later Stop must reject this intent, not let it acquire a newer fence.
+        const observedRevision = await submissionRevision(owner, sid);
+        const revision = intent?.revision ?? observedRevision;
         const clientId = appClient.current;
         const frontendClientId = await frontendObservation.prepareSubmission(sid, clientId, () => isCurrent() && appClient.current === clientId);
         if (!isCurrent()) { if (throwOnError) throw new VoiceSubmissionError('not_sent'); return; }
-        voiceReceipt?.dispatch();
-        const receipt = await api<{ run_id: string }>(`/sessions/${sid}/messages`, { text: value, mode, file_ids: [...sentFiles], frontend_client_id: frontendClientId });
-        if (voiceReceipt && (typeof receipt?.run_id !== 'string' || !receipt.run_id)) throw new Error('voice_interrupted');
-        voiceReceipt?.confirm();
+        if (!intent) {
+          intent = { id: crypto.randomUUID(), owner, session: sid, text: value, mode, file_ids: [...sentFiles], revision,
+            draft: fromComposer && sentDraft.revision >= 0 ? sentDraft : null };
+          intents.current!.add(intent);
+        }
+        voiceReceipt?.dispatch(); dispatched = true;
+        const raw = await frontendRequest(new AbortController().signal,
+          signal => api(`/sessions/${sid}/messages`, submissionBody(intent!, frontendClientId), signal), 20000);
+        const receipt = readSubmissionReceipt(raw, intent.id);
+        voiceReceipt?.confirm(); acceptSubmission(intent, receipt);
         acceptedReceipt = { status: 'accepted', run_id: receipt.run_id };
       }
-      if (fromComposer && uiScope.current.control === control) {
+      if (!intent && fromComposer && uiScope.current.control === control) {
         const remaining = drafts.current!.submitted(owner, sid, sentDraft);
         if (uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(remaining);
         if (isCurrent()) input.current?.focus();
       }
     } catch (e) {
-      const failure = voiceReceipt?.failure(e);
-      if (isCurrent() && !failure) setError(e instanceof SubmissionSourceError ? fromComposer ? t('send.notSent') : errorMessage(e.code) : (e as Error).message);
-      if (failure) throw failure;
+      if (intent && dispatched) {
+        const rejected = submissionRejected(e) && (!retrying || (e as { code?: string }).code === 'submission_revision_conflict');
+        if (rejected) {
+          if ((e as { code?: string }).code === 'submission_revision_conflict') intents.current!.invalidate(owner, sid!);
+          intents.current!.remove(intent); refreshIntents(old => old + 1);
+          if (isCurrent()) setError((e as { code?: string }).code === 'submission_revision_conflict' ? t('send.notSent') : (e as Error).message);
+          if (throwOnError) throw new VoiceSubmissionError('not_sent', e);
+        } else {
+          refreshIntents(old => old + 1);
+          // Check once; never automatically repeat a possibly accepted POST.
+          const known = await reconcileSubmission(intent);
+          if (known) return { status: 'accepted' as const, run_id: known.run_id };
+          if (throwOnError) throw new VoiceSubmissionError('unknown', e);
+        }
+      } else {
+        const failure = retrying && intent && throwOnError ? new VoiceSubmissionError('unknown', e) : voiceReceipt?.failure(e);
+        if (isCurrent() && !failure) setError(e instanceof SubmissionSourceError ? fromComposer ? t('send.notSent') : errorMessage(e.code) : (e as Error).message);
+        if (failure) throw failure;
+      }
     }
     finally { finishSubmission(submission, isCurrent); }
     return acceptedReceipt;
@@ -599,11 +721,15 @@ export default function App() {
       if (!question || !value.trim()) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       const submission = submissions.current.begin(submissionScope());
       if (!submission) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
-      const receipt = new VoiceSubmissionReceipt();
+      const receipt = new VoiceSubmissionReceipt(), isCurrent = currentGuard();
       try {
         const sent = helpDrafts.current!.write(helpDraftScope, { ...saved.answers, [question.id]: value });
         setHelpDraftRevision(old => old + 1);
         if (help.questions.every(item => sent.answers[item.id]?.trim())) {
+          if (intents.current!.pendingStops(user!.id, session).length || intents.current!.needsStopReceipt(user!.id, session)) {
+            await submissionRevision(user!.id, session);
+            if (!isCurrent()) throw new VoiceSubmissionError('not_sent');
+          }
           receipt.dispatch();
           const accepted = await api(`/sessions/${session}/help/${help.id}/answer`, { answers: sent.answers, file_ids: [] });
           if (!helpDrafts.current!.acknowledge(helpDraftScope, sent, accepted)) throw new Error('voice_interrupted');
@@ -620,17 +746,19 @@ export default function App() {
     // remains available for the user's spoken answer.
     if (!session || help) return;
     invalidateActions();
-    await api(`/sessions/${session}/stop`, {});
+    await stopSession(user!.id, session);
   }
   function invalidateActions() {
+    const { owner, session: sid } = uiScope.current;
+    if (owner && sid) { intents.current!.invalidate(owner, sid); intents.current!.preserveDrafts(owner, sid); }
     uiScope.current.control++; setChooseFiles(false); setSending(false); setUploading(false);
   }
-  async function stop(throwOnError = false) {
+  async function stop(throwOnError = false, retry?: StopIntent) {
     setVoiceRecovery(old => old + 1);
     invalidateActions(); const isCurrent = currentGuard();
     // Also cancel local preparation before the first session has been created.
     if (!session) return;
-    try { await api(`/sessions/${session}/stop`, {}); if (isCurrent()) setPhase('stopped'); }
+    try { await stopSession(user!.id, session, retry); if (isCurrent()) setPhase('stopped'); }
     catch (e) { if (isCurrent()) setError((e as Error).message); if (throwOnError) throw e; }
   }
   async function answerHelp(answers: Record<string, string>) {
@@ -642,6 +770,10 @@ export default function App() {
     const sentFiles = new Set(attached.map(file => file.id));
     setSending(true); setError('');
     try {
+      if (intents.current!.pendingStops(owner, sid).length || intents.current!.needsStopReceipt(owner, sid)) {
+        await submissionRevision(owner, sid);
+        if (!isCurrent()) return;
+      }
       const receipt = await api(`/sessions/${sid}/help/${help.id}/answer`, { answers, file_ids: [...sentFiles] });
       if (!helpDrafts.current!.acknowledge(answerScope, sentAnswers, receipt)) throw new Error(errorMessage('invalid_response'));
       setHelpDraftRevision(old => old + 1);
@@ -891,7 +1023,22 @@ export default function App() {
         change={answers => { if (!helpDraftScope) return; helpDrafts.current!.write(helpDraftScope, answers); setHelpDraftRevision(old => old + 1); }}
         select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
       {busy && !waiting && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : waitingAgents ? t('agents.waiting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
-      {error && <div className="notice" role="alert">{error}{!ready && <button className="quiet" onClick={() => void loadAccount()}>{t('retry')}</button>}</div>}
+      {pendingStops.length > 0 && <section className="submission-recovery notice" data-stop-recovery role="region" aria-label={t('send.stopUnknown')}>
+        <p role="status">{t('send.stopUnknown')}</p>
+        {pendingStops.map(intent => <div key={intent.id} data-stop-id={intent.id}>
+          <button className="quiet" type="button" data-stop-check onClick={() => void reconcileStop(intent)}>{t('send.check')}</button>
+          <button className="quiet" type="button" data-stop-retry disabled={intents.current!.needsStopReceipt(intent.owner, intent.session)} onClick={() => void stop(false, intent)}>{t('send.retryStop')}</button>
+        </div>)}
+      </section>}
+      {pendingIntents.length > 0 && !sending && <section className="submission-recovery notice" data-submission-recovery role="region" aria-label={t('send.pending')}>
+        <p role="status">{t('send.unknown')}</p>
+        {pendingIntents.map(intent => <div key={intent.id} data-submission-id={intent.id}>
+          <p className="submission-excerpt" dir="auto">{intent.text || t('files.attached')}{intent.file_ids.length > 0 && <small> · {t('files.attached')} ({intent.file_ids.length})</small>}</p>
+          <button className="quiet" type="button" data-submission-check onClick={() => void reconcileSubmission(intent)}>{t('send.check')}</button>
+          <button className="quiet" type="button" data-submission-retry disabled={resetting || uploading} onClick={() => void submit(intent.text, intent.mode, false, false, intent)}>{t('send.retryOriginal')}</button>
+        </div>)}
+      </section>}
+      {error && error !== t('send.stopUnknown') && <div className="notice" role="alert">{error}{!ready && <button className="quiet" onClick={() => void loadAccount()}>{t('retry')}</button>}</div>}
       {!error && serviceMessage && <div className="notice" role="status">{serviceMessage}</div>}
       {attached.length > 0 && <div className="attachment-tray" aria-label={t('files.attached')}>{attached.map(file => fileCard(file, true))}</div>}
       {uploading && <p className="activity" role="status">{t('files.uploading')}</p>}
@@ -901,7 +1048,7 @@ export default function App() {
         {!renderer && <><button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
         <textarea dir="auto" ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
         </>}<div className="send-actions" key="actions">
-          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
+          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading || pendingIntents.length > 0 || pendingStops.length > 0} hasPendingDelivery={value => Boolean(user && session && intents.current!.list(user.id, session).some(intent => !intent.draft && intent.text === value))} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
           {!renderer && <ComposerActions busy={busy} sending={sending} questions={help?.questions.length || 0} text={text} attachmentCount={attached.length}
             disabled={sending || uploading || !ready || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />}
         </div>

@@ -12,5 +12,7 @@ export function mergeSnapshot(current: Snapshot, incoming: Snapshot, messageVers
   for (const message of current.messages) {
     if (!incomingIds.has(message.id) && (messageVersions.get(message.id) || 0) > incoming.cursor) messages.push(message);
   }
-  return { ...incoming, messages, cursor: Math.max(current.cursor, incoming.cursor) };
+  return { ...incoming, messages, cursor: Math.max(current.cursor, incoming.cursor),
+    submission_revision: current.submission_revision === undefined ? incoming.submission_revision
+      : Math.max(current.submission_revision, incoming.submission_revision ?? 0) };
 }

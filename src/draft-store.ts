@@ -51,4 +51,12 @@ export class DraftStore {
       attached: current.attached.filter(file => !fileIds.has(file.id)),
     });
   }
+  acknowledged(owner: string, session: string, sent: Draft): Draft {
+    const current = this.read(owner, session);
+    // A revision includes attachment edits. Removing and then reattaching the
+    // same file is a new draft, even when its final contents happen to match.
+    if (current.revision !== sent.revision || current.text !== sent.text
+      || JSON.stringify(current.attached.map(file => file.id)) !== JSON.stringify(sent.attached.map(file => file.id))) return current;
+    return this.write(owner, session, { text: '', attached: [] });
+  }
 }
