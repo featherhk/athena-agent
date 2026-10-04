@@ -5,6 +5,20 @@ struct HostPolicy {
     let home: URL
     static let production = HostPolicy(home: URL(string: "https://chat.athena.featherhk.com/")!)
 
+    /// User-requested recovery bypasses registered surfaces, while retaining login and data.
+    var recoveryHome: URL {
+        var components = URLComponents(url: home, resolvingAgainstBaseURL: false)!
+        components.queryItems = (components.queryItems ?? []).filter { $0.name != "recovery" }
+            + [URLQueryItem(name: "recovery", value: "1")]
+        return components.url!
+    }
+
+    func canDownload(_ response: URLResponse) -> Bool {
+        guard owns(response.url), let response = response as? HTTPURLResponse else { return false }
+        // An expired login or missing attachment is an error, never a file to share.
+        return (200..<300).contains(response.statusCode)
+    }
+
     func owns(_ url: URL?) -> Bool {
         guard let url, url.user == nil, url.password == nil else { return false }
         return url.scheme?.lowercased() == home.scheme?.lowercased()

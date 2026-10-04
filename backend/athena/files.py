@@ -5,6 +5,7 @@ loop; directory descriptors prevent path replacement from escaping a workspace.
 """
 from contextlib import contextmanager
 import asyncio
+import hashlib
 import io
 import mimetypes
 import os
@@ -21,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .store import now, uid
+from .document_preview import docx_preview
 
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_TEXT_BYTES = 512 * 1024
@@ -32,12 +34,24 @@ DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
 async def initialize_files(store):
-    await store.execute("""CREATE TABLE IF NOT EXISTS file_entries (
-        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
-        session_id TEXT NOT NULL REFERENCES sessions(id), name TEXT NOT NULL,
-        path TEXT NOT NULL, size INTEGER NOT NULL, media_type TEXT NOT NULL,
-        source TEXT NOT NULL, created_at TEXT NOT NULL,
-        UNIQUE(user_id,session_id,path))""")
+    def migrate(db):
+        db.execute("""CREATE TABLE IF NOT EXISTS file_entries (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+            session_id TEXT NOT NULL REFERENCES sessions(id), name TEXT NOT NULL,
+            path TEXT NOT NULL, size INTEGER NOT NULL, media_type TEXT NOT NULL,
+            source TEXT NOT NULL, created_at TEXT NOT NULL, content_revision TEXT,
+            UNIQUE(user_id,session_id,path))""")
+        if not any(row[1] == "content_revision" for row in db.execute("PRAGMA table_info(file_entries)")):
+            db.execute("ALTER TABLE file_entries ADD COLUMN content_revision TEXT")
+    await store.call(migrate)
+
+
+def _content_revision(info):
+    # An observed file change token, not an immutable content address. ctime and
+    # inode cover same-size writes with restored mtime and atomic replacements.
+    # Hash metadata only: polling the file area must not reread every large file.
+    identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return "s1-" + hashlib.sha256(":".join(map(str, identity)).encode("ascii")).hexdigest()
 
 
 def _identity(value):
@@ -87,7 +101,7 @@ def _workspace(config, user_id, session_id, create=False):
             os.close(descriptor)
 
 
-def _open_file(config, record):
+def _open_file(config, record, revision=None):
     descriptors = []
     try:
         with _workspace(config, record["user_id"], record["session_id"]) as workspace:
@@ -101,6 +115,11 @@ def _open_file(config, record):
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_FILE_BYTES:
                 os.close(descriptor)
                 raise HTTPException(404, "file_not_found")
+            # Older clients used a numeric size as a cache hint. Preserve that
+            # URL format; only new observed tokens request conditional reads.
+            if revision and not revision.isdigit() and revision != _content_revision(info):
+                os.close(descriptor)
+                raise HTTPException(409, "file_changed")
             return os.fdopen(descriptor, "rb"), info.st_size
     except OSError:
         raise HTTPException(404, "file_not_found") from None
@@ -118,6 +137,7 @@ def public_file(record):
     result = {key: record[key] for key in ("id", "session_id", "name", "path", "size", "media_type", "source", "created_at")}
     result["content_url"] = f'/api/files/{record["id"]}/content'
     result["preview_url"] = f'/api/files/{record["id"]}/preview'
+    result["content_revision"] = record["content_revision"] if "content_revision" in record.keys() else None
     return result
 
 
@@ -159,7 +179,7 @@ def _discover(config, user_id, session_id):
                         finally:
                             os.close(child)
                     elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= MAX_FILE_BYTES:
-                        found.append((entry.name, path, info.st_size))
+                        found.append((entry.name, path, info.st_size, _content_revision(info)))
                 except OSError:
                     continue
     try:
@@ -174,20 +194,20 @@ async def discover_files(config, store, user_id, session_id):
     await _session_owned(store, user_id, session_id)
     found = await asyncio.to_thread(_discover, config, user_id, session_id)
     def register(db):
-        for name, path, size in found:
+        for name, path, size, revision in found:
             if path.startswith("uploads/"):
                 # Only the upload transaction can establish an upload's identity.
                 # Discovery can run after its rename and before its INSERT.
-                db.execute("""UPDATE file_entries SET size=?,media_type=?
+                db.execute("""UPDATE file_entries SET size=?,media_type=?,content_revision=?
                     WHERE user_id=? AND session_id=? AND path=? AND source='upload'""",
-                    (size, _media_type(name), user_id, session_id, path))
+                    (size, _media_type(name), revision, user_id, session_id, path))
                 continue
-            db.execute("""INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at)
-                VALUES (?,?,?,?,?,?,?,'output',?) ON CONFLICT(user_id,session_id,path)
-                DO UPDATE SET size=excluded.size,media_type=excluded.media_type""",
-                (uid(), user_id, session_id, name, path, size, _media_type(name), now()))
+            db.execute("""INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at,content_revision)
+                VALUES (?,?,?,?,?,?,?,'output',?,?) ON CONFLICT(user_id,session_id,path)
+                DO UPDATE SET size=excluded.size,media_type=excluded.media_type,content_revision=excluded.content_revision""",
+                (uid(), user_id, session_id, name, path, size, _media_type(name), now(), revision))
     await store.call(register)
-    return {path for _, path, _ in found}
+    return {path for _, path, _, _ in found}
 
 
 async def list_session_files(store, config, user_id, session_id):
@@ -231,6 +251,7 @@ def _finish_upload(directory, handle, name):
     os.fsync(handle.fileno())
     handle.close()
     os.rename(".pending", name, src_dir_fd=directory, dst_dir_fd=directory)
+    return _content_revision(os.stat(name, dir_fd=directory, follow_symlinks=False))
 
 
 def _cleanup_upload(directory, handle, name, success):
@@ -323,8 +344,8 @@ def _xlsx_preview(data):
         return {"kind": "spreadsheet", "sheets": sheets, "truncated": len([item for item in workbook.iter() if _tag(item) == "sheet"]) > len(sheets)}
 
 
-def _preview(config, record):
-    handle, size = _open_file(config, record)
+def _preview(config, record, revision=None):
+    handle, size = _open_file(config, record, revision)
     suffix = PurePosixPath(record["name"]).suffix.lower()
     with handle:
         if suffix in IMAGE_TYPES:
@@ -333,6 +354,11 @@ def _preview(config, record):
             try:
                 return _xlsx_preview(handle.read(MAX_FILE_BYTES + 1))
             except (ValueError, KeyError, OSError, zipfile.BadZipFile, ET.ParseError, RuntimeError, OverflowError):
+                return {"kind": "unsupported"}
+        if suffix == ".docx":
+            try:
+                return docx_preview(handle.read(MAX_FILE_BYTES + 1))
+            except (ValueError, KeyError, OSError, zipfile.BadZipFile, ET.ParseError, RuntimeError, OverflowError, NotImplementedError):
                 return {"kind": "unsupported"}
         if suffix not in TEXT_SUFFIXES and not record["media_type"].startswith("text/"):
             return {"kind": "unsupported"}
@@ -383,19 +409,19 @@ def register_file_routes(app: FastAPI):
                 if size > MAX_FILE_BYTES:
                     raise HTTPException(413, "file_too_large")
                 await asyncio.to_thread(handle.write, chunk)
-            await asyncio.to_thread(_finish_upload, directory, handle, name)
+            revision = await asyncio.to_thread(_finish_upload, directory, handle, name)
             record = {"id": identifier, "user_id": user_id, "session_id": session_id, "name": name,
-                      "path": f"uploads/{identifier}/{name}", "size": size, "media_type": _media_type(name), "source": "upload", "created_at": now()}
-            await store.execute("INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)", tuple(record.values()))
+                      "path": f"uploads/{identifier}/{name}", "size": size, "media_type": _media_type(name), "source": "upload", "created_at": now(), "content_revision": revision}
+            await store.execute("INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at,content_revision) VALUES (?,?,?,?,?,?,?,?,?,?)", tuple(record.values()))
             success = True
             return public_file(record)
         finally:
             await asyncio.to_thread(_cleanup_upload, directory, handle, name, success)
 
     @app.get("/api/files/{file_id}/content")
-    async def content(file_id: str, request: Request, download: bool = False):
+    async def content(file_id: str, request: Request, download: bool = False, revision: str | None = None):
         config, record = await owned(request, file_id)
-        handle, size = await asyncio.to_thread(_open_file, config, record)
+        handle, size = await asyncio.to_thread(_open_file, config, record, revision)
         suffix = PurePosixPath(record["name"]).suffix.lower()
         inline = not download and (suffix in IMAGE_TYPES or suffix in TEXT_SUFFIXES - {".html", ".htm", ".svg"})
         media_type = IMAGE_TYPES.get(suffix, "text/plain" if suffix in TEXT_SUFFIXES else "application/octet-stream")
@@ -415,6 +441,6 @@ def register_file_routes(app: FastAPI):
         return StreamingResponse(chunks(), media_type=media_type, headers=headers)
 
     @app.get("/api/files/{file_id}/preview")
-    async def preview(file_id: str, request: Request):
+    async def preview(file_id: str, request: Request, revision: str | None = None):
         config, record = await owned(request, file_id)
-        return await asyncio.to_thread(_preview, config, record)
+        return await asyncio.to_thread(_preview, config, record, revision)

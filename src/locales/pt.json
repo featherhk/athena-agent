@@ -114,6 +114,7 @@
   "files.loading": "Abrindo arquivo…",
   "files.unavailable": "A visualização não está disponível. Você pode baixar este arquivo.",
   "files.previewTruncated": "A visualização mostra o início deste arquivo. Baixe-o para ver o conteúdo completo.",
+  "files.documentPreview": "Prévia do texto do Word. Baixe o original para ver a formatação completa e o conteúdo incorporado.",
   "files.sheet": "Planilhas",
   "files.rowsTruncated": "Esta é uma visualização parcial. Baixe a planilha para ver todas as linhas e abas.",
   "files.empty": "Este arquivo está vazio.",
@@ -286,5 +287,7 @@
   "recharge.loadError": "Não foi possível carregar as opções de pagamento. Tente novamente.",
   "recharge.createError": "O resultado ainda é desconhecido. Recupere o mesmo pedido para evitar um pedido duplicado.",
   "recharge.storageError": "O navegador não conseguiu guardar o pedido de pagamento. Ative o armazenamento local antes de continuar.",
-  "recharge.amountChanged": "Os valores disponíveis mudaram. Escolha um valor para continuar."
+  "recharge.amountChanged": "Os valores disponíveis mudaram. Escolha um valor para continuar.",
+  "surface.surface": "Área de trabalho completa",
+  "surface.recovery": "Modo de recuperação ativo. As vistas personalizadas estão desativadas. As conversas e os ficheiros são preservados."
 }

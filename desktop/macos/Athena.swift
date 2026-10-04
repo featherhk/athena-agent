@@ -1,5 +1,5 @@
 import AppKit
-import WebKit
+@preconcurrency import WebKit
 
 private func tr(_ key: String) -> String { NSLocalizedString(key, comment: "") }
 
@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var startupGeneration = 0
     private var loadingLabel: NSTextField!
     private var updateTask: Task<Void, Never>?
+    private var recovery = WindowRecovery()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Opening a second copy only activates the running app; it never attaches to an arbitrary port.
@@ -23,6 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             other.activate(options: [.activateAllWindows]); NSApp.terminate(nil); return
         }
         makeMenu()
+        makeWindow()
+        startBackend()
+    }
+
+    private func makeWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 780),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
@@ -61,7 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.contentView = container
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        startBackend()
     }
 
     private func makeMenu() {
@@ -83,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let viewItem = NSMenuItem(title: tr("view"), action: nil, keyEquivalent: "")
         let view = NSMenu(title: tr("view"))
         view.addItem(withTitle: tr("reload"), action: #selector(reload), keyEquivalent: "r").target = self
+        let recover = view.addItem(withTitle: tr("recover_window"), action: #selector(offerRecovery), keyEquivalent: "r")
+        recover.keyEquivalentModifierMask = [.command, .shift]
+        recover.target = self
         viewItem.submenu = view; bar.addItem(viewItem)
         NSApp.mainMenu = bar
     }
@@ -198,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                   value["event"] as? String == "ready", let port = value["port"] as? Int, port > 0, port <= 65535,
                   let url = URL(string: "http://127.0.0.1:\(port)/") else { continue }
             localURL = url
-            webView.load(URLRequest(url: url))
+            reload()
         }
         if pendingOutput.count > 65536 { pendingOutput = Data() }
     }
@@ -220,8 +228,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func reload() {
-        if let localURL { webView.load(URLRequest(url: localURL)) }
+        if let localURL, let request = recovery.request(for: localURL) { webView.load(request) }
         else if child == nil { startBackend() }
+    }
+
+    @objc private func offerRecovery() {
+        guard window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = tr("recover_window")
+        alert.informativeText = tr("recover_window_detail")
+        alert.addButton(withTitle: tr("recover_confirm"))
+        alert.addButton(withTitle: tr("close"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            self.recovery.activate()
+            self.reload()
+        }
+    }
+
+    private func showPageFailure() {
+        loadingLabel.stringValue = tr("page_unavailable")
+        loadingLabel.isHidden = false
+        webView.isHidden = true
+        guard window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = tr("page_unavailable")
+        alert.informativeText = tr("page_recovery_detail")
+        alert.addButton(withTitle: tr("retry"))
+        alert.addButton(withTitle: tr("close"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.reload() }
+        }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window.makeKeyAndOrderFront(nil); return true
@@ -249,7 +286,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadingLabel.isHidden = true; webView.isHidden = false
     }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { reload() }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if recovery.contentProcessFailed() { reload() }
+        else { showPageFailure() }
+    }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         // Generated sandbox frames stay inside WebKit. Only the trusted main document can navigate the shell.
@@ -295,8 +335,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         panel.nameFieldStringValue = (suggestedFilename as NSString).lastPathComponent
         panel.beginSheetModal(for: window) { result in completionHandler(result == .OK ? panel.url : nil) }
     }
+
+    #if ATHENA_NATIVE_CHECKS
+    /// Separate test executable only; it never starts a backend or opens an account.
+    func configureNativeFixture(_ home: URL) -> (NSWindow, WKWebView) {
+        precondition(recovery.request(for: home) != nil)
+        makeMenu()
+        makeWindow()
+        localURL = home
+        reload()
+        return (window, webView)
+    }
+    #endif
 }
 
+#if !ATHENA_NATIVE_CHECKS
 @main
 struct AthenaMain {
     @MainActor static func main() {
@@ -307,3 +360,4 @@ struct AthenaMain {
         app.run()
     }
 }
+#endif

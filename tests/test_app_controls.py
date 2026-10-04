@@ -61,7 +61,7 @@ async def test_app_action_scope_file_ownership_and_catalog(store, account):
         await app_operation(store, other_session, None, {"action": "read", "id": navigate["request"]["id"]})
     await initialize_files(store)
     for identifier, owner, sid in (("own-file", user, session), ("second-chat-file", user, same_user_session), ("foreign-file", other["id"], other_session)):
-        await store.execute("INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)", (identifier, owner, sid, "note.md", "note.md", 3, "text/markdown", "output", now()))
+        await store.execute("INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)", (identifier, owner, sid, "note.md", "note.md", 3, "text/markdown", "output", now()))
     for action in ("preview", "download", "attach", "detach"):
         with pytest.raises(UserError):
             await app_operation(store, session, None, {"action": action, "file_id": "foreign-file"})
@@ -210,7 +210,7 @@ async def test_account_file_catalog_matches_registered_account_files_without_sca
     await initialize_files(store)
     for file_id, owner, session in (("origin-registered", user, origin), ("sibling-registered", user, sibling),
                                    ("foreign-registered", foreign_user["id"], foreign)):
-        await store.execute("INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)", (file_id, owner, session, file_id + ".md", file_id + ".md", 3, "text/markdown", "output", now()))
+        await store.execute("INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)", (file_id, owner, session, file_id + ".md", file_id + ".md", 3, "text/markdown", "output", now()))
     # Account listing is the existing /api/files inventory, not a filesystem crawl.
     for session in (origin, sibling):
         directory = config.data_dir / "files" / user / session

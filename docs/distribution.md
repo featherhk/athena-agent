@@ -31,6 +31,10 @@ The native window provides standard editing shortcuts, file selection and a Save
 
 The app owns its sidecar: Python binds a vacant loopback port atomically, then reports readiness only after migrations and application startup. The window never attaches to an unrelated process occupying a well-known port. Closing the window keeps the application and local jobs running; quitting ends the sidecar gracefully. Local scheduled work cannot run while the application or computer is off. Durable hosted jobs are needed for an always-on promise. The shell can reload independently of generated frontend surfaces and presents a native recovery dialog if its sidecar exits.
 
+**View → Restore Default Interface…** (Command-Shift-R) is a separate native recovery entry. After a warning about unsent text, it loads a GET page on the sidecar's exact loopback origin with `?recovery=1`. The matching web client skips custom surface/component mounts while preserving chats, files and existing tasks. Ordinary Command-R stays in safe mode after recovery; a restarted sidecar uses its newly reported port and keeps the safe-mode choice. A first WebKit content-process failure automatically attempts this safe page once. A further failure stops automatic reloading and shows native Retry/Close controls, avoiding a crash loop. None of these operations replay a model request or restart an already-running task.
+
+After a successful Reset, the web client can leave safe mode in the current page once the server confirms that custom extensions were disabled. The native shell deliberately retains its recovery choice until the app is relaunched; a later native reload enters safe mode again. A script or subframe cannot silently revoke that native recovery choice.
+
 ## Signing and public release
 
 The default build is ad-hoc signed and named `-preview.dmg`. This supports internal testing; it is **not notarized** and is not presented as a frictionless public download. This machine currently has no Developer ID signing identity, and the operator has not enrolled in the Apple Developer Program. Do not tell testers to disable Gatekeeper globally.
@@ -76,10 +80,15 @@ Run the native comparison/destination regressions without launching Athena:
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc desktop/macos/UpdateCheck.swift desktop/macos/Tests/UpdateCheckTests.swift -o /private/tmp/athena-macos-update-check
 /private/tmp/athena-macos-update-check
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc desktop/macos/WindowRecovery.swift desktop/macos/Tests/WindowRecoveryTests.swift -o /private/tmp/athena-macos-recovery-check
+/private/tmp/athena-macos-recovery-check
+uv run python desktop/macos/Tests/run-native-recovery-checks.py --xcode /Applications/Xcode-beta.app
 uv run pytest tests/test_desktop_bundle.py -q
 ```
 
 Select an initialized Xcode appropriate to the development Mac. These tests cover same-version/higher-build previews, missing metadata, reused build/source mismatches, system compatibility, fixed destination URLs, and isolated transport responses for HTTP errors, offline failures, redirects and oversized data. They do not establish native-menu visual acceptance or installer signature verification by the discovery feature.
+
+The separate recovery fixture application runs the actual AppKit menu and WKWebView without launching an Athena backend or using a real account. It serves only synthetic documents from a temporary loopback server. Its six checks exercise cancelling native recovery without losing a draft, confirming recovery, ordinary reload retaining safe mode, the first content-process failure callback entering safe mode, a second callback stopping the loop, and native failure Retry retaining safe mode. All observed requests must be GET. The native sheets are completed through AppKit's public sheet API; the process-death callbacks are simulated. The receipt is evidence of native menu/navigation behavior, not a physical crash, provider call, real account session or accessibility gesture acceptance.
 
 ## Verified in this workspace
 

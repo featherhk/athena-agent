@@ -1,24 +1,29 @@
 import { memo } from 'react';
-import Markdown, { defaultUrlTransform } from 'react-markdown';
+import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useI18n } from './i18n';
 import './files.css';
 import { textEffectPlugin } from './StyledText';
 import type { TextStyleEffect } from './effects';
 import { remarkReadableAutolinks } from './markdown-autolinks';
+import { InlineImage, ownedImageSource } from './ImageResult';
 
-const ownedImage = /^\/api\/files\/[a-zA-Z0-9_-]+\/content$/;
+// Keep renderer identities stable while new text streams after an image. A new
+// renderer function on every token would remount and reload the same result.
+const components: Components = {
+  a: ({ href, children, title, node }) => node?.children.some(child => child.type === 'element' && child.tagName === 'img' && ownedImageSource(child.properties.src))
+    ? <span title={title}>{children}</span>
+    : <a href={href} title={title} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>,
+  img: ({ src, alt }) => ownedImageSource(src)
+    ? <InlineImage src={src} name={alt || src.split('/')[3]} />
+    : <a href={typeof src === 'string' ? defaultUrlTransform(src) : undefined} target="_blank" rel="noopener noreferrer">{alt || src}</a>,
+  table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
+};
 
 // The composer and stream share a parent. Parsing unchanged history on each
 // keystroke/token makes typing slower as a conversation grows.
 export const MarkdownContent = memo(function MarkdownContent({ content, effect, messageText = false }: { content: string; effect?: TextStyleEffect; messageText?: boolean }) {
-  return <div className="markdown-body" data-message-text={messageText ? '' : undefined}><Markdown remarkPlugins={[remarkGfm, remarkReadableAutolinks]} rehypePlugins={[textEffectPlugin(effect)]} components={{
-    a: ({ href, children, title }) => <a href={href} title={title} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>,
-    img: ({ src, alt }) => typeof src === 'string' && ownedImage.test(src)
-      ? <img src={src} alt={alt || ''} loading="lazy" />
-      : <a href={typeof src === 'string' ? defaultUrlTransform(src) : undefined} target="_blank" rel="noopener noreferrer">{alt || src}</a>,
-    table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
-  }}>{content}</Markdown></div>;
+  return <div className="markdown-body" data-message-text={messageText ? '' : undefined}><Markdown remarkPlugins={[remarkGfm, remarkReadableAutolinks]} rehypePlugins={[textEffectPlugin(effect)]} components={components}>{content}</Markdown></div>;
 });
 
 export const MessageBody = memo(function MessageBody({ content, reasoning, streaming = false, effect }: { content: string; reasoning?: string; streaming?: boolean; effect?: TextStyleEffect }) {

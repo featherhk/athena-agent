@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createElement, memo, useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n';
 import { MarkdownContent } from './MessageBody';
 import type { PreviewObservation } from './frontend-observation';
@@ -8,15 +8,37 @@ export type FileEntry = {
   id: string; session_id: string; name: string; path: string; size: number;
   media_type: string; source: 'upload' | 'output'; created_at: string;
   content_url: string; preview_url: string;
+  content_revision?: string | null;
 };
 type Sheet = { name: string; rows: string[][]; row_numbers: number[]; truncated: boolean };
+type DocumentBlock = { kind: 'paragraph'; text: string; heading: number }
+  | { kind: 'table'; rows: { header: boolean; cells: { colspan: number; blocks: DocumentBlock[] }[] }[] };
 type Preview = { kind: 'text' | 'markdown' | 'html'; content: string; truncated: boolean }
   | { kind: 'image'; url: string }
   | { kind: 'spreadsheet'; sheets: Sheet[]; truncated: boolean }
+  | { kind: 'document'; blocks: DocumentBlock[]; truncated: boolean }
   | { kind: 'unsupported' };
 const framePolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
 
-export function FilePreview({ file, onClose, onObservation }: { file: FileEntry; onClose?: () => void; onObservation?: (value: PreviewObservation) => void }) {
+const DocumentBlocks = memo(function Blocks({ blocks }: { blocks: DocumentBlock[] }) {
+  return <>{blocks.map((block, index) => block.kind === 'paragraph'
+    ? createElement(block.heading >= 1 && block.heading <= 6 ? `h${block.heading}` : 'p', { key: index }, block.text || '\u00a0')
+    : <div key={index} className="document-table-scroll"><table><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>
+      {row.cells.map((cell, column) => createElement(row.header ? 'th' : 'td', { key: column, colSpan: cell.colspan, scope: row.header ? 'col' : undefined }, <DocumentBlocks blocks={cell.blocks} />))}
+    </tr>)}</tbody></table></div>)}</>;
+});
+
+type FilePreviewProps = { file: FileEntry; onClose?: () => void; onObservation?: (value: PreviewObservation) => void };
+
+export function FilePreview(props: FilePreviewProps) {
+  const { file } = props;
+  // A fresh load owns its state and receipts. Stable snapshots keep this same
+  // child; changed bytes cannot inherit an old iframe/image's late load event.
+  const identity = JSON.stringify([file.id, file.preview_url, file.content_revision ?? file.size ?? null]);
+  return <FilePreviewContent key={identity} {...props} />;
+}
+
+function FilePreviewContent({ file, onClose, onObservation }: FilePreviewProps) {
   const { t } = useI18n();
   const [preview, setPreview] = useState<Preview | null>(null);
   const [failed, setFailed] = useState(false);
@@ -25,6 +47,7 @@ export function FilePreview({ file, onClose, onObservation }: { file: FileEntry;
   const currentFile = useRef(file.id); currentFile.current = file.id;
   const loadedFile = useRef<string | null>(null);
   const [mediaReady, setMediaReady] = useState(false);
+  const revisionQuery = file.content_revision ? `?revision=${encodeURIComponent(file.content_revision)}` : '';
   function mediaLoaded(id: string, success: boolean) {
     if (currentFile.current !== id || loadedFile.current !== id) return;
     if (success) setMediaReady(true); else setFailed(true);
@@ -34,13 +57,13 @@ export function FilePreview({ file, onClose, onObservation }: { file: FileEntry;
     loadedFile.current = null;
     setPreview(null); setFailed(false); setSheetIndex(0); setMediaReady(false);
     observe.current?.({ file_id: file.id, status: 'loading' });
-    void fetch(file.preview_url, { signal: controller.signal }).then(async response => {
+    void fetch(file.preview_url + revisionQuery, { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error('preview_unavailable');
       const value: Preview = await response.json();
       if (!controller.signal.aborted) { loadedFile.current = file.id; setPreview(value); }
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [file.id, file.preview_url]);
+  }, [file.id, file.preview_url, revisionQuery]);
   useEffect(() => {
     if (failed || (loadedFile.current === file.id && preview?.kind === 'unsupported')) observe.current?.({ file_id: file.id, status: 'failed', error_code: 'preview_unavailable' });
     else if (loadedFile.current === file.id && preview && (!['html', 'image'].includes(preview.kind) || mediaReady)) observe.current?.({ file_id: file.id, status: 'ready' });
@@ -63,7 +86,13 @@ export function FilePreview({ file, onClose, onObservation }: { file: FileEntry;
     {preview?.kind === 'text' && <pre className="file-text-preview">{preview.content}</pre>}
     {preview?.kind === 'html' && <iframe className="file-html-preview" sandbox="" referrerPolicy="no-referrer" title={file.name} onLoad={() => mediaLoaded(file.id, true)} onError={() => mediaLoaded(file.id, false)}
       srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}"><meta name="referrer" content="no-referrer">${preview.content}`} />}
-    {preview?.kind === 'image' && <img className="file-image-preview" src={preview.url} alt={file.name} onLoad={() => mediaLoaded(file.id, true)} onError={() => mediaLoaded(file.id, false)} />}
+    {preview?.kind === 'image' && <img className="file-image-preview" src={preview.url + revisionQuery} alt={file.name} decoding="async" onLoad={() => mediaLoaded(file.id, true)} onError={() => mediaLoaded(file.id, false)} />}
+    {preview?.kind === 'document' && <>
+      <p className="file-preview-note">{t('files.documentPreview')}</p>
+      <article className="file-preview-document" aria-label={file.name}><DocumentBlocks blocks={preview.blocks} /></article>
+      {preview.blocks.length === 0 && <p className="empty-note">{t('files.empty')}</p>}
+      {preview.truncated && <p className="file-preview-note">{t('files.previewTruncated')}</p>}
+    </>}
     {preview?.kind === 'spreadsheet' && <div className="spreadsheet-preview">
       {preview.sheets.length > 1 && <div className="spreadsheet-tabs" role="tablist" aria-label={t('files.sheet')}>
         {preview.sheets.map((item, index) => <button key={index} type="button" role="tab" aria-selected={index === sheetIndex} onClick={() => setSheetIndex(index)}>{item.name || `${index + 1}`}</button>)}

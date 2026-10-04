@@ -44,11 +44,11 @@ def _last_context(request, profile):
             "limit_kind": "application_character_guard"}
 
 
-def _estimate(snapshot, profile):
+def _estimate(snapshot, profile, request_tools=None):
     latest = snapshot["latest_request"]
     previous = json.loads(latest["input"]) if latest else {}
-    known_tools = isinstance(previous.get("tools"), list)
-    tools = previous["tools"] if known_tools else []
+    known_tools = request_tools is not None or isinstance(previous.get("tools"), list)
+    tools = request_tools if request_tools is not None else previous["tools"] if known_tools else []
     messages = project_messages(snapshot["history"], snapshot["clips"], profile, snapshot["prefix"])
     payload_chars = _json_chars(profile.payload(messages, tools))
     sample = snapshot["calibration_request"]
@@ -64,7 +64,7 @@ def _estimate(snapshot, profile):
             "chars_per_token": ratio, "estimate_basis": basis,
             "calibration_request_id": sample["id"] if basis == "last_reported_request_ratio" else None,
             "tool_schema_chars": _json_chars(tools) if known_tools else None,
-            "tool_schema_source": "last_request" if known_tools else "unknown",
+            "tool_schema_source": "current_request" if request_tools is not None else "last_request" if known_tools else "unknown",
             "known_tool_overhead": known_tools, "limitations": limitations}
 
 
@@ -91,11 +91,15 @@ def latest_tool_round(history):
     return set(tools[-1:])
 
 
-def default_compaction_plan(history, clips, estimate, target_tokens, protected=frozenset()):
+def default_compaction_plan(history, clips, estimate, target_tokens, protected=frozenset(), *, max_payload_chars=None):
     """Pure default policy. The caller owns validation and durable application."""
     _validate_target(target_tokens)
     payload_chars = estimate["payload_chars"]
     target_chars = math.floor(target_tokens * estimate["chars_per_token"])
+    if max_payload_chars is not None:
+        if type(max_payload_chars) is not int or max_payload_chars < 1:
+            raise ValueError("max_payload_chars must be a positive integer")
+        target_chars = min(target_chars, max_payload_chars)
     plan = {}
     # Equal completed outputs contain no new evidence. Keep the latest full copy
     # and spend the budget on unique material before clipping its head/tail.
@@ -169,11 +173,11 @@ class Introspection:
     def __init__(self, store, models):
         self.store, self.models = store, models
 
-    def _snapshot(self, db, session_id, profile, epoch):
+    def _snapshot(self, db, session_id, profile, epoch, *, verify_selection=True):
         session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
         if session is None:
             raise ValueError("Session not found")
-        if session["model_profile_id"] != profile.id or session["model_epoch"] != epoch:
+        if verify_selection and (session["model_profile_id"] != profile.id or session["model_epoch"] != epoch):
             raise ValueError("Model changed during inspection; inspect again")
         history = self.store._context_history(db, session_id)
         clips = {row["message_id"]: row["content"] for row in db.execute("SELECT * FROM context_clips WHERE session_id=?", (session_id,))}
@@ -250,26 +254,31 @@ class Introspection:
                 "last_context_from_request": _last_context(snapshot["measured_request"], profile),
                 "remaining_limitations": estimate["limitations"]}
 
-    async def compaction_plan(self, session_id, target_tokens=20000, protect_latest=False):
-        """Return the default plan for optional strategy selection, without writes."""
-        _validate_target(target_tokens)
-        profile, epoch = await self.models.selected(session_id)
-        snapshot = await self.store.call(lambda db: self._snapshot(db, session_id, profile, epoch))
-        protected = latest_tool_round(snapshot['history']) if protect_latest else frozenset()
-        return default_compaction_plan(snapshot["history"], snapshot["clips"], _estimate(snapshot, profile), target_tokens, protected)
+    async def compaction_plan(self, session_id, target_tokens=20000, protect_latest=False, *, request_profile=None, request_tools=None, max_payload_chars=None):
+        """Plan without writes, using frozen request inputs when called by Engine.
 
-    async def compact(self, session_id, target_tokens=20000, plan_override=None, protect_latest=False):
+        Manual inspection uses the selected profile and reports prior-schema
+        uncertainty. In-flight preparation keeps its profile even if another
+        actor selects a different model for the subsequent request.
+        """
         _validate_target(target_tokens)
-        profile, epoch = await self.models.selected(session_id)
+        profile, epoch = request_profile if request_profile is not None else await self.models.selected(session_id)
+        snapshot = await self.store.call(lambda db: self._snapshot(db, session_id, profile, epoch, verify_selection=request_profile is None))
+        protected = latest_tool_round(snapshot['history']) if protect_latest else frozenset()
+        return default_compaction_plan(snapshot["history"], snapshot["clips"], _estimate(snapshot, profile, request_tools), target_tokens, protected, max_payload_chars=max_payload_chars)
+
+    async def compact(self, session_id, target_tokens=20000, plan_override=None, protect_latest=False, *, request_profile=None, request_tools=None, max_payload_chars=None):
+        _validate_target(target_tokens)
+        profile, epoch = request_profile if request_profile is not None else await self.models.selected(session_id)
 
         def compact(db):
-            snapshot = self._snapshot(db, session_id, profile, epoch)
-            estimate = _estimate(snapshot, profile)
+            snapshot = self._snapshot(db, session_id, profile, epoch, verify_selection=request_profile is None)
+            estimate = _estimate(snapshot, profile, request_tools)
             history, clips = snapshot["history"], snapshot["clips"]
             protected = latest_tool_round(history) if protect_latest else frozenset()
             before_chars = _history_chars(history, clips)
             payload_chars = estimate["payload_chars"]
-            proposed = default_compaction_plan(history, clips, estimate, target_tokens, protected) if plan_override is None else plan_override
+            proposed = default_compaction_plan(history, clips, estimate, target_tokens, protected, max_payload_chars=max_payload_chars) if plan_override is None else plan_override
             plan = validate_compaction_plan(history, clips, proposed, protected)
             history_by_id = {row["id"]: row for row in history}
             changed = list(plan)
@@ -298,7 +307,8 @@ class Introspection:
             return {"measurement": "estimated", "target_tokens": target_tokens,
                     "before": {"estimated_tokens": estimate["estimated_tokens"], "history_chars": before_chars, "estimated_payload_chars": estimate["payload_chars"]},
                     "after": {"estimated_tokens": after_tokens, "history_chars": after_chars, "estimated_payload_chars": payload_chars},
-                    "target_met": after_tokens <= target_tokens and estimate["known_tool_overhead"],
+                    "target_met": after_tokens <= target_tokens and estimate["known_tool_overhead"] and (max_payload_chars is None or payload_chars <= max_payload_chars),
+                    "payload_chars_limit": max_payload_chars,
                     "estimate_basis": estimate["estimate_basis"], "calibration_request_id": estimate["calibration_request_id"],
                     "estimated_tool_schema_chars": estimate["tool_schema_chars"], "tool_schema_source": estimate["tool_schema_source"],
                     "changed_tool_messages": changed, "compaction_id": identifier,

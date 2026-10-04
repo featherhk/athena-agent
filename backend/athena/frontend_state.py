@@ -9,7 +9,7 @@ import json
 from typing import Annotated, Literal
 
 from fastapi import Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .auth import COOKIE, token_hash
 from .errors import UserError
@@ -19,7 +19,7 @@ TTL_SECONDS = 75
 MAX_CLIENTS = 24
 Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')]
 View = Literal['menu', 'history', 'files', 'account', 'appearance', 'developer', 'password', 'workspace', 'preview', 'surfaces', 'activity', 'authentication']
-Placement = Literal['inline', 'workspace', 'banner', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'overlay', 'fullscreen', 'presence', 'sidebar-start', 'sidebar-end']
+Placement = Literal['inline', 'workspace', 'banner', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'overlay', 'fullscreen', 'presence', 'sidebar-start', 'sidebar-end', 'surface']
 ComponentError = Literal['script_error', 'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']
 
 
@@ -60,6 +60,24 @@ class Component(Workspace):
     error_code: ComponentError | None = None
 
 
+class DefaultSurface(Strict):
+    provider: Literal['default']
+    state: Literal['mounted']
+
+
+class ComponentSurface(Workspace):
+    provider: Literal['component']
+    view_revision: int = Field(ge=0)
+    state: Literal['loading', 'mounted', 'failed']
+    error_code: ComponentError | None = None
+
+    @model_validator(mode='after')
+    def failure_has_code(self):
+        if (self.state == 'failed') != (self.error_code is not None):
+            raise ValueError('Only a failed surface has a required error_code.')
+        return self
+
+
 class Waiting(Strict):
     kind: Literal['user_help', 'file_selection', 'upload', 'authentication']
     id: Identifier | None = None
@@ -79,6 +97,7 @@ class FrontendObservation(Strict):
     open_views: list[View] = Field(default_factory=list, max_length=12)
     preview: Preview | None = None
     workspace: Workspace | None = None
+    surface: Annotated[DefaultSurface | ComponentSurface, Field(discriminator='provider')] | None = None
     components: list[Component] = Field(default_factory=list, max_length=32)
     waiting: list[Waiting] = Field(default_factory=list, max_length=8)
     errors: list[Error] = Field(default_factory=list, max_length=8)
@@ -191,7 +210,10 @@ def client(db, user_id, client_id, auth_hash=None, fresh=False):
 
 def snapshot(db, user_id, client_id):
     row = client(db, user_id, client_id)
-    return {**_summary(db, row), 'state': json.loads(row['state']),
+    from .component_views import surface_registration
+    state = json.loads(row['state'])
+    return {**_summary(db, row), 'state': {**state, 'surface': state.get('surface')},
+            'surface_registration': surface_registration(db, row['session_id']),
             'scope': 'Authenticated client-reported semantics; no drafts, form values, DOM, clipboard or pixel verification.'}
 
 
@@ -222,6 +244,10 @@ def target(db, user_id, session_id, client_id=None, expected_revision=None, run_
 async def observe(store, user_id, auth_hash, observation):
     body = observation if isinstance(observation, FrontendObservation) else FrontendObservation.model_validate(observation)
     state = body.model_dump(exclude={'client_id', 'revision'})
+    if body.surface is None:
+        # Old clients retry identical revision heartbeats across server upgrades.
+        # An absent new optional field must not rewrite their stored signature.
+        state.pop('surface', None)
     encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(encoded.encode()) > 24576:
         raise ValueError('Frontend observation exceeds 24 KiB.')
@@ -233,6 +259,13 @@ async def observe(store, user_id, auth_hash, observation):
             raise UserError('frontend_identity_revoked', 'This browser identity was reset; create a new client_id.')
         if body.session_id and not db.execute('SELECT 1 FROM sessions WHERE id=? AND user_id=?', (body.session_id, user_id)).fetchone():
             raise UserError('not_found', 'This conversation was not found.')
+        if isinstance(body.surface, ComponentSurface) and (not body.session_id or not db.execute(
+                'SELECT 1 FROM components WHERE session_id=? AND id=? AND version=?',
+                (body.session_id, body.surface.id, body.surface.version)).fetchone()):
+            # A historical renderer may still be visible during a version-change
+            # race. Accept that truthful report, but never a foreign or invented
+            # renderer; snapshot returns the desired registration separately.
+            raise UserError('not_found', 'This renderer version was not registered in this conversation.')
         file_ids = set(body.attachment_ids)
         if body.preview:
             file_ids.add(body.preview.file_id)

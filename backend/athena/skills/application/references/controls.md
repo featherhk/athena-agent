@@ -38,7 +38,7 @@
 
 UI 操作持久化后会在同一次工具调用内等待回执，最多5秒。返回 applied / failed / dismissed 时已有结果，无需重复查询；只有 applied 的 completed 为 true。超时返回 `wait_timed_out: true`：pending 表示最后观察到仍在等待页面，dispatched 表示页面已领取、结果未知且可能已执行。超时不是失败，动作仍可能稍后完成；不要重发动作、调用 exec sleep 或紧密轮询。需要后续核实时，用 app `action: read, id: request.id`。依赖前一步成功的动作应等 applied 后进行；不要把发送请求说成已经切换、已经下载完成或已经修改密码。stop/reset 是引擎控制，不等待浏览器回执。
 
-回执 receipt 中 observed_revision 对应核验的观察。preview 的 applied 只说明指定预览面板已打开，file_ready 单独说明内容是否加载完成，加载失败可能仍有可见面板；需要时再 snapshot 查 ready/failed。download 的回执仅为 download_requested，不能声称文件已保存到用户设备。
+回执 receipt 中 observed_revision 对应核验的观察。preview 的 applied 只说明指定内容已在当前页面呈现（不会默认另开工作区），file_ready 单独说明内容是否加载完成，加载失败可能仍有可见面板；需要时再 snapshot 查 ready/failed。download 的回执仅为 download_requested，不能声称文件已保存到用户设备。
 
 请求在创建时绑定具体客户端，客户端鉴权也绑定其登录会话，不存在多个页面抢先领取。崩溃后 dispatched 不会自动重复下载或重放其他可能已有副作用的操作；先核对实际情况，再决定是否新建请求。停止或 Reset 取消相应尚未完成的 UI 请求，但不能撤回已经发生的浏览器动作。
 

@@ -1,8 +1,10 @@
 import type { AppAction, Component } from './api';
+import type { SurfaceState } from './surface-runtime';
 import { placementOf } from './component-layout.ts';
 
 export type PreviewObservation = { file_id: string; status: 'loading' | 'ready' | 'failed'; error_code?: 'preview_unavailable' };
 export type FrontendObservation = {
+  surface?: SurfaceState;
   client_id: string; revision: number; session_id: string | null; foreground: boolean;
   viewport: { width: number; height: number }; open_views: string[];
   preview: PreviewObservation | null; workspace: { id: string; version: number } | null;
@@ -14,6 +16,7 @@ export type FrontendObservation = {
   has_unsent_changes: boolean; attachment_ids: string[];
 };
 export type FrontendFacts = {
+  surface?: SurfaceState;
   sessionId: string | null; components: Component[]; preview: PreviewObservation | null;
   helpIds: string[]; choosingFiles: boolean; uploading: boolean; reconnecting: boolean;
   hasError: boolean; hasUnsentChanges: boolean; attachmentIds: string[];
@@ -48,7 +51,8 @@ export function observeFrontend(document: Document, facts: FrontendFacts): Omit<
   });
   const activeWorkspace = document.querySelector<HTMLElement>('.workspace-panel .widget[data-component-id]')?.dataset.componentId;
   const workspace = components.find(component => component.id === activeWorkspace);
-  const preview = open.has('preview') && facts.preview ? { file_id: facts.preview.file_id, status: facts.preview.status,
+  const inlinePreview = [...document.querySelectorAll<HTMLElement>('[data-inline-preview-id]')].some(node => node.dataset.inlinePreviewId === facts.preview?.file_id && node.getBoundingClientRect().width > 0);
+  const preview = (open.has('preview') || inlinePreview) && facts.preview ? { file_id: facts.preview.file_id, status: facts.preview.status,
     ...(facts.preview.status === 'failed' ? { error_code: 'preview_unavailable' as const } : {}) } : null;
   const waiting: FrontendObservation['waiting'] = facts.helpIds.slice(0, 5).map(id => ({ kind: 'user_help', id }));
   if (facts.choosingFiles) waiting.push({ kind: 'file_selection' });
@@ -59,7 +63,7 @@ export function observeFrontend(document: Document, facts: FrontendFacts): Omit<
   if (facts.hasError || document.querySelector('.recovery-panel')) errors.push({ source: 'ui', code: 'ui_error' });
   if (preview?.status === 'failed') errors.push({ source: 'preview', code: 'preview_unavailable' });
   for (const component of components) if (component.error_code && errors.length < 8) errors.push({ source: 'component', code: component.error_code });
-  return { session_id: facts.sessionId, foreground, viewport, open_views: [...open].sort(), preview,
+  return { ...(facts.surface ? { surface: facts.surface } : {}), session_id: facts.sessionId, foreground, viewport, open_views: [...open].sort(), preview,
     workspace: workspace ? { id: workspace.id, version: workspace.version } : null, components, waiting: waiting.slice(0, 8), errors,
     has_unsent_changes: facts.hasUnsentChanges, attachment_ids: facts.attachmentIds.slice(0, 10) };
 }

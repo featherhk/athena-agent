@@ -6,7 +6,9 @@
   color:var(--ink); background:var(--canvas);
 }
 * { box-sizing:border-box; }
+html,body,#root { width:100%; height:100%; overflow:hidden; overscroll-behavior:none; }
 body { margin:0; }
+#root { position:fixed; inset:0; }
 button,input,textarea,select { font:inherit; }
 button { cursor:pointer; border:0; -webkit-tap-highlight-color:transparent; }
 button:disabled { cursor:default; opacity:.4; }
@@ -22,7 +24,8 @@ button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-wid
 .icon-button { background:transparent; color:var(--muted); width:38px; height:38px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; font-size:23px; flex-shrink:0; }
 .icon-button:hover { color:var(--ink); background:var(--wash); }
 
-/* The emblem yields room to reading; the status stays legible without motion. */
+/* The shell stays still while conversation content scrolls. Explicit presence
+   preferences may resize the emblem; reading never changes its geometry. */
 .agent-presence { --display-presence-size:min(var(--presence-size,84px),24dvh); height:calc(var(--display-presence-size) + 24px); display:flex; flex-direction:column; align-items:center; justify-content:center; flex-shrink:0; padding-bottom:10px; transition:height .35s ease,padding .35s ease; }
 .orb-scene { position:relative; width:var(--display-presence-size); height:var(--display-presence-size); display:grid; place-items:center; isolation:isolate; flex-shrink:0; transition:width .35s ease,height .35s ease; }
 .presence-art,.presence-state { width:100%; height:100%; overflow:visible; grid-area:1 / 1; color:var(--accent); }
@@ -46,8 +49,8 @@ button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-wid
 .stopped .presence-signature,.waiting .presence-signature { opacity:.12; transform:scale(.84); }
 .stopped .presence-pause,.waiting .presence-wait { opacity:1; }
 .presence-label { font-size:12px; line-height:1.5; font-weight:400; letter-spacing:.01em; color:var(--muted); margin-top:-3px; min-height:18px; }
-.app[data-reading="true"] .agent-presence,.agent-presence[data-compact="true"] { --display-presence-size:32px; height:48px; flex-direction:row; gap:8px; padding-bottom:5px; }
-.app[data-reading="true"] .presence-label,.agent-presence[data-compact="true"] .presence-label { margin:0; font-size:11px; }
+.agent-presence[data-compact="true"] { --display-presence-size:32px; height:48px; flex-direction:row; gap:8px; padding-bottom:5px; }
+.agent-presence[data-compact="true"] .presence-label { margin:0; font-size:11px; }
 .custom-presence { width:var(--display-presence-size); height:var(--display-presence-size); flex-shrink:0; transition:width .35s ease,height .35s ease; }
 .agent-presence .widget { width:100%; height:100%; margin:0; padding:0; border:0; background:transparent; border-radius:0; overflow:hidden; }
 .agent-presence .section-label { display:none; }
@@ -57,7 +60,7 @@ button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-wid
 @keyframes presence-voice { to { transform:scaleY(.4); } }
 
 /* A reading surface, with a small distinction between each speaker. */
-.scroll-area { flex:1; min-height:0; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--tint) transparent; }
+.scroll-area { flex:1; min-height:0; overflow:auto; overscroll-behavior:none; scrollbar-width:thin; scrollbar-color:var(--tint) transparent; }
 .conversation { width:100%; max-width:790px; margin:0 auto; padding:18px 30px 28px; }
 .message { width:fit-content; max-width:91%; margin:0 0 25px; font-size:17px; line-height:1.85; overflow-wrap:anywhere; }
 .message.assistant { max-width:96%; padding:6px 0; background:transparent; }
@@ -179,7 +182,7 @@ html[data-palette="forest"] { --canvas:#f8fbf9; --ink:#384d47; --muted:#698178; 
   .composer[data-task-active="true"] .send-actions { grid-column:2; justify-content:flex-end; }
   .workspace-layout { flex-direction:column; }.surface-sidebar { flex:0 1 auto; width:100%; max-width:none; max-height:16dvh; padding:10px 18px; border-inline:0; }.surface-sidebar[data-side="start"] { border-bottom:1px solid var(--tint); }.surface-sidebar[data-side="end"] { border-top:1px solid var(--tint); }.surface-sidebar .widget { margin-bottom:0; }.has-workspace .workspace-panel { padding-inline:14px; }
 }
-@media(max-height:650px) { :root { --topbar-height:56px; }.agent-presence { --display-presence-size:min(var(--presence-size,84px),64px); }.composer-area { padding-bottom:14px; } }
+@media(max-height:650px) { :root { --topbar-height:56px; }.agent-presence { --display-presence-size:min(var(--presence-size,84px),64px); }.composer-area { padding-bottom:14px; }.composer textarea { max-height:96px; } }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
 html[data-reduce-motion="true"] *,html[data-reduce-motion="true"] *::before,html[data-reduce-motion="true"] *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
 :root .account-credit { display: grid; grid-template-columns: 1fr auto; gap: .5rem; padding: 0 0 1rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }

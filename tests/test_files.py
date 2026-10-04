@@ -147,6 +147,36 @@ async def test_generated_file_discovery_ignores_symlinks_and_hardlinks(file_clie
     assert (await client.get(records[0]['preview_url'])).status_code == 404
 
 
+async def test_generated_png_is_an_owned_inline_result_without_workspace_or_navigation(file_client, config):
+    import struct
+    import zlib
+    client, app, session = file_client
+    # A complete 2 x 2 RGB PNG, built from standard chunks without image-library
+    # or network dependencies. This is test data, never a user artifact.
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 2, 0, 0, 0))
+    png += chunk(b'IDAT', zlib.compress(b'\x00' + b'\x8f\x7b\x9f' * 2 + b'\x00' + b'\xd6\xc6\xbf' * 2)) + chunk(b'IEND', b'')
+    uploaded = (await upload(client, session, 'input.png', png)).json()
+    user = (await client.get('/api/auth/me')).json()['user']
+    workspace = config.data_dir / 'files' / user['id'] / session
+    (workspace / 'finished.png').write_bytes(png)
+    snapshot = (await client.get(f'/api/sessions/{session}')).json()
+    generated = next(item for item in snapshot['files'] if item['name'] == 'finished.png')
+    assert generated['source'] == 'output' and generated['media_type'] == 'image/png'
+    assert next(item for item in snapshot['files'] if item['id'] == uploaded['id'])['source'] == 'upload'
+    assert snapshot['components'] == [] and snapshot['app_actions'] == []
+    preview = (await client.get(generated['preview_url'])).json()
+    assert preview == {'kind': 'image', 'url': generated['content_url']}
+    content = await client.get(generated['content_url'], params={'revision': len(png)})
+    assert content.status_code == 200 and content.content == png
+    assert content.headers['content-type'].startswith('image/png')
+    assert content.headers['content-disposition'].startswith('inline;')
+    assert content.headers['cache-control'] == 'no-store'
+    download = await client.get(generated['content_url'], params={'download': 1})
+    assert download.content == png and download.headers['content-disposition'].startswith('attachment;')
+
+
 async def test_symlink_workspace_blocks_upload(file_client, config, tmp_path):
     client, _, session = file_client
     user = (await client.get('/api/auth/me')).json()['user']
@@ -274,6 +304,7 @@ async def test_file_registry_and_original_survive_restart(config):
                     listing = (await client.get(f'/api/sessions/{session}/files')).json()
                     assert listing[0]['id'] == record['id']
                     assert listing[0]['source'] == 'upload'
+                    assert listing[0]['content_revision'] == record['content_revision']
 
 
 async def test_replaced_ancestor_directory_cannot_escape_owned_area(file_client, config, tmp_path):

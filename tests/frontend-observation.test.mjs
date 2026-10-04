@@ -12,9 +12,9 @@ function node(dataset, box = rect()) {
     get value() { assert.fail('Form values must never be inspected'); },
     get contentWindow() { assert.fail('Generated iframe contents must never be inspected'); } };
 }
-function document({ widgets = [], views = [], workspace = null, password = false, hidden = false, width = 1200, height = 800 } = {}) {
+function document({ widgets = [], views = [], inline = [], workspace = null, password = false, hidden = false, width = 1200, height = 800 } = {}) {
   return { hidden, defaultView: { innerWidth: width, innerHeight: height },
-    querySelectorAll(selector) { return selector === '[data-app-view]' ? views : selector === '.widget[data-component-id]' ? widgets : assert.fail(selector); },
+    querySelectorAll(selector) { return selector === '[data-app-view]' ? views : selector === '.widget[data-component-id]' ? widgets : selector === '[data-inline-preview-id]' ? inline : assert.fail(selector); },
     querySelector(selector) { return selector.startsWith('.workspace-panel') ? workspace : selector.startsWith('.account-profile') && password ? node({}) : null; } };
 }
 const semantic = () => observeFrontend(document(), facts());
@@ -143,4 +143,21 @@ test('UI receipts verify effects in the current client without requiring origin 
   assert.equal(observesAppAction(action('attach', {}), state), false);
   assert.equal(observesAppAction(action('attach', {}), { ...state, waiting: [{ kind: 'file_selection' }] }), true);
   assert.equal(observesAppAction(action('detach', { file_id: 'file1' }), state), false);
+});
+
+
+test('a file can be previewed in the conversation without a modal or obscuring components', () => {
+  const state = observeFrontend(document({ inline: [node({ inlinePreviewId: 'sheet' })], widgets: [node({ componentId: 'chart', componentState: 'mounted' })] }),
+    facts({ components: [component('chart')], preview: { file_id: 'sheet', status: 'ready' } }));
+  assert.deepEqual(state.preview, { file_id: 'sheet', status: 'ready' });
+  assert.deepEqual(state.open_views, []);
+  assert.equal(state.components[0].visible, true);
+  assert.equal(observesAppAction({ action: 'preview', payload: { file_id: 'sheet' } }, state), true);
+});
+
+test('removed, hidden or different inline files cannot confirm the requested preview', () => {
+  for (const inline of [[], [node({ inlinePreviewId: 'other' })], [node({ inlinePreviewId: 'sheet' }, rect(0, 0, 0, 0))]]) {
+    const state = observeFrontend(document({ inline }), facts({ preview: { file_id: 'sheet', status: 'ready' } }));
+    assert.equal(state.preview, null);
+  }
 });

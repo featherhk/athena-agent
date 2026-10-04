@@ -38,7 +38,7 @@ async def input_clear_fixture(store, *, unsent=True, sourced=True, target_client
            else await store.enqueue(session, 'Legacy input'))
     await store.claim(session)
     await initialize_files(store)
-    await store.execute('INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)',
+    await store.execute('INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
                         ('input-clear-file', owner, session, 'note.md', 'note.md', 3, 'text/markdown', 'output', now()))
     return owner, session, token, run
 

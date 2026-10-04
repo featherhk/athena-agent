@@ -296,55 +296,55 @@
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "إعادة تحميل الصفحة قد تفقد النص غير المُرسل. لن تعيد تشغيل المهام الجارية."
+            "value": "افتح الواجهة الافتراضية دون الواجهات المخصصة. قد تفقد النص غير المُرسل. لن تُحذف المحادثات أو الملفات ولن تُعاد المهام الجارية."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reloading may discard unsent text. It will not restart work already running."
+            "value": "Open the default interface without custom surfaces. Unsent text may be lost. Chats and files stay; running work will not restart."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Al recargar se puede perder el texto sin enviar. Las tareas en curso no se reiniciarán."
+            "value": "Abre la interfaz predeterminada sin interfaces personalizadas. Puede perderse el texto sin enviar. Los chats y archivos se conservan; las tareas en curso no se reinician."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le rechargement peut supprimer le texte non envoyé. Il ne relance pas les tâches en cours."
+            "value": "Ouvrir l’interface par défaut sans interfaces personnalisées. Le texte non envoyé peut être perdu. Les conversations et fichiers sont conservés, sans relancer les tâches en cours."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "再読み込みすると未送信の文章が失われる場合があります。実行中のタスクを最初からやり直すことはありません。"
+            "value": "カスタム画面を読み込まずに標準画面を開きます。未送信の文章は失われる場合があります。会話とファイルは保持され、実行中のタスクを最初からやり直すことはありません。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새로 고침하면 보내지 않은 글이 사라질 수 있어요. 진행 중인 작업을 처음부터 다시 실행하지는 않아요."
+            "value": "사용자 지정 화면 없이 기본 화면을 엽니다. 보내지 않은 글은 사라질 수 있어요. 대화와 파일은 보존되며 진행 중인 작업을 처음부터 다시 실행하지 않아요."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recarregar pode descartar o texto não enviado. As tarefas em andamento não serão reiniciadas."
+            "value": "Abra a interface padrão sem interfaces personalizadas. O texto não enviado pode ser perdido. Conversas e arquivos ficam salvos; as tarefas em andamento não serão reiniciadas."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新加载可能丢失尚未发送的文字，不会重新执行已经开始的任务。"
+            "value": "使用默认界面打开，暂不加载自定义界面。尚未发送的文字可能丢失；聊天和文件会保留，进行中的任务不会重新执行。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新載入可能遺失尚未傳送的文字，不會重新執行已經開始的任務。"
+            "value": "以預設介面開啟，暫不載入自訂介面。尚未傳送的文字可能遺失；對話和檔案會保留，進行中的任務不會重新執行。"
           }
         }
       }
@@ -461,6 +461,180 @@
           "stringUnit": {
             "state": "translated",
             "value": "原始檔案仍保留在對話中，可以稍後重試。"
+          }
+        }
+      }
+    },
+    "recover_page": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استعادة واجهة أثينا"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recover Athena"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recuperar Athena"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurer Athena"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Athena を復旧"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Athena 복구"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recuperar o Athena"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复 Athena"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復原 Athena"
+          }
+        }
+      }
+    },
+    "navigation_failed": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّر فتح هذه الصفحة"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t open this page"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo abrir esta página"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’ouvrir cette page"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このページを開けませんでした"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 페이지를 열 수 없어요"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível abrir esta página"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法打开这个页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法開啟此頁面"
+          }
+        }
+      }
+    },
+    "navigation_detail": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يمكنك متابعة المحادثة. بقي النص غير المُرسل كما هو."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can keep using this conversation. Your unsent text is still here."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Puedes seguir usando esta conversación. El texto sin enviar sigue aquí."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vous pouvez continuer cette conversation. Votre texte non envoyé est conservé."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この会話は引き続き利用できます。未送信の文章も残っています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대화를 계속 사용할 수 있어요. 보내지 않은 글도 그대로 있어요."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Você pode continuar nesta conversa. Seu texto não enviado continua aqui."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你可以继续使用当前会话，尚未发送的文字仍保留在这里。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你可以繼續使用目前的對話，尚未傳送的文字仍保留在這裡。"
           }
         }
       }

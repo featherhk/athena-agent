@@ -6,11 +6,12 @@
 
 ## 选择工作面
 
-- `inline` 是聊天内内容，`workspace` 是主要工作区，`banner` 是提醒。
+- `inline` 是聊天内内容，`workspace` 是当前页面中的工作内容（不会自动替换对话）；需要明确专注时使用 `fullscreen`，`banner` 是提醒。
 - 四角 `top-start/top-end/bottom-start/bottom-end` 是浮动小工具；`sidebar-start/sidebar-end` 会占据侧栏空间，适合导航、待办或辅助信息，避免遮住聊天。start/end 跟随阅读方向。
 - `overlay` 是自由画布，HTML/SVG/Canvas 可在整个聊天工作面的任意位置绘制，不限于四角。默认透明、鼠标穿透；需要点击、拖动、触摸或键盘交互时用 `Athena.interact` 声明实际交互区域，空白处继续滚动和选字。使用布局锚点跟随内容，不靠固定角落冒充跨气泡动画。
 - `fullscreen` 提供沉浸工作面，保留外层输入和退出控件。用它做播放器、画板等；不是浏览器或系统全屏权限。
 - `presence` 替换默认 Athena 视觉标志，宿主保持状态文字与控制。它可以是自绘形状、Canvas 或动画；不要假设一定是球体。
+- `surface` 替换完整会话 renderer，可自行排布全部消息、动画与输入区域；独立停止和恢复外壳保留。需要用规范会话内容而非仅几何锚点时读 `surface.md`，不要把完整替换误写成盖在原页面上的大卡片。
 
 所有工作面仍属于当前会话。替换或移除组件会销毁 iframe；重要状态保存到文件、工具或普通消息，不能只放内存。恢复版本也会重新挂载。
 
@@ -135,7 +136,7 @@ Athena.observe(layout => {
 
 回调得到 `{id,kind,point:{x,y},pointer}`；kind 为 activate/press/move/release/cancel，pointer 为 mouse/touch/pen/keyboard。拖动超过阈值后不会再触发一次点击；键盘激活的位置为区域中心。普通表单、输入法、编辑器仍应使用 inline/workspace 或浮窗中的真实 HTML 控件；不要用画布模拟密码表单。`navigate` 需要原 iframe 的直接用户激活，不能从画布回调假装直接导航；可在明确点击后用 `submit` 向 Athena 提出切换请求。
 
-停止、恢复、输入和账户弹窗仍由独立外壳控制。隐藏、移除、重置、源码更新或会话切换会撤销该组件的所有命中区域。错误版本不能留下透明的点击拦截层。
+停止、恢复和账户弹窗仍由独立外壳控制；完整 surface 可提供自己的输入区域，恢复后回到默认输入。隐藏、移除、重置、源码更新或会话切换会撤销该组件的所有命中区域。错误版本不能留下透明的点击拦截层。
 
 ## 文本外观
 

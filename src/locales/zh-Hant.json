@@ -114,6 +114,7 @@
   "files.loading": "正在開啟檔案…",
   "files.unavailable": "無法預覽此檔案。你可以下載檔案。",
   "files.previewTruncated": "這裡只顯示檔案開頭。如需查看完整內容，請下載檔案。",
+  "files.documentPreview": "Word 本文預覽。完整排版和嵌入內容請下載原始檔案檢視。",
   "files.sheet": "工作表",
   "files.rowsTruncated": "這裡只顯示部分預覽。下載活頁簿即可查看所有列和工作表。",
   "files.empty": "此檔案是空的。",
@@ -286,5 +287,7 @@
   "recharge.loadError": "暫時無法載入付款選項，請重試。",
   "recharge.createError": "尚未確認請求結果。請復原同一請求，避免重複下單。",
   "recharge.storageError": "瀏覽器無法儲存付款請求，請允許本機儲存後再繼續。",
-  "recharge.amountChanged": "可儲值的金額已調整，請重新選擇金額。"
+  "recharge.amountChanged": "可儲值的金額已調整，請重新選擇金額。",
+  "surface.surface": "完整工作介面",
+  "surface.recovery": "已進入復原模式，自訂介面已停用，聊天和檔案仍然保留。"
 }

@@ -24,7 +24,7 @@ POLICY_CONSUMERS = (
 )
 NAME = re.compile(r"user_[a-z][a-z0-9_]{0,47}\Z")
 COMPONENT_ID = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
-COMPONENT_PLACEMENTS = ("inline", "workspace", "banner", "top-start", "top-end", "bottom-start", "bottom-end", "overlay", "fullscreen", "presence", "sidebar-start", "sidebar-end")
+COMPONENT_PLACEMENTS = ("inline", "workspace", "banner", "top-start", "top-end", "bottom-start", "bottom-end", "overlay", "fullscreen", "presence", "sidebar-start", "sidebar-end", "surface")
 COMPONENT_ERRORS = ("script_error", "unhandled_rejection", "blocked_resource", "empty_document", "load_timeout")
 MAX_FILES, MAX_PACKAGE_BYTES = 64, 4 * 1024 * 1024
 
@@ -190,7 +190,9 @@ class Registry:
             if previous is None or tuple(previous) != fields:
                 db.execute("INSERT INTO component_reports(session_id,component_id,version,instance,state,has_content,in_view,error_code,created_at) "
                            "VALUES (?,?,?,?,?,?,?,?,?)", (session_id, component_id, version, instance, *fields, now()))
-            return {"accepted": True, "render": self._render_status(db, session_id, component_id, version)}
+            from .component_views import surface_selected
+            return {"accepted": True, "render": self._render_status(db, session_id, component_id, version),
+                    "surface_selected": surface_selected(db, session_id, component_id, version)}
         return await self.store.call(record)
 
     async def skill_catalog(self, session_id):
@@ -283,14 +285,17 @@ class Registry:
                 sql += f" AND e.{key}=?"
                 values.append(name)
             rows = await self.store.rows(sql + f" ORDER BY e.{key},e.version DESC LIMIT ? OFFSET ?", (*values, limit, offset))
+            if kind == 'component':
+                from .component_views import read_view, surface_registration
+                selected = await self.store.call(lambda db: surface_registration(db, owner))
             items = []
             for row in rows:
                 item = {field: row[field] for field in (key, "version", "active", "current", "created_at")}
                 item["description" if kind != "component" else "title"] = row["description" if kind != "component" else "title"]
                 item["enabled"] = bool(row["active"] and row["current"])
                 if kind == "component":
-                    from .component_views import read_view
                     item.update(await self.store.call(lambda db, row=row: read_view(db, owner, row['id'])))
+                    item['surface_selected'] = selected.get('id') == row['id'] and selected.get('version') == row['version']
                     item["placement"] = row.get("placement", "inline")
                     item["render"] = await self.store.call(lambda db, row=row: self._render_status(db, owner, row["id"], row["version"]))
                 elif kind == "policy":
@@ -307,8 +312,10 @@ class Registry:
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 result.update(policy_state(name, row["active"], latest["version"] == row["version"]))
             if kind == "component":
-                from .component_views import read_view
-                result.update(await self.store.call(lambda db: read_view(db, owner, name)))
+                from .component_views import read_view, surface_selected
+                result.update(await self.store.call(lambda db: {
+                    **read_view(db, owner, name),
+                    'surface_selected': surface_selected(db, owner, name, row['version'])}))
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 render = await self.store.call(lambda db: self._render_status(db, owner, name, row["version"]))
                 return {**result, "enabled": bool(row["active"] and row["version"] == latest["version"]),
@@ -336,11 +343,13 @@ class Registry:
             def remove(db):
                 row = self._record(db, kind, owner, name)
                 if not row["active"]:
-                    return {"kind": kind, key: name, "version": row["version"], "status": "disabled"}
+                    return {"kind": kind, key: name, "version": row["version"], "status": "disabled",
+                            **({'surface_selected': False} if kind == 'component' else {})}
                 self._insert(db, kind, owner, name, row["version"] + 1, row, active=False)
                 if kind == "component":
                     self._component_event(db, owner, name, row["version"] + 1, "remove", row.get("placement", "inline"))
-                return {"kind": kind, key: name, "version": row["version"] + 1, "status": "disabled"}
+                return {"kind": kind, key: name, "version": row["version"] + 1, "status": "disabled",
+                        **({'surface_selected': False} if kind == 'component' else {})}
             result = await self.store.call(remove)
             return {**result, **policy_state(name, active=False)} if kind == "policy" else result
         if action == "restore":
@@ -443,9 +452,10 @@ class Registry:
             result = {"kind": kind, key: name, "version": version, "status": "restored" if action == "restore" else "registered"}
             if kind == "component":
                 self._component_event(db, owner, name, version, action, record["placement"])
-                from .component_views import read_view
+                from .component_views import read_view, surface_selected
                 result.update(read_view(db, owner, name))
-                result.update(enabled=True, placement=record["placement"], render=self._render_status(db, owner, name, version))
+                result.update(enabled=True, placement=record["placement"], render=self._render_status(db, owner, name, version),
+                              surface_selected=surface_selected(db, owner, name, version))
             return {**result, **policy_state(name)} if kind == "policy" else result
         try:
             return await self.store.call(register)

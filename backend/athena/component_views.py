@@ -13,10 +13,41 @@ def read_view(db, session_id, component_id):
             "view_updated_at": row["updated_at"] if row else None}
 
 
-def active_components(db, session_id):
+def active_components(db, session_id, *, include_source=True):
     # Include folded surfaces: the independent shell can always reopen them.
-    rows = db.execute("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1 ORDER BY created_at,id", (session_id,)).fetchall()
-    return [{**dict(row), **read_view(db, session_id, row["id"])} for row in rows]
+    # Selection/observation only needs metadata, not every potentially large HTML
+    # document. Join layouts once rather than querying once per component.
+    columns = 'c.*' if include_source else 'c.id,c.version,c.placement,c.created_at'
+    rows = db.execute(f"""SELECT {columns},v.state AS _view_state,v.revision AS view_revision,v.updated_at AS view_updated_at
+        FROM components c LEFT JOIN component_views v ON v.session_id=c.session_id AND v.component_id=c.id
+        WHERE c.session_id=? AND c.version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id)
+        AND c.active=1 ORDER BY c.created_at,c.id""", (session_id,)).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        item['view'] = json.loads(item.pop('_view_state') or '{}')
+        item['view_revision'] = item['view_revision'] or 0
+        items.append(item)
+    candidates = [item for item in items if item['view'].get('placement', item['placement']) == 'surface'
+                  and not item['view'].get('hidden', False)]
+    selected = max(candidates, key=lambda item: (max(item['created_at'], item['view_updated_at'] or ''), item['id']), default=None)
+    for item in items:
+        item['surface_selected'] = item is selected
+    return items
+
+
+def surface_registration(db, session_id):
+    """Desired renderer, separate from any browser's actual rendering receipt."""
+    selected = next((item for item in active_components(db, session_id, include_source=False) if item['surface_selected']), None)
+    if selected is None:
+        return {'provider': 'default'}
+    return {'provider': 'component', 'id': selected['id'], 'version': selected['version'],
+            'view_revision': selected['view_revision']}
+
+
+def surface_selected(db, session_id, component_id, version):
+    selected = surface_registration(db, session_id)
+    return selected.get('id') == component_id and selected.get('version') == version
 
 
 def validate_view(change):
@@ -58,7 +89,8 @@ async def update_view(store, session_id, component_id, version, revision, change
         stamp = now()
         db.execute("INSERT INTO component_views VALUES (?,?,?,?,?) ON CONFLICT(session_id,component_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,updated_at=excluded.updated_at",
                    (session_id, component_id, json.dumps(state), revision + 1, stamp))
-        result = {"id": component_id, "version": version, "view": state, "view_revision": revision + 1, "view_updated_at": stamp}
+        result = {"id": component_id, "version": version, "view": state, "view_revision": revision + 1, "view_updated_at": stamp,
+                  "surface_selected": surface_selected(db, session_id, component_id, version)}
         # Audit and refresh are committed in the same transaction as the layout.
         db.execute("INSERT INTO events(session_id,type,payload,created_at) VALUES (?,?,?,?)",
                    (session_id, "component_view", json.dumps(result), stamp))

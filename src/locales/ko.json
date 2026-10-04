@@ -114,6 +114,7 @@
   "files.loading": "파일 여는 중…",
   "files.unavailable": "파일을 미리 볼 수 없어요. 파일을 다운로드할 수 있어요.",
   "files.previewTruncated": "파일의 앞부분만 미리 볼 수 있어요. 전체 내용을 보려면 다운로드하세요.",
+  "files.documentPreview": "Word 본문 미리 보기예요. 전체 서식과 삽입된 콘텐츠는 원본을 다운로드해 확인하세요.",
   "files.sheet": "워크시트",
   "files.rowsTruncated": "일부만 미리 볼 수 있어요. 모든 행과 시트를 보려면 통합 문서를 다운로드하세요.",
   "files.empty": "이 파일은 비어 있어요.",
@@ -286,5 +287,7 @@
   "recharge.loadError": "결제 옵션을 불러오지 못했습니다. 다시 시도해 주세요.",
   "recharge.createError": "요청 결과가 아직 확인되지 않았습니다. 중복 주문을 피하려면 같은 요청을 복구하세요.",
   "recharge.storageError": "브라우저에 결제 요청을 저장할 수 없습니다. 로컬 저장소를 허용한 후 계속하세요.",
-  "recharge.amountChanged": "충전 가능한 금액이 변경되었습니다. 금액을 다시 선택해 주세요."
+  "recharge.amountChanged": "충전 가능한 금액이 변경되었습니다. 금액을 다시 선택해 주세요.",
+  "surface.surface": "전체 작업 화면",
+  "surface.recovery": "복구 모드입니다. 사용자 지정 화면은 비활성화되며 대화와 파일은 보존됩니다."
 }

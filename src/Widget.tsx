@@ -10,13 +10,16 @@ import { parseFormDraft, type FormDraft } from './component-forms';
 import CanvasActions from './CanvasActions';
 import { parseSurfaceRegions, visibleSurfaceRegions, type SurfaceRegion, type SurfaceAction } from './surface-interactions';
 import { parseTextTargets, type TextAnchorTarget } from './text-anchors';
+import { SurfaceDispatcher, SurfaceError, type SurfaceHost } from './surface-runtime';
 import './widgets.css';
 
 type Health = { state: 'mounted' | 'failed'; has_content: boolean; error_code: string | null };
 const errors = new Set(['script_error', 'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']);
 
-export default function Widget({ component, sessionId, submit, onStyleText, onNavigate, onView, floating, bounds, onHeight, fallback = false, draft, onDraft }: { component: Component; sessionId: string; submit: (text: string) => void; onStyleText?: (key: string, effect: TextStyleEffect | null) => void; onNavigate?: (sessionId: string) => void; onView: (component: Component, view: ViewChange) => Promise<void>; floating?: Rect; bounds: Rect; onHeight?: (id: string, height: number) => void; fallback?: boolean; draft?: FormDraft; onDraft: (value: FormDraft) => void }) {
+export default function Widget({ component, sessionId, submit, onStyleText, onNavigate, onView, floating, bounds, onHeight, fallback = false, draft, onDraft, surfaceHost, onHealth }: { component: Component; sessionId: string; submit: (text: string) => void; onStyleText?: (key: string, effect: TextStyleEffect | null) => void; onNavigate?: (sessionId: string) => void; onView: (component: Component, view: ViewChange) => Promise<void>; floating?: Rect; bounds: Rect; onHeight?: (id: string, height: number) => void; fallback?: boolean; draft?: FormDraft; onDraft: (value: FormDraft) => void; surfaceHost?: SurfaceHost; onHealth?: (health: Health) => void }) {
   const { locale, t, preferences, reduced } = useI18n();
+  const hostRef = useRef(surfaceHost); hostRef.current = surfaceHost;
+  const healthRef = useRef({ instance: '', callback: onHealth });
   const frame = useRef<HTMLIFrameElement>(null);
   const wrapper = useRef<HTMLElement>(null);
   const submitRef = useRef(submit);
@@ -72,18 +75,20 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     void change(panelView((resize ? resizePanel : movePanel)(floating, dx, dy, bounds), bounds));
   }
   const instance = useMemo(() => crypto.randomUUID(), [sessionId, component.id, component.version, placement, locale, attempt]);
+  healthRef.current = { instance, callback: onHealth };
   // Later theme changes use the bridge, preserving forms and animation state.
   const [initialPalette] = useState(() => customPalette(preferences.ui_palette));
   const html = useMemo(() => {
     const palette = initialPalette;
     const theme = palette ? { ink: palette.tokens['--ink'], surface: palette.tokens['--surface'], scheme: palette.scheme } : undefined;
-    return widgetDocument(component.html, locale, instance, theme, placement === 'overlay' || placement === 'presence');
+    return widgetDocument(component.html, locale, instance, theme, placement === 'overlay' || placement === 'presence', placement === 'surface');
   }, [component.html, placement, locale, instance, initialPalette]);
   useEffect(() => { submitRef.current = submit; }, [submit]);
   useEffect(() => { styleRef.current = onStyleText; }, [onStyleText]);
   useEffect(() => { navigateRef.current = onNavigate; }, [onNavigate]);
   useEffect(() => { layoutMeta.current = { locale, reduced }; refreshLayout.current(); }, [locale, reduced]);
   useEffect(() => {
+    const dispatcher = new SurfaceDispatcher();
     let health: Health | null = null, inView = false, lastReport = '', disposed = false;
     let observing = false, layoutFrame = 0, styleFrame = 0, interactionFrame = 0, lastLayout = '', lastTheme = '';
     let pendingRegions: SurfaceRegion[] = [];
@@ -120,6 +125,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       const signature = JSON.stringify(value);
       if (signature === lastReport) return;
       lastReport = signature;
+      if (healthRef.current.instance === instance) healthRef.current.callback?.(health);
       // A diagnostic upload must not break the user's chat when offline.
       void api(`/sessions/${sessionId}/components/${component.id}/report`, value).catch(() => { if (!disposed) lastReport = ''; });
     };
@@ -128,6 +134,17 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     }, 5000);
     const listener = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.data?.instance !== instance) return;
+      if (event.data.type === 'athena:surface-request' && hostRef.current) {
+        const { id, method, args } = event.data;
+        void dispatcher.dispatch(id, method, args, (...values) => {
+          if (disposed || !hostRef.current) throw new SurfaceError('surface_closed');
+          return hostRef.current.call(...values);
+        }).then(value => {
+          if (!disposed) frame.current?.contentWindow?.postMessage({ type: 'athena:surface-response', instance, id, value }, '*');
+        }, error => {
+          if (!disposed) frame.current?.contentWindow?.postMessage({ type: 'athena:surface-response', instance, id, error: error instanceof SurfaceError ? error.message : 'operation_failed' }, '*');
+        });
+      }
       if (event.data.type === 'athena:form-state') {
         const next = parseFormDraft(event.data.draft);
         if (next) { form.current = next; saveForm.current(next); }
@@ -211,7 +228,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     // Ask again if the iframe loaded before React installed this listener.
     frame.current?.contentWindow?.postMessage({ type: 'athena:inspect', instance }, '*');
     return () => {
-      disposed = true; window.clearTimeout(timeout); observer.disconnect();
+      disposed = true; dispatcher.dispose(); window.clearTimeout(timeout); observer.disconnect();
       cancelAnimationFrame(layoutFrame); cancelAnimationFrame(styleFrame); cancelAnimationFrame(interactionFrame);
       sizeObserver.disconnect(); changeObserver.disconnect(); themeObserver.disconnect();
       window.removeEventListener('scroll', scheduleLayout, true); window.removeEventListener('resize', scheduleLayout);
@@ -222,11 +239,14 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       window.removeEventListener('message', listener); document.removeEventListener('visibilitychange', report);
     };
   }, [sessionId, component.id, component.version, instance]);
+  useEffect(() => {
+    if (surfaceHost) frame.current?.contentWindow?.postMessage({ type: 'athena:surface-changed', instance, revision: surfaceHost.revision }, '*');
+  }, [surfaceHost?.revision, instance]);
   const rect = dragged || floating;
   const regions = placement === 'overlay' && !failure && interactions.instance === instance
     ? visibleSurfaceRegions(interactions.regions, canvasSize.width, canvasSize.height) : [];
   const dispatch = (action: SurfaceAction) => frame.current?.contentWindow?.postMessage({ type: 'athena:interaction', instance, action }, '*');
-  return <section ref={wrapper} className={`widget${floating ? ' widget-floating' : ''}${dragged ? ' widget-adjusting' : ''}`} data-placement={placement} data-component-id={component.id} data-component-instance={instance} data-component-state={observation?.instance === instance ? observation.health.state : 'unobserved'} data-component-error={observation?.instance === instance ? observation.health.error_code || undefined : undefined} style={rect ? { left: rect.x, top: rect.y, width: rect.width, height: rect.height } : ['workspace', 'fullscreen', 'presence', 'overlay'].includes(placement) ? undefined : { maxWidth: component.view?.width, marginInline: 'auto' }}>
+  return <section ref={wrapper} className={`widget${floating ? ' widget-floating' : ''}${dragged ? ' widget-adjusting' : ''}`} data-placement={placement} data-component-id={component.id} data-component-instance={instance} data-component-state={observation?.instance === instance ? observation.health.state : 'unobserved'} data-component-error={observation?.instance === instance ? observation.health.error_code || undefined : undefined} style={rect ? { left: rect.x, top: rect.y, width: rect.width, height: rect.height } : ['surface', 'workspace', 'fullscreen', 'presence', 'overlay'].includes(placement) ? undefined : { maxWidth: component.view?.width, marginInline: 'auto' }}>
     <header className="widget-toolbar">
       {floating ? <button className="widget-handle" disabled={saving} aria-label={t('surface.move', { name: component.title })} onPointerDown={event => startDrag(event)} onPointerMove={moveDrag} onPointerUp={event => endDrag(event)} onPointerCancel={event => endDrag(event, true)} onLostPointerCapture={event => endDrag(event, true)} onKeyDown={event => keyMove(event)}>{component.title}</button> : <span className="section-label">{component.title}</span>}
       <ComponentControls component={component} change={view => void change(view)} busy={saving} />

@@ -33,9 +33,10 @@ function compile(name, overrides = {}) {
   return module.exports;
 }
 const styledText = compile('StyledText.tsx');
+const imageResults = compile('ImageResult.tsx', { './i18n': i18n });
 let parses = 0;
 const components = compile('MessageBody.tsx', {
-  './i18n': i18n, './StyledText': styledText, 'remark-gfm': { default: remarkGfm, __esModule: true },
+  './i18n': i18n, './StyledText': styledText, './ImageResult': imageResults, 'remark-gfm': { default: remarkGfm, __esModule: true },
   './markdown-autolinks': { remarkReadableAutolinks },
   'react-markdown': { __esModule: true, defaultUrlTransform, default: props => { parses++; return h(Markdown, props); } },
 });
@@ -97,7 +98,34 @@ test('text effects, reasoning, locale and owned-image rules stay live across mem
     await fixture.render(view('fr', { effect, reasoning: 'Thinking **first**. Final reasoning.' })); assert.equal(parses, 4);
     assert.match(fixture.host.querySelector('details').textContent, /Final reasoning\./);
     await fixture.render(view('fr')); assert.equal(parses, 6);
-    assert.equal(fixture.host.querySelector('[data-message-text] span'), null, 'reset can remove a text effect');
+    assert.equal(Boolean(fixture.host.querySelector('[data-message-text] span[style*="inline-block"]')), false, 'reset can remove a text effect without removing image controls');
+  } finally { await fixture.close(); }
+});
+
+test('streaming after an owned image preserves the loaded element without opening a separate view', async () => {
+  const fixture = await mount();
+  const content = '![Finished picture](/api/files/file_1/content)';
+  try {
+    await fixture.render(h(MessageBody, { content, streaming: true }));
+    const image = fixture.host.querySelector('img');
+    await act(async () => image.dispatchEvent(new window.Event('load')));
+    assert.equal(fixture.host.querySelector('[data-image-state]').dataset.imageState, 'ready');
+    for (const suffix of ['\n\nHere', '\n\nHere is the', '\n\nHere is the completed result.']) {
+      await fixture.render(h(MessageBody, { content: content + suffix, streaming: true }));
+      assert.equal(fixture.host.querySelector('img') === image, true);
+      assert.equal(fixture.host.querySelector('[data-image-state]').dataset.imageState, 'ready');
+      assert.equal(document.querySelectorAll('dialog').length, 0);
+    }
+  } finally { await fixture.close(); }
+});
+
+test('a Markdown link wrapping an owned image cannot cause nested navigation or nested download anchors', async () => {
+  const fixture = await mount();
+  try {
+    await fixture.render(h(MessageBody, { content: '[![Picture](/api/files/file_1/content)](https://elsewhere.invalid)' }));
+    assert.equal(fixture.host.querySelectorAll('a a, a button').length, 0);
+    assert.equal(fixture.host.querySelectorAll('a').length, 1);
+    assert.equal(fixture.host.querySelector('a').getAttribute('href'), '/api/files/file_1/content?download=1');
   } finally { await fixture.close(); }
 });
 

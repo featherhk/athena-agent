@@ -114,6 +114,7 @@
   "files.loading": "Ouverture du fichier…",
   "files.unavailable": "L’aperçu n’est pas disponible. Vous pouvez télécharger ce fichier.",
   "files.previewTruncated": "L’aperçu montre le début de ce fichier. Téléchargez-le pour consulter son contenu complet.",
+  "files.documentPreview": "Aperçu du texte Word. Téléchargez l’original pour la mise en page complète et le contenu intégré.",
   "files.sheet": "Feuilles de calcul",
   "files.rowsTruncated": "Cet aperçu est partiel. Téléchargez le classeur pour voir toutes les lignes et feuilles.",
   "files.empty": "Ce fichier est vide.",
@@ -286,5 +287,7 @@
   "recharge.loadError": "Impossible de charger les options de paiement. Veuillez réessayer.",
   "recharge.createError": "Le résultat est encore inconnu. Récupérez la même demande pour éviter une deuxième commande.",
   "recharge.storageError": "Ce navigateur n’a pas pu enregistrer votre demande. Activez le stockage local avant de continuer.",
-  "recharge.amountChanged": "Les montants disponibles ont changé. Choisissez un montant pour continuer."
+  "recharge.amountChanged": "Les montants disponibles ont changé. Choisissez un montant pour continuer.",
+  "surface.surface": "Espace de travail complet",
+  "surface.recovery": "Mode de récupération actif. Les vues personnalisées sont désactivées. Vos conversations et fichiers sont conservés."
 }

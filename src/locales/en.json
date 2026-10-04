@@ -114,6 +114,7 @@
   "files.loading": "Opening file…",
   "files.unavailable": "Preview is not available. You can download this file.",
   "files.previewTruncated": "Preview shows the beginning of this file. Download for the full content.",
+  "files.documentPreview": "Word text preview. Download the original for full formatting and embedded content.",
   "files.sheet": "Worksheets",
   "files.rowsTruncated": "This is a partial preview. Download the workbook for all rows and sheets.",
   "files.empty": "This file is empty.",
@@ -286,5 +287,7 @@
   "recharge.loadError": "Payment options could not be loaded. Please try again.",
   "recharge.createError": "The result is not yet known. Recover the same request to avoid creating another order.",
   "recharge.storageError": "This browser could not save your payment request. Enable local storage before continuing.",
-  "recharge.amountChanged": "Payment amounts have changed. Choose an available amount to continue."
+  "recharge.amountChanged": "Payment amounts have changed. Choose an available amount to continue.",
+  "surface.surface": "Full work surface",
+  "surface.recovery": "Recovery mode is active. Custom views are disabled; your chats and files are safe."
 }

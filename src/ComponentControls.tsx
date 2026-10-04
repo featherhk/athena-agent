@@ -3,7 +3,7 @@ import type { Component, Placement, ViewChange } from './api';
 import { placementOf } from './component-layout';
 import { useI18n } from './i18n';
 
-const positions: Placement[] = ['inline', 'workspace', 'sidebar-start', 'sidebar-end', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'banner', 'overlay', 'fullscreen', 'presence'];
+const positions: Placement[] = ['surface', 'inline', 'workspace', 'sidebar-start', 'sidebar-end', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'banner', 'overlay', 'fullscreen', 'presence'];
 
 export default function ComponentControls({ component, change, busy = false }: { component: Component; change: (view: ViewChange) => void; busy?: boolean }) {
   const { t } = useI18n();
@@ -29,7 +29,7 @@ export default function ComponentControls({ component, change, busy = false }: {
     return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', escape); window.removeEventListener('resize', resize); };
   }, [open]);
   const placement = placementOf(component);
-  const sized = !['workspace', 'fullscreen', 'presence', 'overlay'].includes(placement);
+  const sized = !['surface', 'workspace', 'fullscreen', 'presence', 'overlay'].includes(placement);
   return <div className="component-controls" ref={root}>
     <button type="button" className="surface-icon" title={t('surface.options')} aria-label={t('surface.options')} aria-expanded={open} onClick={toggle}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6m6 4v6" /></svg></button>
     <button type="button" className="surface-icon" title={t('surface.hide')} aria-label={t('surface.hide')} disabled={busy} onClick={() => change({ hidden: true })}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M7 17 17 7" /></svg></button>

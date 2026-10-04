@@ -114,6 +114,7 @@
   "files.loading": "Abriendo archivo…",
   "files.unavailable": "La vista previa no está disponible. Puedes descargar este archivo.",
   "files.previewTruncated": "La vista previa muestra el inicio del archivo. Descárgalo para ver todo el contenido.",
+  "files.documentPreview": "Vista previa del texto de Word. Descarga el original para ver todo el formato y contenido incrustado.",
   "files.sheet": "Hojas de cálculo",
   "files.rowsTruncated": "Esta vista previa es parcial. Descarga el libro para ver todas las filas y hojas.",
   "files.empty": "Este archivo está vacío.",
@@ -286,5 +287,7 @@
   "recharge.loadError": "No se pudieron cargar las opciones de pago. Inténtalo de nuevo.",
   "recharge.createError": "El resultado aún se desconoce. Recupera la misma solicitud para evitar otro pedido.",
   "recharge.storageError": "El navegador no pudo guardar la solicitud de pago. Activa el almacenamiento local antes de continuar.",
-  "recharge.amountChanged": "Los importes disponibles han cambiado. Elige un importe para continuar."
+  "recharge.amountChanged": "Los importes disponibles han cambiado. Elige un importe para continuar.",
+  "surface.surface": "Área de trabajo completa",
+  "surface.recovery": "Modo de recuperación activo. Las vistas personalizadas están desactivadas. Tus conversaciones y archivos se conservan."
 }

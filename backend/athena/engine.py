@@ -236,29 +236,43 @@ class Engine:
                     await self.emit(session_id, "app_control", {"action": control, "status": "applied", "run_id": run_id})
                 return
 
-    async def context(self, session_id, profile=None, epoch=None):
+    async def context(self, session_id, profile=None, epoch=None, *, definitions=None):
         if profile is None:
             profile, epoch = await self.models.selected(session_id)
+        if definitions is None:
+            definitions, _ = await self.tools.snapshot_definitions(session_id)
         def project(db):
             history = self.store._context_history(db, session_id)
             clips = {row["message_id"]: row["content"] for row in db.execute("SELECT * FROM context_clips WHERE session_id=?", (session_id,))}
-            size = sum(len(clips.get(row["id"], row["content"])) + len(row["reasoning"]) + len(row["tool_calls"] or "") for row in history if row["status"] == "complete")
-            needs_compaction = size > min(180_000, int(profile.context_chars * .7))
             boundary = db.execute("SELECT COUNT(*) FROM compactions WHERE session_id=?", (session_id,)).fetchone()[0]
-            return history, clips, boundary, needs_compaction
-        history, clips, boundary, needs_compaction = await self.store.call(project)
-        if needs_compaction:
-            await self.tools.compact(session_id, 20000, protect_latest=True)
-            history, clips, boundary, _ = await self.store.call(project)
-        prefixes = await self.store.rows("SELECT prompt FROM context_prefixes WHERE session_id=? AND epoch=? AND boundary=?", (session_id, epoch, boundary))
-        if not prefixes:
-            prefix = system_prompt(profile, epoch)
-            catalog = await self.tools.registry.skill_catalog(session_id)
-            if catalog:
-                prefix += "\n用户技能（按需用 runtime skill 读取）：\n" + "\n".join(f"- {item['name']}: {item['description']}" for item in catalog)
-            await self.store.execute("INSERT OR IGNORE INTO context_prefixes VALUES (?,?,?,?,?)", (session_id, epoch, boundary, prefix, now()))
+            return history, clips, boundary
+
+        async def projected():
+            history, clips, boundary = await self.store.call(project)
             prefixes = await self.store.rows("SELECT prompt FROM context_prefixes WHERE session_id=? AND epoch=? AND boundary=?", (session_id, epoch, boundary))
-        return project_messages(history, clips, profile, prefixes[0]["prompt"])
+            if not prefixes:
+                prefix = system_prompt(profile, epoch)
+                catalog = await self.tools.registry.skill_catalog(session_id)
+                if catalog:
+                    prefix += "\n用户技能（按需用 runtime skill 读取）：\n" + "\n".join(f"- {item['name']}: {item['description']}" for item in catalog)
+                await self.store.execute("INSERT OR IGNORE INTO context_prefixes VALUES (?,?,?,?,?)", (session_id, epoch, boundary, prefix, now()))
+                prefixes = await self.store.rows("SELECT prompt FROM context_prefixes WHERE session_id=? AND epoch=? AND boundary=?", (session_id, epoch, boundary))
+            return project_messages(history, clips, profile, prefixes[0]["prompt"])
+
+        messages = await projected()
+        threshold = min(180_000, int(profile.context_chars * .7))
+        # Budget the same model, tool schemas, prefix, notes and attachments that
+        # will be sent. A persisted compaction may admit a newer skill catalog;
+        # recheck once with that prefix, without looping on unshrinkable content.
+        for _ in range(2):
+            if len(json.dumps(profile.payload(messages, definitions), ensure_ascii=False)) <= threshold:
+                break
+            result = await self.tools.compact(session_id, 20000, protect_latest=True,
+                request_profile=(profile, epoch), request_tools=definitions, max_payload_chars=threshold)
+            if not result['compaction_id']:
+                break
+            messages = await projected()
+        return messages
 
     async def phase(self, session_id, run_id, value):
         await self.store.execute("UPDATE runs SET phase=? WHERE id=?", (value, run_id))
@@ -304,9 +318,9 @@ class Engine:
                 else:
                     key = await self.models.require_key(profile)
                     endpoint = profile.api_base
-                messages = await self.context(session_id, profile, epoch)
-                request_id = uid()
                 definitions, bindings = await self.tools.snapshot_definitions(session_id)
+                messages = await self.context(session_id, profile, epoch, definitions=definitions)
+                request_id = uid()
                 payload = profile.payload(messages, definitions)
                 encoded = json.dumps(payload, ensure_ascii=False)
                 if len(encoded) > profile.context_chars:

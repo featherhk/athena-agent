@@ -28,3 +28,14 @@
 .surface-dialog { overflow:visible; }.surface-dialog .surface-list { max-height:65dvh; overflow-y:auto; }
 @media(hover:hover) { .widget-toolbar .component-controls { opacity:.55; }.widget:hover .component-controls,.widget:focus-within .component-controls { opacity:1; } }
 @media(max-width:650px) { .widget-toolbar { margin-bottom:8px; }.surface-icon { width:34px; height:34px; }.component-options { max-width:calc(100vw - 48px); } }
+
+/* A renderer owns the work area, never the independent shell or canonical drafts. */
+.session-surface { flex:1; min-height:0; overflow:hidden; position:relative; }
+.session-surface > .widget { height:100%; width:100%; margin:0; padding:0; border:0; border-radius:0; background:transparent; }
+.session-surface .widget-toolbar { display:none; }
+.session-surface iframe { display:block; width:100%; height:100%!important; border:0; border-radius:0; }
+.app[data-renderer="component"] .composer-area { padding-top:0; padding-bottom:max(8px,env(safe-area-inset-bottom)); }
+.app[data-renderer="component"] .topbar nav { gap:6px; }
+@media(max-width:650px) { .app[data-renderer="component"] .brand-wordmark { display:none; } }
+
+.composer.surface-call-controls { border:0; background:transparent; box-shadow:none; padding:0; min-height:0; justify-content:flex-end; }

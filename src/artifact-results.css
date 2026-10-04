@@ -1,0 +1,6 @@
+.artifact-result { flex:1 1 100%; min-width:0; width:100%; margin:18px 0; padding:20px 0; border-top:1px solid var(--tint); }
+.artifact-result .file-preview-header { font-size:14px; font-family:var(--font); }
+.artifact-result .file-text-preview,.artifact-result .spreadsheet-table-scroll { max-height:480px; }
+.artifact-result .file-html-preview { width:100%; height:480px; border:0; }
+.artifact-placeholder { min-height:140px; display:flex; flex-direction:column; gap:12px; color:var(--muted); }
+.surface-artifact { flex:0 1 45%; min-height:0; overflow:auto; padding:0 24px; background:var(--canvas); }

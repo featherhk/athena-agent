@@ -114,6 +114,7 @@
   "files.loading": "正在打开文件…",
   "files.unavailable": "无法预览此文件。你可以下载文件。",
   "files.previewTruncated": "这里只显示了文件开头。如需查看全部内容，请下载文件。",
+  "files.documentPreview": "Word 正文预览。完整排版和嵌入内容请下载原件查看。",
   "files.sheet": "工作表",
   "files.rowsTruncated": "这里只显示了部分预览。下载工作簿可查看所有行和工作表。",
   "files.empty": "此文件为空。",
@@ -286,5 +287,7 @@
   "recharge.loadError": "暂时无法加载付款选项，请重试。",
   "recharge.createError": "尚未确认请求结果。请恢复同一请求，避免重复下单。",
   "recharge.storageError": "浏览器无法保存付款请求，请允许本地存储后再继续。",
-  "recharge.amountChanged": "可充值的金额已调整，请重新选择金额。"
+  "recharge.amountChanged": "可充值的金额已调整，请重新选择金额。",
+  "surface.surface": "完整工作界面",
+  "surface.recovery": "已进入恢复模式，自定义界面已停用，聊天和文件仍然保留。"
 }

@@ -117,7 +117,7 @@ async def test_navigation_then_preview_and_open_stay_on_same_client_across_sessi
     receipt = await acknowledge_app_action(store, origin, user, navigation['id'], 'browser-one', 'applied', observed_revision=2)
     assert receipt['completed']
     await initialize_files(store)
-    await store.execute('INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)', ('report', user, origin, 'report.md', 'report.md', 3, 'text/markdown', 'output', now()))
+    await store.execute('INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)', ('report', user, origin, 'report.md', 'report.md', 3, 'text/markdown', 'output', now()))
     preview = (await app_operation(store, origin, None, {'action': 'preview', 'file_id': 'report', 'client_id': 'browser-one', 'expected_revision': 2}))['request']
     # The selected conversation's events no longer include origin actions. The
     # client-scoped feed must still deliver this new durable request.
@@ -157,7 +157,7 @@ async def test_semantic_ack_is_not_just_transport_success_and_is_idempotent(stor
 async def test_download_receipt_does_not_claim_saved_file(store, surface):
     user, session, token = surface
     await initialize_files(store)
-    await store.execute('INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)', ('download-file', user, session, 'note.md', 'note.md', 1, 'text/markdown', 'output', now()))
+    await store.execute('INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)', ('download-file', user, session, 'note.md', 'note.md', 1, 'text/markdown', 'output', now()))
     action = (await app_operation(store, session, None, {'action': 'download', 'file_id': 'download-file'}))['request']
     await claim_app_action(store, session, user, action['id'], 'browser-one')
     result = await acknowledge_app_action(store, session, user, action['id'], 'browser-one', 'applied', observed_revision=1)
@@ -283,7 +283,7 @@ async def test_concurrent_out_of_order_reports_cannot_overwrite_newer_state(stor
 async def test_ack_accepts_newer_preview_ready_observation_after_loading_report(store, surface):
     user, session, token = surface
     await initialize_files(store)
-    await store.execute('INSERT INTO file_entries VALUES (?,?,?,?,?,?,?,?,?)', ('ready-race', user, session, 'report.md', 'report.md', 3, 'text/markdown', 'output', now()))
+    await store.execute('INSERT INTO file_entries(id,user_id,session_id,name,path,size,media_type,source,created_at) VALUES (?,?,?,?,?,?,?,?,?)', ('ready-race', user, session, 'report.md', 'report.md', 3, 'text/markdown', 'output', now()))
     await observe_client(store, user, session, token, revision=2)
     action = (await app_operation(store, session, None, {'action': 'preview', 'file_id': 'ready-race'}))['request']
     await claim_app_action(store, session, user, action['id'], 'browser-one')

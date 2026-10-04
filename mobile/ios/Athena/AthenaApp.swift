@@ -4,7 +4,9 @@ import SafariServices
 
 private func tr(_ key: String) -> String { NSLocalizedString(key, comment: "") }
 
+#if !ATHENA_NATIVE_CHECKS
 @main
+#endif
 final class AthenaApp: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
@@ -33,7 +35,9 @@ final class AthenaScene: UIResponder, UIWindowSceneDelegate {
 
 @MainActor
 final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, SFSafariViewControllerDelegate, UIAdaptivePresentationControllerDelegate {
-    private let policy = HostPolicy.launch()
+    private let policy: HostPolicy
+    private let configuration: WKWebViewConfiguration
+    private var pageToRetry: URL
     private var webView: WKWebView!
     private let loading = UIActivityIndicatorView(style: .medium)
     private let recovery = UIStackView()
@@ -41,12 +45,23 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
     private var destinations: [ObjectIdentifier: URL] = [:]
     private var downloadQueue = DownloadQueue()
     private var showingFailure = false
+    private var hasPresentedPage = false
+    private var navigationFailurePending = false
     private let paper = UIColor(red: 0.973, green: 0.965, blue: 0.949, alpha: 1)
+
+    init(policy: HostPolicy = .launch(), configuration: WKWebViewConfiguration? = nil) {
+        self.policy = policy
+        self.configuration = configuration ?? WKWebViewConfiguration()
+        self.pageToRetry = policy.home
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Use the programmatic application host") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = paper
-        let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
@@ -121,33 +136,71 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
 
     @objc private func loadHome() {
+        loadPage(pageToRetry)
+    }
+
+    private func loadPage(_ url: URL) {
+        pageToRetry = url
         showingFailure = false
         recovery.isHidden = true
         webView.isHidden = false
         loading.startAnimating()
         // Reload only a GET page. The host never retries a message, tool or model request.
-        webView.load(URLRequest(url: policy.home, cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 30))
+        webView.load(URLRequest(url: url, cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 30))
     }
 
     @objc private func recoveryGesture(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began, presentedViewController == nil else { return }
+        guard gesture.state == .began else { return }
+        offerRecovery()
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [UIKeyCommand(title: tr("recover_page"), action: #selector(offerRecovery), input: "r", modifierFlags: .command)]
+    }
+
+    override func accessibilityPerformEscape() -> Bool {
+        guard presentedViewController == nil else { return false }
+        offerRecovery()
+        return true
+    }
+
+    @objc private func offerRecovery() {
+        guard presentedViewController == nil else { return }
         let alert = UIAlertController(title: "Athena", message: tr("reload_detail"), preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: tr("close"), style: .cancel) { [weak self, weak alert] _ in
             self?.finishPresentation(alert)
         })
-        alert.addAction(UIAlertAction(title: tr("retry"), style: .default) { [weak self, weak alert] _ in
-            self?.loadHome()
-            self?.finishPresentation(alert)
+        alert.addAction(UIAlertAction(title: tr("recover_page"), style: .default) { [weak self, weak alert] _ in
+            guard let self else { return }
+            self.recoverPage()
+            self.finishPresentation(alert)
         })
         present(alert, animated: true)
     }
 
+    func recoverPage() {
+        hasPresentedPage = false
+        navigationFailurePending = false
+        loadPage(policy.recoveryHome)
+    }
+
     private func failure() {
+        hasPresentedPage = false
+        navigationFailurePending = false
         showingFailure = true
         loading.stopAnimating()
         webView.isHidden = true
         recovery.isHidden = false
         UIAccessibility.post(notification: .screenChanged, argument: recoveryTitle)
+    }
+
+    private func navigationFailure() {
+        guard hasPresentedPage else { failure(); return }
+        // A refused navigation has not replaced the committed document. Preserve its
+        // draft, scroll position and stream instead of hiding the still-working chat.
+        loading.stopAnimating()
+        navigationFailurePending = true
+        presentDownloads()
     }
 
     func enteredBackground() {
@@ -160,11 +213,12 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        hasPresentedPage = true
         loading.stopAnimating()
         if !showingFailure { recovery.isHidden = true }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if (error as NSError).code != NSURLErrorCancelled { failure() }
+        if (error as NSError).code != NSURLErrorCancelled { navigationFailure() }
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { failure() }
@@ -211,7 +265,7 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         guard policy.owns(response.response.url) || !response.isForMainFrame else { decisionHandler(.cancel); return }
         if response.isForMainFrame, let response = response.response as? HTTPURLResponse, !(200..<300).contains(response.statusCode) {
-            failure(); decisionHandler(.cancel); return
+            navigationFailure(); decisionHandler(.cancel); return
         }
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
@@ -242,7 +296,7 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        guard policy.owns(response.url) else { completionHandler(nil); return }
+        guard policy.canDownload(response) else { completionHandler(nil); return }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Athena-" + UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -261,6 +315,15 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
 
     func presentDownloads() {
         let ready = isViewLoaded && view.window?.windowScene?.activationState == .foregroundActive && presentedViewController == nil
+        if ready, navigationFailurePending {
+            navigationFailurePending = false
+            let alert = UIAlertController(title: tr("navigation_failed"), message: tr("navigation_detail"), preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: tr("close"), style: .default) { [weak self, weak alert] _ in
+                self?.finishPresentation(alert)
+            })
+            present(alert, animated: true)
+            return
+        }
         if downloadQueue.beginFailure(canPresent: ready) {
             let alert = UIAlertController(title: tr("download_failed"), message: tr("download_detail"), preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: tr("close"), style: .default) { [weak self, weak alert] _ in

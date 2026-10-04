@@ -102,16 +102,19 @@ class ToolRunner:
             return await self.component(args, session_id)
         return await self.runtime(args, session_id, run_id)
 
-    async def compact(self, session_id, target_tokens=20000, default_plan=None, protect_latest=False):
+    async def compact(self, session_id, target_tokens=20000, default_plan=None, protect_latest=False, *, request_profile=None, request_tools=None, max_payload_chars=None):
         from .policies import PolicyRunner
         from .introspection import latest_tool_round
         history = await self.store.context_history(session_id)
         protected = latest_tool_round(history) if protect_latest else frozenset()
         clips = {row["message_id"]: row["content"] for row in await self.store.rows("SELECT * FROM context_clips WHERE session_id=?", (session_id,))}
-        default = await self.introspection.compaction_plan(session_id, target_tokens, protect_latest=protect_latest) if default_plan is None else default_plan
+        request_budget = {"request_profile": request_profile, "request_tools": request_tools, "max_payload_chars": max_payload_chars}
+        default = await self.introspection.compaction_plan(session_id, target_tokens, protect_latest=protect_latest, **request_budget) if default_plan is None else default_plan
         payload = {"default": default, "target_tokens": target_tokens, "protected_message_ids": sorted(protected), "messages": [{"id": row["id"], "content": clips.get(row["id"], row["content"])} for row in history if row["role"] == "tool" and row["status"] == "complete"]}
+        if max_payload_chars is not None:
+            payload["max_payload_chars"] = max_payload_chars
         policy = await PolicyRunner(self.config, self.store).apply("context_compression", session_id, payload, lambda plan: validate_compaction_plan(history, clips, plan, protected))
-        result = await self.introspection.compact(session_id, target_tokens, policy["value"], protect_latest=protect_latest)
+        result = await self.introspection.compact(session_id, target_tokens, policy["value"], protect_latest=protect_latest, **request_budget)
         result["policy"] = {key: value for key, value in policy.items() if key != "value"}
         return result
 

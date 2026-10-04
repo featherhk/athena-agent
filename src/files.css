@@ -35,6 +35,24 @@
    light paper canvas so its native black text remains readable in dark mode. */
 .file-html-preview { display: block; width: 100%; height: 62vh; min-height: 280px; border: 1px solid var(--tint); border-radius: 6px; background: white; color-scheme: light; }
 .file-image-preview { display: block; max-width: 100%; max-height: 65vh; margin: auto; object-fit: contain; border-radius: 8px; }
+.inline-image-result { position: relative; display: inline-flex; flex-direction: column; gap: 8px; width: min(100%, 640px); min-width: 0; margin-block: 12px; vertical-align: top; }
+.output-files > .inline-image-result { flex: 1 1 100%; }
+.inline-image-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 4px; overflow: hidden; background: var(--wash); cursor: zoom-in; }
+.inline-image-open:disabled { cursor: default; opacity: 1; }
+.inline-image-result.is-loading .inline-image-open { aspect-ratio: 4 / 3; max-height: 440px; }
+.inline-image-result.is-failed .inline-image-open { display: none; }
+.inline-image-open img, .markdown-body .inline-image-open img { display: block; width: 100%; height: auto; max-height: 480px; object-fit: contain; border-radius: 0; }
+.inline-image-result.is-loading img { opacity: 0; }
+.inline-image-status { display: flex; align-items: center; gap: 12px; font-size: .85em; color: var(--muted); }
+.inline-image-result.is-loading .inline-image-status { position: absolute; inset: 0 0 32px; justify-content: center; pointer-events: none; }
+.inline-image-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; color: var(--muted); font-size: .8em; }
+.inline-image-caption > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inline-image-caption a { flex-shrink: 0; }
+.image-lightbox { width: min(1100px, 94vw); max-height: 92dvh; padding: 18px; border: 1px solid var(--tint); border-radius: 6px; color: var(--ink); background: var(--surface); }
+.image-lightbox::backdrop { background: #17151ccc; }
+.image-lightbox-header { display: flex; align-items: center; gap: 20px; margin-bottom: 14px; }
+.image-lightbox-header > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.image-lightbox > img { display: block; max-width: 100%; max-height: 76dvh; object-fit: contain; margin-inline: auto; }
 .file-preview-note { font-size: 12px; color: var(--muted, #687080); margin-top: 12px; }
 .spreadsheet-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 10px; }
 .spreadsheet-tabs button { border: 1px solid var(--tint); border-radius: 5px; padding: 6px 12px; background: transparent; white-space: nowrap; color: inherit; }
@@ -46,3 +64,19 @@
 .spreadsheet-table-scroll thead th { position: sticky; top: 0; z-index: 1; }
 .spreadsheet-table-scroll th:first-child { min-width: 35px; text-align: center; }
 @media (max-width: 640px) { .file-preview-header { align-items: flex-start; gap: 8px; } .markdown-body pre { padding: 11px; } }
+
+.file-preview-document { max-height: 65vh; overflow: auto; padding: clamp(16px, 3vw, 32px); border: 1px solid var(--tint); background: var(--surface); color: var(--ink); font-family: var(--font-body, inherit); line-height: 1.75; overflow-wrap: anywhere; }
+.file-preview-document p { margin: .65em 0; white-space: pre-wrap; }
+.file-preview-document h1, .file-preview-document h2, .file-preview-document h3, .file-preview-document h4, .file-preview-document h5, .file-preview-document h6 { line-height: 1.35; margin: 1.2em 0 .5em; font-weight: 600; white-space: pre-wrap; }
+.file-preview-document > :first-child { margin-top: 0; }
+.file-preview-document > :last-child { margin-bottom: 0; }
+.file-preview-document h1 { font-size: 1.55em; }
+.file-preview-document h2 { font-size: 1.3em; }
+.file-preview-document h3 { font-size: 1.15em; }
+.file-preview-document h4, .file-preview-document h5, .file-preview-document h6 { font-size: 1em; }
+.document-table-scroll { max-width: 100%; overflow-x: auto; margin-block: 1em; }
+.document-table-scroll table { width: 100%; border-collapse: collapse; font-size: .94em; }
+.document-table-scroll th, .document-table-scroll td { min-width: 80px; padding: 9px 12px; border: 1px solid var(--tint); vertical-align: top; text-align: start; }
+.document-table-scroll th { background: var(--wash); font-weight: 600; }
+.document-table-scroll :is(td, th) > :first-child { margin-top: 0; }
+.document-table-scroll :is(td, th) > :last-child { margin-bottom: 0; }
