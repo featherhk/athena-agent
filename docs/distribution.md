@@ -4,7 +4,7 @@ Athena’s desktop application is a native macOS window over the same web client
 
 ## Current macOS preview
 
-See the [build 13 release evidence](releases/2026-10-05-build13.md) for the
+See the [build 14 release evidence](releases/2026-10-05-build14.md) for the
 current source, hosted verification, package acceptance and explicit download
 publication status.
 
