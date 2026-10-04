@@ -4,6 +4,10 @@ Athena’s desktop application is a native macOS window over the same web client
 
 ## Current macOS preview
 
+See the [build 13 release evidence](releases/2026-10-05-build13.md) for the
+current source, hosted verification, package acceptance and explicit download
+publication status.
+
 Build on macOS with Xcode command line tools, Node, and uv installed:
 
 ```sh
