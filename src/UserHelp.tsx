@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { HelpRequest, HelpReply } from './api';
 import { useI18n } from './i18n';
 import './user-help.css';
@@ -11,15 +10,17 @@ export function HelpReceipt({ reply }: { reply: HelpReply }) {
   </details>;
 }
 
-// One question uses the normal message composer. Multiple questions share one
-// transient form; none of these controls exist until Athena needs an answer.
-export default function UserHelp({ request, select, answer, busy }: {
+// One question uses the normal composer; multi-question drafts belong to the
+// conversation so navigating away never discards a partly completed answer.
+export default function UserHelp({ request, select, answer, answers, change, busy }: {
   request: HelpRequest; select: (text: string) => void;
+  answers: Record<string, string>; change: (answers: Record<string, string>) => void;
   answer: (answers: Record<string, string>) => Promise<void>; busy: boolean;
 }) {
   const { t } = useI18n();
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const single = request.questions.length === 1;
+  // A saved spoken answer also needs a visible review/retry path after reload;
+  // it must not replace an unrelated message already in the normal composer.
+  const single = request.questions.length === 1 && !Object.hasOwn(answers, request.questions[0].id);
   return <section className="user-help" aria-label={t('help.title')}>
     <p className="help-heading">{t('help.title')}</p>
     {request.delegated_title && <p className="help-reason" dir="auto">{request.delegated_title}</p>}
@@ -29,11 +30,11 @@ export default function UserHelp({ request, select, answer, busy }: {
         <legend dir="auto">{question.question}</legend>
         {Boolean(question.options?.length) && <div className="help-choices">{question.options!.map(option => <button
           type="button" key={option.label} aria-pressed={!single && answers[question.id] === option.label}
-          onClick={() => single ? select(option.label) : setAnswers(old => ({ ...old, [question.id]: option.label }))}>
+          onClick={() => single ? select(option.label) : change({ ...answers, [question.id]: option.label })}>
           <span dir="auto">{option.label}</span>{option.description && <small dir="auto">{option.description}</small>}
         </button>)}</div>}
         {!single && <textarea dir="auto" aria-label={question.question} placeholder={t('help.placeholder')}
-          maxLength={8000} value={answers[question.id] || ''} onChange={event => setAnswers(old => ({ ...old, [question.id]: event.target.value }))} />}
+          maxLength={8000} value={answers[question.id] || ''} onChange={event => change({ ...answers, [question.id]: event.target.value })} />}
       </fieldset>)}
       {single ? <p className="help-hint">{t('help.hint')}</p> : <button className="primary" disabled={busy || request.questions.some(question => !answers[question.id]?.trim())}>{busy ? t('wait') : t('help.continue')}</button>}
     </form>

@@ -92,6 +92,7 @@
   "error.attempts": "Muitas tentativas. Tente novamente em 15 minutos.",
   "error.notFound": "Não foi possível encontrar esta conversa.",
   "error.resetting": "Restaurando as configurações padrão. Tente novamente daqui a pouco.",
+  "error.submissionStopped": "A ação de parar cancelou este envio pendente. Você pode enviá-lo novamente quando quiser.",
   "error.empty": "Escreva o que você gostaria de fazer.",
   "error.forkBusy": "Pare a tarefa atual antes de iniciar uma nova conversa por aqui.",
   "error.context": "Esta conversa excede o limite de contexto do modelo atual. Seu histórico está salvo; inicie uma nova conversa para continuar.",

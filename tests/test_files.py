@@ -58,8 +58,9 @@ async def test_submit_accepts_owned_files_and_rejects_forged_ids(file_client, mo
     client, app, session = file_client
     record = (await upload(client, session)).json()
     submitted = []
-    async def capture(session_id, text, mode, attachments, *, frontend_client_id=None, frontend_auth_hash=None):
+    async def capture(session_id, text, mode, attachments, *, frontend_client_id=None, frontend_auth_hash=None, _admission_epoch=None):
         assert frontend_client_id is None and frontend_auth_hash is None
+        assert _admission_epoch == app.state.engine.submission_epoch(session_id)
         submitted.append((session_id, text, attachments))
         return 'captured-run'
     monkeypatch.setattr(app.state.engine, 'submit', capture)

@@ -92,6 +92,7 @@
   "error.attempts": "Trop de tentatives. Veuillez réessayer dans 15 minutes.",
   "error.notFound": "Cette conversation est introuvable.",
   "error.resetting": "Rétablissement des réglages par défaut. Veuillez réessayer dans un instant.",
+  "error.submissionStopped": "L’arrêt a annulé cet envoi en attente. Vous pouvez le renvoyer quand vous le souhaitez.",
   "error.empty": "Décrivez ce que vous souhaitez faire.",
   "error.forkBusy": "Arrêtez la tâche en cours avant de démarrer une nouvelle conversation depuis ici.",
   "error.context": "Cette conversation dépasse la limite de contexte du modèle actuel. Votre historique est enregistré ; démarrez une nouvelle conversation pour continuer.",

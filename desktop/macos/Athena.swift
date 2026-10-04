@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var terminating = false
     private var startupGeneration = 0
     private var loadingLabel: NSTextField!
+    private var updateTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Opening a second copy only activates the running app; it never attaches to an arbitrary port.
@@ -68,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let application = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: tr("about"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("check_updates"), action: #selector(checkForUpdates(_:)), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: tr("quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         application.submenu = appMenu
@@ -83,6 +85,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         view.addItem(withTitle: tr("reload"), action: #selector(reload), keyEquivalent: "r").target = self
         viewItem.submenu = view; bar.addItem(viewItem)
         NSApp.mainMenu = bar
+    }
+
+    @objc private func checkForUpdates(_ item: NSMenuItem) {
+        guard updateTask == nil, window.attachedSheet == nil else { return }
+        item.title = tr("checking_updates")
+        let info = Bundle.main.infoDictionary ?? [:]
+        let installed = DesktopVersion(version: info["CFBundleShortVersionString"] as? String ?? "?",
+            build: Int(info["CFBundleVersion"] as? String ?? "") ?? 0,
+            source: info["AthenaSourceDirty"] as? Bool == false ? info["AthenaSourceRevision"] as? String : nil)
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x86_64"
+        #endif
+        updateTask = Task { @MainActor [weak self] in
+            defer { self?.updateTask = nil; item.title = tr("check_updates") }
+            let title: String
+            do {
+                let bytes = try await UpdateCheck.fetch()
+                let result = try UpdateCheck.evaluate(bytes, installed: installed, architecture: architecture,
+                    systemVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
+                switch result {
+                case .available(let latest): title = String(format: tr("update_available"), latest.label)
+                case .current: title = tr("update_current")
+                case .ahead: title = tr("update_ahead")
+                case .incompatible(let minimum): title = String(format: tr("update_incompatible"), minimum)
+                case .unknown: title = tr("update_unknown")
+                }
+            } catch { title = tr("update_failed") }
+            guard let self, !self.terminating, !Task.isCancelled, self.window.attachedSheet == nil else { return }
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = String(format: tr("update_installed"), installed.label) + "\n\n" + tr("update_manual")
+            alert.addButton(withTitle: tr("close"))
+            alert.addButton(withTitle: tr("download_page"))
+            alert.beginSheetModal(for: self.window) { response in
+                if response == .alertSecondButtonReturn { NSWorkspace.shared.open(UpdateCheck.downloadURL) }
+            }
+        }
     }
 
     private func startBackend() {
@@ -187,6 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        updateTask?.cancel()
         guard let child, child.isRunning else { return .terminateNow }
         child.terminate()
         Task { @MainActor in

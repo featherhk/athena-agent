@@ -311,11 +311,13 @@ def create_app(config: Config | None = None):
 
     @app.post("/api/sessions/{session_id}/messages")
     async def submit(session_id: str, body: Input, request: Request):
+        admission_epoch = app.state.engine.submission_epoch(session_id)
         await exists(session_id, request)
         if not body.text.strip() and not body.file_ids:
             raise UserError("empty_message", "请写下你想做的事")
         attachments = await attachment_info(app.state.store, config, request.state.user["id"], session_id, body.file_ids)
         return {"run_id": await app.state.engine.submit(session_id, body.text.strip(), body.mode, attachments,
+                _admission_epoch=admission_epoch,
                 frontend_client_id=body.frontend_client_id,
                 frontend_auth_hash=token_hash(request.cookies[COOKIE]) if body.frontend_client_id is not None else None)}
 

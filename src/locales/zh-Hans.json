@@ -92,6 +92,7 @@
   "error.attempts": "尝试次数过多，请 15 分钟后重试。",
   "error.notFound": "找不到此对话。",
   "error.resetting": "正在恢复默认设置，请稍后重试。",
+  "error.submissionStopped": "已停止这次等待中的发送。准备好后可以重新发送。",
   "error.empty": "写下你想做什么。",
   "error.forkBusy": "请先停止当前任务，再从这里开始新对话。",
   "error.context": "此对话超出当前模型的上下文限制。历史记录已保存；请新建对话以继续。",

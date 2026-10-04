@@ -17,6 +17,7 @@ import type { FileEntry } from './FilePreview';
 import DeveloperPanel from './DeveloperPanel';
 import { AccountProfile } from './AccountProfile';
 import UserHelp, { HelpReceipt } from './UserHelp';
+import ComposerActions from './ComposerActions';
 import VoiceCall from './VoiceCall';
 import { VoiceSubmissionError, VoiceSubmissionReceipt } from './voice-recovery';
 import { RunTrace } from './RunTrace';
@@ -29,6 +30,7 @@ import { checkClientVersion } from './client-version';
 import { consumeAppAction, scopeGuard, interruptedReceipt } from './app-actions';
 import type { AppScope, AppReceipt } from './app-actions';
 import { DraftStore } from './draft-store';
+import { HelpDraftStore } from './help-drafts';
 import { SessionSelection } from './session-selection';
 import { SubmissionBarrier, prepareAppClaim } from './submission-barrier';
 import type { SubmissionTicket } from './submission-barrier';
@@ -38,14 +40,12 @@ import { useI18n, languages, errorMessage } from './i18n';
 import { useFrontendObservation } from './useFrontendObservation';
 import { observesAppAction, type PreviewObservation } from './frontend-observation';
 
-function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'send' | 'files' | 'stop' }) {
+function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'files' }) {
   const paths = {
     history: <><path d="M4 5v5h5M4.5 9a8 8 0 1 1-.2 6" /><path d="M12 7v5l3 2" /></>,
     reset: <><path d="M19 4v5h-5M19 9a7 7 0 1 0 .2 6" /><path d="m11 9-2 4h4l-2 3" /></>,
     user: <><circle cx="12" cy="8" r="3" /><path d="M5 21v-2a7 7 0 0 1 14 0v2" /></>,
-    send: <path d="M12 19V5m-6 6 6-6 6 6" />,
     files: <path d="M3 7h7l2-3h8a1 1 0 0 1 1 1v14H3V7Zm0 0V5h7" />,
-    stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -94,12 +94,13 @@ export default function App() {
   const [actionWake, setActionWake] = useState(0);
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceRecovery, setVoiceRecovery] = useState(0);
-  const [voiceHelpAnswers, setVoiceHelpAnswers] = useState<{ id: string; answers: Record<string, string> }>({ id: '', answers: {} });
   const appClient = useRef(crypto.randomUUID());
   const appActionActive = useRef(0);
   const authEpoch = useRef(0);
   const uiScope = useRef<AppScope>({ owner: null, session: null, generation: 0, control: 0 });
   const drafts = useRef<DraftStore | null>(null);
+  const helpDrafts = useRef<HelpDraftStore | null>(null);
+  const [, setHelpDraftRevision] = useState(0);
   const selection = useRef<SessionSelection | null>(null);
   if (!selection.current) {
     let tabStorage: Storage | null = null, sharedStorage: Storage | null = null;
@@ -110,6 +111,7 @@ export default function App() {
   if (!drafts.current) {
     let storage: Storage | null = null; try { storage = sessionStorage; } catch { /* Use memory. */ }
     drafts.current = new DraftStore(storage);
+    helpDrafts.current = new HelpDraftStore(storage);
   }
   const appActionSeen = useRef(new Set<string>());
   const appActionQueue = useRef(Promise.resolve());
@@ -128,9 +130,10 @@ export default function App() {
   const busy = snapshot.runs.some(run => ['running', 'queued', 'waiting_agents'].includes(run.status));
   const waitingAgents = snapshot.runs.some(run => run.status === 'waiting_agents');
   const help = snapshot.help_requests?.[0];
+  const helpDraftScope = user && session && help ? { owner: user.id, session, request: help.id } : null;
+  const helpAnswers = helpDraftScope ? helpDrafts.current!.read(helpDraftScope).answers : {};
   const waiting = Boolean(help);
-  const voiceAnswers = help && voiceHelpAnswers.id === help.id ? voiceHelpAnswers.answers : {};
-  const voiceQuestion = help?.questions.find(question => !(question.id in voiceAnswers));
+  const voiceQuestion = help?.questions.find(question => !helpAnswers[question.id]?.trim());
   const voiceMessages = voiceQuestion && help ? [...snapshot.messages, { id: `voice-help:${help.id}:${voiceQuestion.id}`, role: 'assistant', content: voiceQuestion.question, status: 'complete' }] : snapshot.messages;
   const queued = snapshot.runs.filter(run => run.status === 'queued').length;
   const lastError = snapshot.runs[0]?.error ? errorMessage(snapshot.runs[0]?.error_code) : '';
@@ -147,7 +150,7 @@ export default function App() {
     sessionId: session, components: snapshot.components,
     preview: preview ? previewObservation?.file_id === preview.id ? previewObservation : { file_id: preview.id, status: 'loading' } : null,
     helpIds: (snapshot.help_requests || []).map(item => item.id), choosingFiles: chooseFiles, uploading, reconnecting,
-    hasError: Boolean(error), hasUnsentChanges: Boolean(text.trim() || attached.length), attachmentIds: attached.map(file => file.id),
+    hasError: Boolean(error), hasUnsentChanges: Boolean(text.trim() || attached.length || Object.values(helpAnswers).some(value => value.trim())), attachmentIds: attached.map(file => file.id),
   }, enqueueAppAction, () => { appClient.current = crypto.randomUUID(); setActionWake(old => old + 1); }, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
   const continuity = useTaskContinuity(user?.id || null, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
   useVisibleActivity(continuity, session, snapshot.runs,
@@ -498,7 +501,7 @@ export default function App() {
     const submission = submissions.current.begin(submissionScope());
     if (!submission) { if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy')); return; }
     const voiceReceipt = throwOnError ? new VoiceSubmissionReceipt() : null;
-    const owner = user.id;
+    const owner = user.id, control = uiScope.current.control;
     let isCurrent = currentGuard(), sid = session;
     let sentDraft = drafts.current!.read(owner, sid);
     const sentFiles = new Set(fromComposer ? sentDraft.attached.map(file => file.id) : []);
@@ -512,8 +515,13 @@ export default function App() {
         sentDraft = { ...sentDraft, revision: unchanged ? drafts.current!.read(owner, sid).revision : -1 };
       }
       if (help && fromComposer && mode === 'queue' && help.questions.length === 1) {
+        const sentAnswers = helpDraftScope ? helpDrafts.current!.read(helpDraftScope) : null;
         voiceReceipt?.dispatch();
-        await api(`/sessions/${sid}/help/${help.id}/answer`, { answers: { [help.questions[0].id]: value }, file_ids: [...sentFiles] });
+        const accepted = await api(`/sessions/${sid}/help/${help.id}/answer`, { answers: { [help.questions[0].id]: value }, file_ids: [...sentFiles] });
+        if (helpDraftScope && sentAnswers) {
+          if (!helpDrafts.current!.acknowledge(helpDraftScope, sentAnswers, accepted)) throw new Error(errorMessage('invalid_response'));
+          setHelpDraftRevision(old => old + 1);
+        }
         voiceReceipt?.confirm();
       } else {
         const clientId = appClient.current;
@@ -524,7 +532,7 @@ export default function App() {
         if (voiceReceipt && (typeof receipt?.run_id !== 'string' || !receipt.run_id)) throw new Error('voice_interrupted');
         voiceReceipt?.confirm();
       }
-      if (fromComposer) {
+      if (fromComposer && uiScope.current.control === control) {
         const remaining = drafts.current!.submitted(owner, sid, sentDraft);
         if (uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(remaining);
         if (isCurrent()) input.current?.focus();
@@ -546,21 +554,24 @@ export default function App() {
     return next.id;
   }
   async function submitVoice(value: string) {
-    if (session && help && voiceQuestion) {
+    if (session && help && helpDraftScope) {
+      // Read at submission time: a typed edit may have committed since this
+      // utterance began. A full saved form is never an implicit retry command.
+      const saved = helpDrafts.current!.read(helpDraftScope);
+      const question = help.questions.find(item => !saved.answers[item.id]?.trim());
+      if (!question || !value.trim()) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       const submission = submissions.current.begin(submissionScope());
       if (!submission) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
-      const isCurrent = currentGuard();
       const receipt = new VoiceSubmissionReceipt();
       try {
-        const answers = { ...voiceAnswers, [voiceQuestion.id]: value };
-        if (help.questions.some(question => !(question.id in answers))) {
-          setVoiceHelpAnswers({ id: help.id, answers });
-        } else {
+        const sent = helpDrafts.current!.write(helpDraftScope, { ...saved.answers, [question.id]: value });
+        setHelpDraftRevision(old => old + 1);
+        if (help.questions.every(item => sent.answers[item.id]?.trim())) {
           receipt.dispatch();
-          const accepted = await api<{ id: string; status: string }>(`/sessions/${session}/help/${help.id}/answer`, { answers, file_ids: [] });
-          if (accepted?.id !== help.id || accepted.status !== 'answered') throw new Error('voice_interrupted');
+          const accepted = await api(`/sessions/${session}/help/${help.id}/answer`, { answers: sent.answers, file_ids: [] });
+          if (!helpDrafts.current!.acknowledge(helpDraftScope, sent, accepted)) throw new Error('voice_interrupted');
           receipt.confirm();
-          if (isCurrent()) setVoiceHelpAnswers({ id: '', answers: {} });
+          setHelpDraftRevision(old => old + 1);
         }
       } catch (error) {
         const failure = receipt.failure(error); if (failure) throw failure;
@@ -578,21 +589,25 @@ export default function App() {
     uiScope.current.control++; setChooseFiles(false); setSending(false); setUploading(false);
   }
   async function stop() {
-    if (!session) return;
     setVoiceRecovery(old => old + 1);
     invalidateActions(); const isCurrent = currentGuard();
+    // Also cancel local preparation before the first session has been created.
+    if (!session) return;
     try { await api(`/sessions/${session}/stop`, {}); if (isCurrent()) setPhase('stopped'); }
     catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
   async function answerHelp(answers: Record<string, string>) {
-    if (!session || !help || sending || uploading) return;
+    if (!session || !help || !helpDraftScope || sending || uploading) return;
     const submission = submissions.current.begin(submissionScope());
     if (!submission) return;
     const sid = session, owner = user!.id, isCurrent = currentGuard();
+    const answerScope = helpDraftScope, sentAnswers = helpDrafts.current!.read(answerScope);
     const sentFiles = new Set(attached.map(file => file.id));
     setSending(true); setError('');
     try {
-      await api(`/sessions/${sid}/help/${help.id}/answer`, { answers, file_ids: [...sentFiles] });
+      const receipt = await api(`/sessions/${sid}/help/${help.id}/answer`, { answers, file_ids: [...sentFiles] });
+      if (!helpDrafts.current!.acknowledge(answerScope, sentAnswers, receipt)) throw new Error(errorMessage('invalid_response'));
+      setHelpDraftRevision(old => old + 1);
       const draft = drafts.current!.read(owner, sid);
       const remaining = drafts.current!.write(owner, sid, { ...draft, attached: draft.attached.filter(file => !sentFiles.has(file.id)) });
       if (!isCurrent()) return;
@@ -659,9 +674,13 @@ export default function App() {
     catch (e) { if (isCurrent()) setError((e as Error).message); }
   }
   async function upload(selection: FileList | null) {
-    if (!selection?.length || uploading) return;
+    const chosen = selection ? [...selection] : [];
+    // Clear the native selection before any early return or await, so choosing
+    // the same file after a validation failure always emits another change.
+    if (fileInput.current) fileInput.current.value = '';
+    if (!chosen.length || uploading) return;
     if (!user) { requestLogin(); return; }
-    const chosen = [...selection], owner = user.id, authTicket = authEpoch.current;
+    const owner = user.id, authTicket = authEpoch.current;
     if (chosen.length + attached.length > 10) { setError(t('files.limit')); return; }
     if (chosen.some(file => file.size > 20 * 1024 * 1024)) { setError(t('error.file_too_large')); return; }
     let isCurrent = currentGuard(), sid = session;
@@ -682,7 +701,7 @@ export default function App() {
         if (authEpoch.current === authTicket && uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(next);
       }
     } catch (e) { if (isCurrent()) setError((e as Error).message); }
-    finally { if (isCurrent()) { setUploading(false); if (fileInput.current) fileInput.current.value = ''; } }
+    finally { if (isCurrent()) setUploading(false); }
   }
   async function signOut() {
     const ticket = authEpoch.current;
@@ -764,7 +783,9 @@ export default function App() {
       {!resetting && components.some(component => placementOf(component) === 'sidebar-end') && <aside className="surface-sidebar" data-side="end">{components.filter(component => placementOf(component) === 'sidebar-end').map(component => renderWidget(component))}</aside>}
     </div>
     <footer className="composer-area" ref={composer}><div className="composer-wrap">
-      {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
+      {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} answers={helpAnswers}
+        change={answers => { if (!helpDraftScope) return; helpDrafts.current!.write(helpDraftScope, answers); setHelpDraftRevision(old => old + 1); }}
+        select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
       {busy && !waiting && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : waitingAgents ? t('agents.waiting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
       {error && <div className="notice" role="alert">{error}{!ready && <button className="quiet" onClick={() => void loadAccount()}>{t('retry')}</button>}</div>}
       {!error && serviceMessage && <div className="notice" role="status">{serviceMessage}</div>}
@@ -772,10 +793,14 @@ export default function App() {
       {uploading && <p className="activity" role="status">{t('files.uploading')}</p>}
       {chooseFiles && <div className="activity"><button className="quiet" type="button" onClick={() => { setChooseFiles(false); fileInput.current?.click(); }}>{t('files.attach')}</button><button className="icon-button" type="button" aria-label={t('close')} onClick={() => setChooseFiles(false)}>×</button></div>}
       <input type="file" multiple hidden ref={fileInput} onChange={event => void upload(event.target.files)} />
-      <form className="composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <form className="composer" data-task-active={busy || waiting || sending} onSubmit={event => { event.preventDefault(); void submit(); }}>
         <button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
         <textarea dir="auto" ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
-        <div className="send-actions"><VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />{(busy || waiting) && (text.trim() || attached.length > 0) && <button className="interrupt" type="button" disabled={sending} onClick={() => void submit(text, 'interrupt')}>{t('interrupt')}</button>}{(busy || waiting) && !text.trim() && !attached.length ? <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={() => void stop()}><Icon name="stop" /></button> : <button className="send" aria-label={(busy && !waiting) || (help && help.questions.length > 1) ? t('queue') : t('send')} disabled={(!text.trim() && !attached.length) || sending || uploading || !ready || resetting} type="submit"><Icon name="send" /></button>}</div>
+        <div className="send-actions">
+          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
+          <ComposerActions busy={busy} sending={sending} questions={help?.questions.length || 0} text={text} attachmentCount={attached.length}
+            disabled={sending || uploading || !ready || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />
+        </div>
       </form>
     </div></footer>
     {surfaces && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setSurfaces(false); }}><section className="dialog surface-dialog" data-app-view="surfaces" role="dialog" aria-modal="true" aria-label={t('surface.all')}><div className="dialog-top"><h2>{t('surface.all')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setSurfaces(false)}>×</button></div><div className="surface-list">{snapshot.components.map(component => <div className="surface-row" key={component.id}><button className="surface-open" onClick={() => { adjustComponent(component, { hidden: false }); setSurfaces(false); }}><span>{component.title}</span><small>{t(component.view?.hidden ? 'surface.hidden' : 'surface.visible')}</small></button><ComponentControls component={component} change={view => adjustComponent(component, view)} /></div>)}</div></section></div>}

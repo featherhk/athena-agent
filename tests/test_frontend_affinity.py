@@ -163,13 +163,18 @@ async def test_two_queued_inputs_in_one_conversation_keep_distinct_sources(engin
     assert sources[first]['client_id'] == 'window-one' and sources[second]['client_id'] == 'window-two'
     assert all(row['auth_hash'] == token_hash(token) and row['user_id'] == owner for row in sources.values())
     assert token not in json.dumps(sources)
-    assert await store.claim(session) == first
-    action = await app_operation(store, session, first, {'action': 'open', 'target': 'history'})
-    assert action['request']['target_client_id'] == 'window-one'
-    await store.execute("UPDATE runs SET status='complete',finished_at=? WHERE id=?", (now(), first))
-    assert await store.claim(session) == second
-    action = await app_operation(store, session, second, {'action': 'open', 'target': 'files'})
-    assert action['request']['target_client_id'] == 'window-two'
+    # Concurrent ownership/model preflights can complete out of start order.
+    # Each claimed run must keep its own input's source whichever enters first.
+    expected_sources = {first: 'window-one', second: 'window-two'}
+    claimed = []
+    for target in ('history', 'files'):
+        run = await store.claim(session)
+        assert run in expected_sources and run not in claimed
+        claimed.append(run)
+        action = await app_operation(store, session, run, {'action': 'open', 'target': target})
+        assert action['request']['target_client_id'] == expected_sources[run]
+        await store.execute("UPDATE runs SET status='complete',finished_at=? WHERE id=?", (now(), run))
+    assert set(claimed) == {first, second}
 
 
 async def test_navigation_preserves_source_default_without_following_another_window(store):

@@ -92,6 +92,7 @@
   "error.attempts": "嘗試次數過多，請 15 分鐘後重試。",
   "error.notFound": "找不到此對話。",
   "error.resetting": "正在還原預設設定，請稍後重試。",
+  "error.submissionStopped": "已停止這次等待中的傳送。準備好後可以重新傳送。",
   "error.empty": "寫下你想做什麼。",
   "error.forkBusy": "請先停止目前任務，再從這裡開始新對話。",
   "error.context": "此對話超出目前模型的上下文限制。歷史紀錄已儲存；請建立新對話以繼續。",

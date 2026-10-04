@@ -92,6 +92,7 @@
   "error.attempts": "Too many attempts. Please try again in 15 minutes.",
   "error.notFound": "This conversation couldn’t be found.",
   "error.resetting": "Restoring defaults. Please try again in a moment.",
+  "error.submissionStopped": "Stop cancelled this pending submission. You can send it again when ready.",
   "error.empty": "Write what you’d like to do.",
   "error.forkBusy": "Stop the current task before starting a new conversation from here.",
   "error.context": "This conversation exceeds the current model’s context limit. Your history is saved; start a new conversation to continue.",

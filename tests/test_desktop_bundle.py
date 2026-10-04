@@ -82,3 +82,27 @@ def test_bundle_browser_payload_contains_only_native_runtime_and_license(tmp_pat
     assert (payload / 'version.txt').read_text().strip() == '0.38.2'
     assert (payload / 'agent-browser').stat().st_size > 1000000
     assert 'Apache License' in (payload / 'LICENSE-agent-browser').read_text()
+
+
+def test_release_build_number_is_ordered_not_a_marketing_version():
+    import runpy
+    root = Path(__file__).resolve().parents[1]
+    validate = runpy.run_path(str(root / 'scripts/build-macos.py'))['validated_build_number']
+    assert validate('9') == '9'
+    assert validate('00010') == '10'
+    assert validate('999999999') == '999999999'
+    for value in ('', '0', '-1', '1.0', '1e3', '١٠', '1000000000', '0000000001', None, 10, True):
+        with pytest.raises(ValueError):
+            validate(value)
+
+
+def test_native_update_strings_cover_every_supported_locale():
+    import json
+    root = Path(__file__).resolve().parents[1]
+    catalogs = json.loads((root / 'desktop/macos/locales.json').read_text())
+    assert set(catalogs) == {'ar', 'en', 'es', 'fr', 'ja', 'ko', 'pt', 'zh-Hans', 'zh-Hant'}
+    for locale, catalog in catalogs.items():
+        assert set(catalog) == set(catalogs['en']), locale
+        for key, value in catalog.items():
+            assert value.strip(), (locale, key)
+            assert value.count('%@') == catalogs['en'][key].count('%@'), (locale, key)

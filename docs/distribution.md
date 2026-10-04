@@ -9,6 +9,7 @@ Build on macOS with Xcode command line tools, Node, and uv installed:
 ```sh
 uv sync --python 3.14t
 npm ci
+: "${ATHENA_BUILD_NUMBER:?Set the next unpublished build number before packaging}"
 uv run python scripts/build-macos.py --cloud-url https://chat.athena.featherhk.com/v1
 ```
 
@@ -17,6 +18,8 @@ The optional `--cloud-url` selects the public HTTPS account/model gateway and wr
 The script uses the locked production Python dependencies, the installed uv-managed Python 3.14T distribution, and a fresh React build. It constructs an allowlisted bundle: application source, skill packages, web assets, Python runtime, dependency license metadata, the native launcher, the pinned native browser executable and its license, and localized shell strings. It does not copy the checkout wholesale, `.env`, database, user files, browser profiles or operator credentials. The bundled Python imports the real dependency stack and must report that the GIL remains disabled. No Python, Node, uv or developer tools are required on the recipient’s Mac. The optional managed browser currently uses installed Google Chrome/Chromium; automatic browser installation is not yet included.
 
 Outputs are ignored under `build/macos/`: `Athena.app`, an architecture-specific `.dmg`, a SHA-256 checksum, and a release manifest. An Apple Silicon build is not an Intel build. Build and test on an Intel Mac before advertising Intel support. macOS 13 is the shell deployment target; only versions actually tested should be advertised.
+
+Set `ATHENA_BUILD_NUMBER` to the next positive build number for each published preview; the marketing version alone can remain unchanged. The same build number is included in `CFBundleVersion` and the JSON release manifest. The bundle also records its source revision and dirty state. When publishing, propagate the full manifest, including `build`, into the `macos` object at the distribution site's `/release.json`; never point that file to an unverified artifact.
 
 The disk image is assembled in temporary staging before the `.app` enters the output directory. A synced workspace can attach Finder metadata immediately on arrival and invalidate strict signature checks if that copy is used as the image source. The build strips copy metadata, verifies the staged app, then mounts the finished DMG read-only and verifies the contained app and Applications link before emitting its manifest. Test the downloaded image itself, rather than relying on the loose `.app` in a synced output directory.
 
@@ -60,9 +63,23 @@ A cloud-configured preview sidecar uses the central account and credit gateway i
 
 ## Other platforms and updates
 
+On Mac, **Athena → Check for Updates…** manually checks the fixed HTTPS distribution feed independently of the local sidecar and login service. The result includes the installed version/build and a link to the fixed download page. It distinguishes a newer preview, the current verified source/build, a local version ahead of the published preview, and incompatible Mac requirements. Missing build metadata, mismatched source identifiers and network errors never result in a claim that the app is up to date. The request has a bounded timeout/response size and uses no account cookies or credentials; redirects and download URLs supplied by a manifest are not followed.
+
+Checking does not download an installer, replace the application, reload the chat or restart its sidecar. Finish active work and preserve any unsent input before manually quitting and replacing the app. Conversations and files remain in the separate data directory. The menu is in the native shell so a generated component or unavailable login endpoint cannot hide it. This manual discovery feature requires a new desktop build; it cannot appear retroactively in already installed previews.
+
 The web client and runtime API can be reused. The native host is intentionally thin; it does not make Swift the product’s cross-platform business layer. Windows needs its own packaged Python sidecar and WebView2 host. iOS and Android need native capture/background policies and a remote execution service: a desktop Python/CLI process cannot simply be transplanted into their app sandbox.
 
 Automatic self-update is not yet implemented. Treat the signed application core and agent-authored extension registry separately. A future updater must verify signed releases, install atomically, retain rollback metadata and wait for a safe runtime boundary. Registration updates can apply live; replacing the desktop executable or Python runtime requires a supervised process restart. No in-app updater should accept an arbitrary URL or overwrite the app while an agent task is running.
+
+Run the native comparison/destination regressions without launching Athena:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc desktop/macos/UpdateCheck.swift desktop/macos/Tests/UpdateCheckTests.swift -o /private/tmp/athena-macos-update-check
+/private/tmp/athena-macos-update-check
+uv run pytest tests/test_desktop_bundle.py -q
+```
+
+Select an initialized Xcode appropriate to the development Mac. These tests cover same-version/higher-build previews, missing metadata, reused build/source mismatches, system compatibility, fixed destination URLs, and isolated transport responses for HTTP errors, offline failures, redirects and oversized data. They do not establish native-menu visual acceptance or installer signature verification by the discovery feature.
 
 ## Verified in this workspace
 

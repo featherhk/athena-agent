@@ -74,7 +74,7 @@ textarea::placeholder,.dialog input::placeholder { color:var(--muted); opacity:.
 .send-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .send { width:36px; height:36px; display:grid; place-items:center; border-radius:5px; color:var(--on-accent); background:var(--accent); }
 .send:disabled { opacity:1; background:var(--wash); color:var(--muted); }
-.send.stop { background:var(--wash); color:var(--accent); }
+.send.stop { width:44px; height:44px; flex-shrink:0; background:var(--wash); color:var(--accent); }
 .send.stop svg { width:16px; fill:currentColor; stroke:none; }
 .interrupt { background:none; color:var(--muted); font-size:12px; padding:8px 0; }
 .activity { display:flex; align-items:center; gap:9px; font-size:11px; color:var(--muted); padding:0 12px 10px; }
@@ -172,6 +172,9 @@ html[data-palette="forest"] { --canvas:#f8fbf9; --ink:#384d47; --muted:#698178; 
   :root { --topbar-height:58px; }.topbar { padding-inline:18px; }.brand-wordmark { font-size:17px; }.topbar nav { gap:3px; }.icon-button { width:34px; height:34px; }
   .agent-presence { --display-presence-size:min(var(--presence-size,84px),18dvh); }.presence-label { font-size:11px; }.conversation { padding:18px; }.message { max-width:94%; font-size:17px; line-height:1.8; }.message.assistant { padding:5px 0; }
   .composer-area { padding:10px 14px max(16px,env(safe-area-inset-bottom)); }.composer { gap:6px; padding-inline-start:10px; }.dialog { padding:24px; }.attachment strong { max-width:180px; }
+  .composer[data-task-active="true"] { display:grid; grid-template-columns:auto minmax(0,1fr); }
+  .composer[data-task-active="true"] textarea { grid-column:1 / -1; grid-row:1; min-width:0; }
+  .composer[data-task-active="true"] .send-actions { grid-column:2; justify-content:flex-end; }
   .workspace-layout { flex-direction:column; }.surface-sidebar { flex:0 1 auto; width:100%; max-width:none; max-height:16dvh; padding:10px 18px; border-inline:0; }.surface-sidebar[data-side="start"] { border-bottom:1px solid var(--tint); }.surface-sidebar[data-side="end"] { border-top:1px solid var(--tint); }.surface-sidebar .widget { margin-bottom:0; }.has-workspace .workspace-panel { padding-inline:14px; }
 }
 @media(max-height:650px) { :root { --topbar-height:56px; }.agent-presence { --display-presence-size:min(var(--presence-size,84px),64px); }.composer-area { padding-bottom:14px; } }

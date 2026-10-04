@@ -35,6 +35,7 @@ export const errorKeys: Record<string, string> = {
   provider_balance_insufficient: 'error.provider', provider_rate_limited: 'error.provider',
   login_required: 'error.login', username_taken: 'error.usernameTaken', invalid_credentials: 'error.credentials',
   login_rate_limited: 'error.attempts', session_not_found: 'error.notFound', resetting: 'error.resetting',
+  submission_stopped: 'error.submissionStopped',
   empty_message: 'error.empty', fork_busy: 'error.forkBusy', context_limit: 'error.context',
   step_limit: 'error.steps', restarted: 'error.interrupted', stream_interrupted: 'error.stream',
   generation_incomplete: 'error.incomplete', invalid_input: 'error.input', developer_required: 'error.developer',

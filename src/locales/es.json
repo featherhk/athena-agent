@@ -92,6 +92,7 @@
   "error.attempts": "Demasiados intentos. Vuelve a intentarlo dentro de 15 minutos.",
   "error.notFound": "No se encontró esta conversación.",
   "error.resetting": "Restableciendo los ajustes predeterminados. Vuelve a intentarlo en un momento.",
+  "error.submissionStopped": "La acción de detener canceló este envío pendiente. Puedes volver a enviarlo cuando quieras.",
   "error.empty": "Escribe qué te gustaría hacer.",
   "error.forkBusy": "Detén la tarea actual antes de iniciar una conversación nueva desde aquí.",
   "error.context": "Esta conversación supera el límite de contexto del modelo actual. Tu historial está guardado; inicia una conversación nueva para continuar.",

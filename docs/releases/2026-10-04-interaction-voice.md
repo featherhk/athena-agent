@@ -22,4 +22,4 @@ The existing data directory and unsent draft were retained. Subsequent user-init
 
 ## Publication boundary
 
-The new source is pushed to the private repository. It has not yet replaced the hosted web/gateway runtime or the published build 9 DMG. The provider probe does not by itself enable account-metered cloud voice. Production audio still requires a reviewed preview-credit tariff, a gateway release and authenticated ledger acceptance. Avoid restarting services while user work is active.
+At the time of this source acceptance, the source was pushed but had not replaced the hosted runtime or published build 9 DMG. The later [hosted release and metered voice acceptance](2026-10-04-cloud-voice.md) records the actual web/gateway promotion, explicit preview-credit tariff and authenticated ledger verification. That release leaves the published build 9 DMG unchanged.

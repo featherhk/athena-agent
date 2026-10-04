@@ -21,6 +21,7 @@ class Engine:
         self.active_runs: dict[str, asyncio.Task] = {}
         self.listeners: dict[str, set[asyncio.Queue]] = {}
         self.controls: dict[str, asyncio.Lock] = {}
+        self.stop_epochs: dict[str, int] = {}
         self.tools = ToolRunner(config, store)
         self.tools.stop_session = self.stop_from_tool
         self.tool_controls: set[asyncio.Task] = set()
@@ -77,7 +78,14 @@ class Engine:
         if not task.cancelled() and task.exception():
             self.loop.call_exception_handler({"message": "Athena session actor failed", "exception": task.exception()})
 
-    async def submit(self, session_id, text, mode="queue", attachments=None, *, frontend_client_id=None, frontend_auth_hash=None):
+    def submission_epoch(self, session_id):
+        """Capture at the host boundary before asynchronous admission checks."""
+        self.check_owner()
+        return self.stop_epochs.get(session_id, 0)
+
+    async def submit(self, session_id, text, mode="queue", attachments=None, *, frontend_client_id=None, frontend_auth_hash=None, _admission_epoch=None):
+        self.check_owner()
+        stop_epoch = self.submission_epoch(session_id) if _admission_epoch is None else _admission_epoch
         began = self.reset_clock
         owner = await self.tools.owner(session_id)
         if owner["user_id"] in self.resetting_users:
@@ -90,6 +98,8 @@ class Engine:
         async with self.controls.setdefault(session_id, asyncio.Lock()):
             if owner["user_id"] in self.resetting_users or self.user_reset_versions.get(owner["user_id"], 0) > began:
                 raise UserError("resetting", "This input was superseded by reset. Send it again when ready.")
+            if self.stop_epochs.get(session_id, 0) != stop_epoch:
+                raise UserError("submission_stopped", "Stop cancelled this pending submission. You can send it again when ready.")
             from .frontend_state import capture_source
             source = None
             if frontend_client_id is not None:
@@ -110,6 +120,11 @@ class Engine:
         await self.emit(session_id, "refresh", {})
 
     async def _stop(self, session_id, *, app_action_reason="interrupted"):
+        self.check_owner()
+        # Invalidate admissions still awaiting owner/model/credit preflight.
+        # An interrupt checks its epoch first, then enqueues its own replacement
+        # under the same lock after stopping the older work.
+        self.stop_epochs[session_id] = self.stop_epochs.get(session_id, 0) + 1
         def cancel_queue(db):
             from .user_help import cancel_help
             from .app_controls import cancel_app_actions

@@ -41,6 +41,12 @@ def validated_cloud_url(value):
     return value.rstrip("/")
 
 
+def validated_build_number(value):
+    if not isinstance(value, str) or not 1 <= len(value) <= 9 or not value.isascii() or not value.isdecimal() or not 0 < int(value) <= 999999999:
+        raise ValueError("Build number must be a positive integer of at most nine digits")
+    return str(int(value))
+
+
 def copy_browser_runtime(resources, arch):
     """Only the pinned native executable/license, never node_modules or profiles."""
     package = ROOT / 'node_modules' / 'agent-browser'
@@ -84,6 +90,7 @@ def main():
     args = parser.parse_args()
     try:
         cloud_url = validated_cloud_url(args.cloud_url)
+        build_number = validated_build_number(os.environ.get("ATHENA_BUILD_NUMBER", "1"))
     except ValueError as error:
         parser.error(str(error))
     if sys.platform != "darwin":
@@ -126,7 +133,9 @@ def main():
         shutil.copy2(requirements, resources / "requirements.txt")
         with (SOURCE / "Info.plist").open("rb") as handle: info = plistlib.load(handle)
         info["CFBundleShortVersionString"] = version
-        info["CFBundleVersion"] = os.environ.get("ATHENA_BUILD_NUMBER", "1")
+        info["CFBundleVersion"] = build_number
+        info["AthenaSourceRevision"] = output("git", "rev-parse", "HEAD")
+        info["AthenaSourceDirty"] = bool(output("git", "status", "--porcelain"))
         locales = json.loads((SOURCE / "locales.json").read_text())
         info["CFBundleLocalizations"] = sorted(locales)
         with (contents / "Info.plist").open("wb") as handle: plistlib.dump(info, handle)
@@ -143,7 +152,7 @@ def main():
         run("xcrun", "swift", "-module-cache-path", cache, SOURCE / "Icon.swift", iconset, env=swift_env)
         run("iconutil", "-c", "icns", iconset, "-o", resources / "Athena.icns")
         run("xcrun", "swiftc", "-O", "-parse-as-library", "-target", f"{arch}-apple-macos13.0", "-module-cache-path", cache,
-            "-framework", "AppKit", "-framework", "WebKit", SOURCE / "Athena.swift", "-o", contents / "MacOS" / "Athena", env=swift_env)
+            "-framework", "AppKit", "-framework", "WebKit", SOURCE / "Athena.swift", SOURCE / "UpdateCheck.swift", "-o", contents / "MacOS" / "Athena", env=swift_env)
         verify_payload(app)
         # copy2 may preserve Finder metadata from the developer machine; none belongs in a signed bundle.
         run("xattr", "-cr", app)
@@ -186,11 +195,11 @@ def main():
         shutil.move(app, final_app)
         checksum = hashlib.file_digest(dmg.open("rb"), "sha256").hexdigest()
         (dest / f"{label}.sha256").write_text(f"{checksum}  {dmg.name}\n")
-        (dest / f"{label}.json").write_text(json.dumps({"version": version, "architecture": arch,
+        (dest / f"{label}.json").write_text(json.dumps({"version": version, "build": build_number, "architecture": arch,
             "minimum_macos": info["LSMinimumSystemVersion"], "sha256": checksum, "filename": dmg.name,
             "bytes": dmg.stat().st_size, "signed": bool(args.identity), "notarized": False,
-            "channel": "preview", "cloud_url": cloud_url, "git_revision": output("git", "rev-parse", "HEAD"),
-            "git_dirty": bool(output("git", "status", "--porcelain"))}, indent=2) + "\n")
+            "channel": "preview", "cloud_url": cloud_url, "git_revision": info["AthenaSourceRevision"],
+            "git_dirty": info["AthenaSourceDirty"]}, indent=2) + "\n")
         print(f"Built {dmg}\nThis is a preview; public release requires notarization and hosted-account verification.")
 
 
