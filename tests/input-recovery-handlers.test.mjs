@@ -9,6 +9,7 @@ import { SubmissionBarrier } from '../src/submission-barrier.ts';
 import { VoiceSubmissionError, VoiceSubmissionReceipt } from '../src/voice-recovery.ts';
 import { scopeGuard } from '../src/app-actions.ts';
 import { SubmissionSourceError } from '../src/frontend-submission.ts';
+import { ConversationScroll } from '../src/conversation-scroll.ts';
 
 // Compile the actual App handler bodies and derived help state with their lexical
 // render scope. This tests effects/receipts, not a reimplementation of submission.
@@ -41,7 +42,7 @@ function fixture() {
   const fileInput = { current: { value: '' } }, authEpoch = { current: 1 };
   const environment = {
     helpDrafts, drafts, submissions, uiScope, fileInput, authEpoch, VoiceSubmissionError, VoiceSubmissionReceipt, SubmissionSourceError,
-    nearBottom: { current: true }, input: { current: { focus() {} } }, appClient: { current: 'client' },
+    conversationScroll: { policy: new ConversationScroll() }, input: { current: { focus() {} } }, appClient: { current: 'client' },
     frontendObservation: { prepareSubmission: (...args) => prepare(...args) },
     api: async (path, body) => { calls.push({ path, body: body === undefined ? undefined : structuredClone(body) }); if (path.endsWith('/messages')) ordinary.push(body); return transport(path, body); },
     fetch: async (path, init) => { uploads.push({ path, init }); return uploadTransport(path, init); },

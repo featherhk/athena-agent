@@ -298,3 +298,8 @@ xcuserdata/
 DerivedData/
 .ssh/
 .secrets/
+
+# Real payment configuration and credentials belong outside the checkout.
+recharge.json
+btcpay-api-key
+btcpay-webhook-secret

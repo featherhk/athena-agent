@@ -36,10 +36,12 @@ button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-wid
 .thinking .presence-trace { opacity:1; animation:presence-turn 3.4s linear infinite; }
 .executing .presence-signature { opacity:.12; transform:scale(.85); }
 .executing .presence-work { opacity:1; }
-.presence-work path { stroke-dasharray:15 25; animation:presence-work 1.5s ease-in-out infinite; }
+.presence-work path { stroke-dasharray:15 25; }
+.executing .presence-work path { animation:presence-work 1.5s ease-in-out infinite; }
 .responding .presence-signature { opacity:.1; }
 .responding .presence-voice { opacity:1; }
-.presence-voice .voice-bar { transform-origin:48px 48px; animation:presence-voice .75s ease-in-out infinite alternate; stroke-width:4; }
+.presence-voice .voice-bar { transform-origin:48px 48px; stroke-width:4; }
+.responding .presence-voice .voice-bar { animation:presence-voice .75s ease-in-out infinite alternate; }
 .presence-voice .bar-1,.presence-voice .bar-3 { animation-delay:-.22s; }.presence-voice .bar-2 { animation-delay:-.45s; }
 .stopped .presence-signature,.waiting .presence-signature { opacity:.12; transform:scale(.84); }
 .stopped .presence-pause,.waiting .presence-wait { opacity:1; }

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api } from './api';
 import type { User } from './api';
 import { errorMessage, useI18n } from './i18n';
+import { Recharge } from './Recharge';
 
 type ProfileUser = User & { display_name?: string; avatar_url?: string | null; profile_version?: number };
 
@@ -17,8 +18,10 @@ export function AccountProfile({ user, onChange, passwordRequested = false, onPa
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
-  const [credit, setCredit] = useState<{ managed: boolean; available_micros: number } | null>(null);
-  useEffect(() => { let live = true; api<{ managed: boolean; available_micros: number }>('/account/credit').then(value => { if (live) setCredit(value); }).catch(() => {}); return () => { live = false; }; }, [user.id]);
+  const [credit, setCredit] = useState<{ owner: string; managed: boolean; available_micros: number } | null>(null);
+  const [creditRevision, setCreditRevision] = useState(0);
+  const refreshCredit = useCallback(() => setCreditRevision(value => value + 1), []);
+  useEffect(() => { let live = true; api<{ managed: boolean; available_micros: number }>('/account/credit').then(value => { if (live) setCredit({ ...value, owner: user.id }); }).catch(() => {}); return () => { live = false; }; }, [user.id, creditRevision]);
   useEffect(() => { setName(user.display_name || ''); }, [user.id, user.display_name]);
   useEffect(() => { if (passwordRequested) setPasswordOpen(true); }, [passwordRequested]);
 
@@ -55,7 +58,7 @@ export function AccountProfile({ user, onChange, passwordRequested = false, onPa
     finally { setBusy(false); }
   }
   return <section className="account-profile">
-    {credit?.managed && <div className="account-credit"><span>{t('account.credit')}</span><strong>{new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(credit.available_micros / 1_000_000)}</strong><small>{t('account.noRecharge')}</small></div>}
+    {credit?.owner === user.id && credit.managed && <div className="account-credit"><span>{t('account.credit')}</span><strong>{new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(credit.available_micros / 1_000_000)}</strong><Recharge key={user.id} userId={user.id} onCredited={refreshCredit} /></div>}
     <div className="account-avatar" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       {user.avatar_url && <img src={user.avatar_url} alt={t('account.avatar')} width={52} height={52} style={{ borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />}
       <label style={{ margin: 0 }}>{t('account.avatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy}

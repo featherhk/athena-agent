@@ -12,6 +12,7 @@ export function prohibitedPath(path) {
     || parts.some(p => ['xcuserdata', 'deriveddata'].includes(p))
     || parts.some(p => ['.ssh', '.secrets'].includes(p) || /\.(app|xcarchive)$/.test(p))
     || /^(auth|credentials|secrets)\.json$/i.test(base)
+    || ['recharge.json', 'btcpay-api-key', 'btcpay-webhook-secret'].includes(base)
     || /^(cookies.*|.*storage-state.*)\.json$/i.test(base);
 }
 

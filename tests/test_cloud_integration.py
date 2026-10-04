@@ -2,17 +2,20 @@
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import hashlib
+import hmac
 
 import httpx
 
 from athena.api import create_app
 from athena.config import Config
 from athena.gateway import GatewayConfig, create_gateway, usage_charge
+from athena.payment_provider import RechargeConfig
 
 
 @asynccontextmanager
-async def cloud_stack(tmp_path):
-    gateway_config = GatewayConfig(tmp_path / 'gateway', api_key='synthetic-operator-key')
+async def cloud_stack(tmp_path, *, recharge=None):
+    gateway_config = GatewayConfig(tmp_path / 'gateway', api_key='synthetic-operator-key', recharge=recharge)
     gateway = create_gateway(gateway_config)
     config = Config(data_dir=tmp_path / 'client-state', repo_dir=tmp_path / 'application',
                     cloud_url='https://accounts.example/v1')
@@ -124,3 +127,63 @@ async def test_zero_credit_blocks_send_then_grant_streams_persists_and_settles(t
         restored = await browser.get(f'/api/sessions/{session}')
         assert restored.json()['messages'][-1]['content'] == 'Hello from Athena.'
         assert 'synthetic-operator-key' not in registration.text + me.text + sent.text + snapshot_response.text + login.text + restored.text
+
+
+async def test_recharge_crosses_client_proxy_and_enables_existing_zero_credit_login(tmp_path):
+    payment = RechargeConfig('https://payments.example', 'test-store',
+                             'synthetic-payment-key', 'synthetic-hook-secret', (10_000_000,))
+    async with cloud_stack(tmp_path, recharge=payment) as (app, gateway, config, browser, model_requests, usage):
+        invoice = {}
+        payment_requests = []
+
+        def provider(request):
+            payment_requests.append(request)
+            assert request.headers['Authorization'] == 'token synthetic-payment-key'
+            if request.method == 'POST':
+                body = json.loads(request.content)
+                invoice.update(id='invoice-proxy-test', storeId='test-store', amount=body['amount'],
+                               paidAmount='0', currency=body['currency'], metadata=body['metadata'],
+                               status='New', additionalStatus='None', checkoutLink='https://payments.example/i/proxy-test')
+            else:
+                assert request.url.path == '/api/v1/invoices/invoice-proxy-test'
+            return httpx.Response(200, json=invoice)
+
+        await gateway.state.recharge.provider.http.aclose()
+        gateway.state.recharge.provider.http = httpx.AsyncClient(transport=httpx.MockTransport(provider))
+        user = (await browser.post('/api/auth/register', json={'username': 'paid-client', 'password': 'synthetic-password'})).json()['user']
+        session = (await browser.post('/api/sessions', json={})).json()['id']
+        assert (await browser.post(f'/api/sessions/{session}/messages', json={'text': 'Hello'})).status_code == 402
+        assert not model_requests
+        catalog = await browser.get('/api/account/recharge')
+        assert catalog.json()['enabled'] and catalog.json()['amounts_micros'] == [10_000_000]
+        created = await browser.post('/api/account/recharge', json={
+            'amount_micros': 10_000_000, 'idempotency_key': 'client-recharge-intent-123'})
+        assert created.status_code == 200
+        order = created.json()
+        assert order['status'] == 'pending'
+        assert (await browser.get('/api/account/credit')).json()['available_micros'] == 0
+
+        invoice.update(status='Settled', paidAmount='10')
+        raw = json.dumps({'deliveryId': 'proxy-test-receipt', 'storeId': 'test-store',
+                          'invoiceId': invoice['id'], 'type': 'InvoiceSettled', 'metadata': invoice['metadata'],
+                          'manuallyMarked': False, 'overPaid': False}).encode()
+        signature = 'sha256=' + hmac.new(payment.webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(gateway), base_url='https://accounts.example') as hook:
+            result = await hook.post('/v1/payments/btcpay/webhook', content=raw, headers={'BTCPay-Sig': signature})
+        assert result.status_code == 200
+        assert (await browser.get('/api/account/recharge/' + order['id'])).json()['status'] == 'credited'
+        assert (await browser.get('/api/account/credit')).json()['available_micros'] == 10_000_000
+
+        sent = await browser.post(f'/api/sessions/{session}/messages', json={'text': 'Hello'})
+        assert sent.status_code == 200
+        await asyncio.wait_for(asyncio.gather(*app.state.engine.actors.values()), 5)
+        snapshot = (await browser.get(f'/api/sessions/{session}')).json()
+        assert snapshot['messages'][-1]['content'] == 'Hello from Athena.'
+        assert len(model_requests) == 1
+        entries = await gateway.state.store.rows("SELECT user_id,delta_micros FROM credit_entries WHERE operation_key LIKE 'recharge:%'")
+        assert entries == [{'user_id': user['id'], 'delta_micros': 10_000_000}]
+        assert (await browser.get('/api/account/credit')).json()['available_micros'] == 10_000_000 - usage_charge(config, usage)
+        assert len(payment_requests) == 2
+        assert not await app.state.store.rows("SELECT 1 FROM sqlite_master WHERE name='recharge_orders'")
+        public = catalog.text + created.text + json.dumps(snapshot)
+        assert payment.api_key not in public and payment.webhook_secret not in public

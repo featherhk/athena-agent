@@ -1,0 +1,8 @@
+{
+  "provider": "btcpay",
+  "base_url": "https://pay.example.com",
+  "store_id": "REPLACE_WITH_OPERATOR_CONTROLLED_STORE_ID",
+  "api_key_file": "/run/secrets/btcpay-api-key",
+  "webhook_secret_file": "/run/secrets/btcpay-webhook-secret",
+  "amounts_micros": [5000000, 10000000]
+}

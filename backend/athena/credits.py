@@ -27,9 +27,23 @@ async def initialize_credits(store):
     await store.call(create)
 
 
+def grant_in_transaction(db, user_id, amount, operation_key, reason, *, enable_existing=True):
+    """Caller owns BEGIN/commit; reusable by atomic invoice settlement."""
+    prior = db.execute("SELECT * FROM credit_entries WHERE operation_key=?", (operation_key,)).fetchone()
+    if prior:
+        if prior['user_id'] != user_id or prior['delta_micros'] != amount:
+            raise ValueError('Grant idempotency conflict')
+        return False
+    # Paid credit enables a new account, but must not reactivate an explicitly
+    # disabled existing account. Operator grants retain their existing behavior.
+    db.execute("INSERT INTO credit_accounts(user_id,enabled,balance_micros) VALUES (?,1,?) ON CONFLICT(user_id) DO UPDATE SET enabled=CASE WHEN ? THEN 1 ELSE credit_accounts.enabled END,balance_micros=balance_micros+excluded.balance_micros", (user_id,amount,int(enable_existing)))
+    db.execute("INSERT INTO credit_entries VALUES (?,?,?,?,?,?)", (uid(),user_id,operation_key,amount,reason,now()))
+    return True
+
+
 class Credits:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, store, *, recharge_enabled=False):
+        self.store, self.recharge_enabled = store, recharge_enabled
 
     async def balance(self, user_id):
         def read(db):
@@ -38,7 +52,7 @@ class Credits:
             balance = row['balance_micros'] if row else 0
             return {'currency': 'USD', 'enabled': bool(row and row['enabled']),
                     'balance_micros': balance, 'held_micros': held,
-                    'available_micros': max(0, balance-held), 'recharge_enabled': False}
+                    'available_micros': max(0, balance-held), 'recharge_enabled': self.recharge_enabled}
         return await self.store.call(read)
 
     async def grant(self, user_id, amount, operation_key, reason):
@@ -46,14 +60,7 @@ class Credits:
             raise ValueError('Positive integer microcredits and a reason are required')
         def change(db):
             db.execute('BEGIN IMMEDIATE')
-            prior = db.execute("SELECT * FROM credit_entries WHERE operation_key=?", (operation_key,)).fetchone()
-            if prior:
-                if prior['user_id'] != user_id or prior['delta_micros'] != amount:
-                    raise ValueError('Grant idempotency conflict')
-                return False
-            db.execute("INSERT INTO credit_accounts(user_id,enabled,balance_micros) VALUES (?,1,?) ON CONFLICT(user_id) DO UPDATE SET enabled=1,balance_micros=balance_micros+excluded.balance_micros", (user_id,amount))
-            db.execute("INSERT INTO credit_entries VALUES (?,?,?,?,?,?)", (uid(),user_id,operation_key,amount,reason,now()))
-            return True
+            return grant_in_transaction(db,user_id,amount,operation_key,reason)
         return await self.store.call(change)
 
     async def reserve(self, user_id, request_id, amount, fingerprint):

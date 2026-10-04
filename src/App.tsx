@@ -10,6 +10,7 @@ import Widget from './Widget';
 import ComponentControls from './ComponentControls';
 import { arrangePanels, floatingPlacements, placementOf } from './component-layout';
 import { useSurfaceBounds } from './use-surface-bounds';
+import { useConversationScroll } from './useConversationScroll';
 import type { FormDraft } from './component-forms';
 import { MessageBody } from './MessageBody';
 import { FilePreview } from './FilePreview';
@@ -83,7 +84,7 @@ export default function App() {
   const [surfaces, setSurfaces] = useState(false);
   const [surfaceHeights, setSurfaceHeights] = useState<Record<string, number>>({});
   const surfaceDrafts = useRef(new Map<string, FormDraft>());
-  const surfaceBounds = useSurfaceBounds();
+  const surfaceBounds = useSurfaceBounds(snapshot.components.some(component => !component.view?.hidden && floatingPlacements.has(placementOf(component))));
   const [preview, setPreview] = useState<FileEntry | null>(null);
   const [previewObservation, setPreviewObservation] = useState<PreviewObservation | null>(null);
   const [attached, setAttached] = useState<FileEntry[]>([]);
@@ -123,8 +124,7 @@ export default function App() {
   const input = useRef<HTMLTextAreaElement>(null);
   const composer = useRef<HTMLElement>(null);
   const end = useRef<HTMLDivElement>(null);
-  const nearBottom = useRef(true);
-  const scrollIntent = useRef(0);
+  const conversationScroll = useConversationScroll(setReading);
   const upgradeState = useRef({ user, session, text, attached, safe: false });
   upgradeState.current = { user, session, text, attached, safe: !voiceActive && !sending && !uploading && !resetting && !chooseFiles && !snapshot.help_requests?.length && !auth && !account && !appearance && !preview && !files && !history && !activity && !menu && !surfaces };
   const busy = snapshot.runs.some(run => ['running', 'queued', 'waiting_agents'].includes(run.status));
@@ -169,16 +169,16 @@ export default function App() {
     const next = await api<Snapshot>(`/sessions/${encodeURIComponent(item.session_id)}`);
     if (!isCurrent()) return false;
     // Viewing a chosen result must not be overridden by the chat's follow-tail effect.
-    nearBottom.current = false;
     setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false); setSurfaces(false); setActivity(false);
     if (session !== item.session_id) navigate(item.session_id);
     else setSnapshot(next);
+    conversationScroll.policy.pause();
     pendingActivityView.current = item.run_id;
     return true;
   }
   function activityControl(embedded = false) {
     return <TaskContinuity key={user?.id} continuity={continuity} currentSession={embedded ? null : session} embedded={embedded}
-      open={activity} setOpen={setActivity} includeCurrentTerminal={!nearBottom.current} openConversation={openActivityConversation}
+      open={activity} setOpen={setActivity} includeCurrentTerminal={!conversationScroll.policy.following} openConversation={openActivityConversation}
       openHistory={() => { setActivity(false); setPreview(null); setHistory(true); }} />;
   }
   const measureWidget = useCallback((id: string, height: number) => setSurfaceHeights(old => old[id] === height ? old : { ...old, [id]: height }), []);
@@ -216,6 +216,7 @@ export default function App() {
   }
   function navigate(next: string | null, migrate = false) {
     pendingActivityView.current = null;
+    conversationScroll.policy.resume();
     const scope = uiScope.current;
     selection.current!.write(scope.owner, next);
     const draft = migrate ? drafts.current!.move(scope.owner, scope.session, next) : drafts.current!.read(scope.owner, next);
@@ -358,7 +359,7 @@ export default function App() {
     }
     uiScope.current = { owner: next?.id || null, session: nextSession, generation: uiScope.current.generation + 1, control: uiScope.current.control + 1 };
     applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setPreview(null); setFiles(null); setSessions([]);
-    pendingActivityView.current = null; setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
+    pendingActivityView.current = null; conversationScroll.policy.resume(); setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
     setSending(false); setUploading(false); setResetting(false); setSession(nextSession); showDraft(drafts.current!.read(next?.id || null, nextSession));
     setSnapshot(empty()); setError(''); setTextEffects({});
   }
@@ -482,7 +483,7 @@ export default function App() {
     })();
     return () => { disposed = true; source?.close(); };
   }, [session, user?.id]);
-  useEffect(() => { if (nearBottom.current) end.current?.scrollIntoView({ behavior: 'instant' }); }, [snapshot.messages, busy]);
+  useEffect(() => { if (!workspace) conversationScroll.follow(); }, [snapshot.messages, busy, Boolean(workspace)]);
   useEffect(() => {
     if (!history || !user) return;
     let disposed = false; const isCurrent = currentGuard();
@@ -505,7 +506,7 @@ export default function App() {
     let isCurrent = currentGuard(), sid = session;
     let sentDraft = drafts.current!.read(owner, sid);
     const sentFiles = new Set(fromComposer ? sentDraft.attached.map(file => file.id) : []);
-    setSending(true); setError(''); nearBottom.current = true;
+    setSending(true); setError(''); conversationScroll.policy.resume();
     try {
       if (!sid) {
         sid = (await api<{ id: string }>('/sessions', {})).id;
@@ -749,7 +750,7 @@ export default function App() {
     {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
     {!resetting && floating.filter(component => panelLayout[component.id]).map(component => renderWidget(component))}
     {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" inert={Boolean(menu || history || auth || account || appearance || files || preview || surfaces || activity)} key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
-    <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
+    <main ref={conversationScroll.ref} className={`scroll-area${workspace ? ' has-workspace' : ''}`} {...conversationScroll.handlers}>
       {!resetting && components.filter(component => placementOf(component) === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
       {workspace && !resetting && <section className="workspace-panel" data-app-view="workspace">{renderWidget(workspace)}</section>}
       <div className="conversation" hidden={Boolean(workspace)}>

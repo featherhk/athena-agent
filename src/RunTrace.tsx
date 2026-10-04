@@ -105,6 +105,9 @@ export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin
   const refresh = useRef<((next?: boolean) => void) | null>(null);
   const base = `/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/trace`;
   const state = status || trace?.run.status;
+  // A completed run's trace is immutable. Other messages still advance the
+  // session cursor; they must not refetch every expanded historical activity.
+  const revisionToObserve = ['complete', 'failed', 'cancelled', 'interrupted'].includes(state || '') ? 0 : revision;
   const live = (phase === 'thinking' || phase === 'executing' || phase === 'responding')
     && !['complete', 'failed', 'cancelled', 'interrupted', 'waiting_user', 'waiting_agents'].includes(state || '');
   const stateLabel = state === 'complete' ? 'trace.done' : state === 'failed' ? 'trace.failed'
@@ -161,7 +164,9 @@ export function RunTrace({ sessionId, runId, revision = 0, phase, status, origin
     };
   }, [open, base]);
 
-  useEffect(() => { if (open) refresh.current?.(); }, [revision, phase, open]);
+  // The final status transition still flushes the final reasoning/tool results.
+  // Explicit pagination and online recovery remain available for settled runs.
+  useEffect(() => { if (open) refresh.current?.(); }, [revisionToObserve, phase, status, open]);
 
   return <details className={`run-trace${origin || label ? ' task-trace' : ''}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary><span className={`trace-indicator${live ? ' active' : ''}`} aria-hidden="true" />

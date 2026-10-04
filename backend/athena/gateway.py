@@ -16,14 +16,17 @@ from urllib.parse import urlparse
 import httpx
 import anyio
 from fastapi import FastAPI, Request, HTTPException
+from fastapi import Path as APIPath
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from .auth import Auth, token_hash
 from .config import require_free_threading
 from .credits import Credits, initialize_credits
 from .errors import ServiceError, UserError
 from .store import Store, now, uid
+from .payment_provider import RechargeConfig, load_recharge_config
+from .recharge import Recharge, initialize_recharge
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,7 @@ class GatewayConfig:
     output_rate: int = 1_200_000
     max_output_tokens: int = 16_384
     max_body_bytes: int = 2_000_000
+    recharge: RechargeConfig | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls):
@@ -45,7 +49,8 @@ class GatewayConfig:
         return cls(Path(os.environ['ATHENA_GATEWAY_DATA_DIR']).expanduser(),
                    Path(path).expanduser().read_text().strip() if path else '',
                    os.environ.get('ATHENA_GATEWAY_PROVIDER_URL','https://api.deepseek.com'),
-                   os.environ.get('ATHENA_GATEWAY_MODEL','deepseek-flash'))
+                   os.environ.get('ATHENA_GATEWAY_MODEL','deepseek-flash'),
+                   recharge=load_recharge_config(os.environ.get('ATHENA_RECHARGE_CONFIG')))
 
 
 class Credentials(BaseModel):
@@ -58,6 +63,12 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=8,max_length=128)
 
 
+class RechargeOrder(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    amount_micros: StrictInt = Field(gt=0, le=1_000_000_000)
+    idempotency_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
+
+
 class RequestBodyLimit:
     """Bound bytes before FastAPI parses JSON, including chunked requests."""
     def __init__(self, app, maximum):
@@ -68,6 +79,7 @@ class RequestBodyLimit:
             return await self.app(scope, receive, send)
         path = scope['path']
         maximum = (4 * 1024 * 1024 if path == '/v1/voice/transcribe' else
+                   65_536 if path == '/v1/payments/btcpay/webhook' else
                    16_384 if path.startswith(('/v1/auth/', '/v1/account/')) else self.maximum)
         body = bytearray()
         try:
@@ -122,7 +134,9 @@ def create_gateway(config: GatewayConfig):
         store = Store(config.data_dir/'accounts.sqlite3')
         await store.initialize()
         await initialize_credits(store)
-        app.state.store,app.state.auth,app.state.credits = store,Auth(store,bootstrap_owner=False),Credits(store)
+        await initialize_recharge(store)
+        app.state.recharge = Recharge(store,config.recharge)
+        app.state.store,app.state.auth,app.state.credits = store,Auth(store,bootstrap_owner=False),Credits(store,recharge_enabled=bool(config.recharge))
         from .voice_gateway import initialize_gateway_voice
         await initialize_gateway_voice(app,store,app.state.credits)
         app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(180,connect=15),follow_redirects=False)
@@ -133,6 +147,7 @@ def create_gateway(config: GatewayConfig):
         finally:
             await app.state.http.aclose()
             await app.state.voice.close()
+            await app.state.recharge.close()
             await store.close()
             instance_lock.close()
 
@@ -232,6 +247,25 @@ def create_gateway(config: GatewayConfig):
     async def models(request:Request):
         await user(request)
         return {'data':[{'id':config.model,'object':'model'}]}
+
+    @app.get('/v1/account/recharge')
+    async def recharge_options(request:Request):
+        account=await user(request)
+        return await app.state.recharge.overview(account['id'])
+
+    @app.post('/v1/account/recharge')
+    async def recharge_create(request:Request,body:RechargeOrder):
+        account=await user(request)
+        return await app.state.recharge.create(account['id'],body.amount_micros,body.idempotency_key)
+
+    @app.get('/v1/account/recharge/{order_id}')
+    async def recharge_status(request:Request,order_id:str=APIPath(min_length=1,max_length=80,pattern=r'^[A-Za-z0-9_-]+$')):
+        account=await user(request)
+        return await app.state.recharge.get(account['id'],order_id)
+
+    @app.post('/v1/payments/btcpay/webhook')
+    async def recharge_notification(request:Request):
+        return await app.state.recharge.webhook(await request.body(),request.headers.get('BTCPay-Sig',''))
 
     @app.post('/v1/chat/completions')
     async def complete(request:Request):

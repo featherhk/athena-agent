@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { SurfaceBounds } from './component-layout';
 
-export function useSurfaceBounds(): SurfaceBounds {
+export function useSurfaceBounds(enabled = true): SurfaceBounds {
   const [bounds, setBounds] = useState<SurfaceBounds>({ x: 12, y: 76, width: window.innerWidth - 24, height: Math.max(0, window.innerHeight - 220) });
   useEffect(() => {
+    if (!enabled) return;
     const topbar = document.querySelector('.topbar'), composer = document.querySelector('.composer-area');
     let frame = 0;
     const measure = () => {
@@ -30,6 +31,6 @@ export function useSurfaceBounds(): SurfaceBounds {
     window.addEventListener('resize', schedule); window.visualViewport?.addEventListener('resize', schedule);
     measure();
     return () => { cancelAnimationFrame(frame); observer.disconnect(); changes.disconnect(); window.removeEventListener('resize', schedule); window.visualViewport?.removeEventListener('resize', schedule); };
-  }, []);
+  }, [enabled]);
   return bounds;
 }

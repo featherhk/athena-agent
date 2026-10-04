@@ -1,0 +1,11 @@
+# Optional operator-supplied payment configuration. Never enable without an
+# existing merchant store and a verified receiving wallet controlled by its owner.
+# Add to the deployment's existing Compose files; this is not a complete stack.
+services:
+  gateway:
+    environment:
+      ATHENA_RECHARGE_CONFIG: /run/secrets/recharge.json
+    volumes:
+      - /opt/athena/operator/recharge.json:/run/secrets/recharge.json:ro
+      - /opt/athena/secrets/btcpay-api-key:/run/secrets/btcpay-api-key:ro
+      - /opt/athena/secrets/btcpay-webhook-secret:/run/secrets/btcpay-webhook-secret:ro

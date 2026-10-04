@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { prohibitedPath, containsCredential } from '../scripts/check-repository.mjs';
 
 test('rejects runtime data but permits source and lockfiles', () => {
-  for (const path of ['.env', '.env.local', '.npmrc', 'nested/test.sqlite3-wal', 'data/.env.example', 'data/private.txt', 'browser-profiles/a.txt', 'cookies.json', 'private.key', '.venv/bin/python', 'logs/a.json']) assert.equal(prohibitedPath(path), true, path);
+  for (const path of ['.env', '.env.local', '.npmrc', 'nested/test.sqlite3-wal', 'data/.env.example', 'data/private.txt', 'browser-profiles/a.txt', 'cookies.json', 'private.key', '.venv/bin/python', 'logs/a.json', 'recharge.json', 'nested/btcpay-api-key', 'btcpay-webhook-secret']) assert.equal(prohibitedPath(path), true, path);
   for (const path of ['.env.example', 'package-lock.json', 'uv.lock', 'backend/athena/schema.sql', 'src/App.tsx']) assert.equal(prohibitedPath(path), false, path);
 });
 test('detects credentials without storing real credentials', () => {

@@ -31,6 +31,7 @@ from .frontend_state import register_frontend_routes, clear as clear_frontend_cl
 from .app_controls import initialize_app_controls, list_app_actions, register_app_control_routes
 from .voice import VoiceConfig, VoiceService, initialize_voice, register_voice_routes
 from .activity import register_activity_routes
+from .recharge_proxy import register_recharge_routes
 
 
 class Input(BaseModel):
@@ -382,6 +383,7 @@ def create_app(config: Config | None = None):
 
     register_file_routes(app)
     register_account_routes(app)
+    register_recharge_routes(app)
     register_component_routes(app, exists)
     register_trace_routes(app, exists)
     register_voice_routes(app, exists)

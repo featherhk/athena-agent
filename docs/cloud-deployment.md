@@ -71,7 +71,7 @@ docker compose -f deploy/compose.yaml exec gateway /opt/venv/bin/python -m athen
 docker compose -f deploy/compose.yaml exec gateway /opt/venv/bin/python -m athena.gateway_admin --data-dir /data status preview-user
 ```
 
-The same grant operation key with the same user and amount is idempotent. A different operation key creates another grant; do not change the key just because a command's response was lost. Creating or registering an account supplies zero credit and does not make the first registrant an administrator. Only the local operator console grants credit; no grant API is exposed.
+The same grant operation key with the same user and amount is idempotent. A different operation key creates another grant; do not change the key just because a command's response was lost. Creating or registering an account supplies zero credit and does not make the first registrant an administrator. Only the local operator console issues discretionary grants; no grant API is exposed. The optional [payment integration](recharge.md) can add purchased credit after independent settlement verification. It is disabled until an operator-controlled payment store is configured, and has not been activated for the public preview.
 
 In cloud mode, the local service stores its central bearer token in its private database and exposes only a local session cookie to the browser. Central login expiry, logout or unavailability cannot be bypassed with a cached entitlement. Local and cloud users are associated by immutable cloud ID, not by username. Use a separate data directory for a cloud-connected client instead of merging an old local-authentication database by hand.
 
