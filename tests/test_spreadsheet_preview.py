@@ -156,6 +156,42 @@ def test_sparse_cells_text_booleans_errors_and_rows_are_aligned():
     assert [cell['kind'] for cell in sheet['cells'][0]] == ['text', 'text', 'text', 'text', 'boolean', 'error', 'date']
 
 
+@pytest.mark.parametrize(('rows', 'numbers'), [
+    ('<row><c r="B7"><v>42</v></c></row>', [7]),
+    ('<row><c r="B7"><v>42</v></c><c r="C7"><v>43</v></c></row>', [7]),
+    ('<row r="7"><c r="A7"><v>1</v></c></row><row><c><v>2</v></c></row>', [7, 8]),
+    ('<row><c><v>1</v></c></row><row r="7"/><row><c r="B42"><v>2</v></c></row><row><c><v>3</v></c></row>', [1, 7, 42, 43]),
+    ('<row r="7"><c><v>1</v></c><c r="B7"><v>2</v></c><c><v>3</v></c></row>', [7]),
+    ('<row><c r="B1048576"><v>42</v></c></row>', [1048576]),
+])
+def test_optional_row_coordinates_follow_explicit_cells_then_previous_row(rows, numbers):
+    data = workbook(rows)
+    original = hashlib.sha256(data).digest()
+    result = xlsx_preview(data)
+    assert result['sheets'][0]['row_numbers'] == numbers
+    assert not result['truncated'] and not result['sheets'][0]['truncated']
+    assert len(json.dumps(result, ensure_ascii=False)) <= MAX_CHARS
+    assert hashlib.sha256(data).digest() == original
+
+
+@pytest.mark.parametrize('rows', [
+    '<row r="7"><c r="B8"><v>42</v></c></row>',
+    '<row><c r="A7"><v>1</v></c><c r="B8"><v>2</v></c></row>',
+    '<row r="7"><c r="A7"><v>1</v></c><c r="AO8"><v>2</v></c></row>',
+    '<row r="7"/><row r="7"><c><v>42</v></c></row>',
+    '<row r="7"/><row><c r="B6"><v>42</v></c></row>',
+    '<row r="0"><c><v>42</v></c></row>',
+    '<row r="invalid"><c r="B7"><v>42</v></c></row>',
+    '<row><c r=""><v>42</v></c></row>',
+    '<row><c r="B0"><v>42</v></c></row>',
+    '<row><c r="B1048577"><v>42</v></c></row>',
+    '<row r="1048576"/><row><c><v>42</v></c></row>',
+])
+def test_conflicting_or_invalid_coordinates_never_fabricate_addresses(rows):
+    with pytest.raises(ValueError, match='worksheet'):
+        xlsx_preview(workbook(rows))
+
+
 def test_preview_budget_includes_raw_formula_format_metadata_and_repeated_display():
     value = '字"\\' * 650
     rows = ''.join(f'<row r="{index}"><c r="A{index}" t="str"><f>{escape(value)}</f><v>{escape(value)}</v></c></row>' for index in range(1, 200))

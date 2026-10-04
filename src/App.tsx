@@ -47,6 +47,7 @@ import ErrorBoundary from './ErrorBoundary';
 import { useI18n, languages, errorMessage } from './i18n';
 import { useFrontendObservation } from './useFrontendObservation';
 import { observesAppAction, type PreviewObservation } from './frontend-observation';
+import { manageModalFocus, hasNativeModal } from './modal-focus';
 
 function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'files' }) {
   const paths = {
@@ -59,6 +60,8 @@ function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'files' }) {
 }
 
 export default function App() {
+  const appRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => appRoot.current ? manageModalFocus(appRoot.current) : undefined, []);
   const { t, locale, choice, reduced, preferences, applyPreferences } = useI18n();
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -456,7 +459,7 @@ export default function App() {
   }, [toast]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { closeAccount(); setMenu(false); setAppearance(false); setAuth(null); setHistory(false); setFiles(null); setPreview(null); setPassword(''); }
+      if (event.key === 'Escape' && !event.defaultPrevented && !hasNativeModal(document)) { closeAccount(); setMenu(false); setAppearance(false); setAuth(null); setHistory(false); setFiles(null); setPreview(null); setSurfaces(false); setActivity(false); setPassword(''); }
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
@@ -970,7 +973,7 @@ export default function App() {
   const tracedRuns = new Set<string>();
   const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
   const lastAnswerByRun = new Map(snapshot.messages.filter(message => message.run_id && message.role === 'assistant' && (message.content || message.attachments?.length)).map(message => [message.run_id, message.id]));
-  return <div className="app" data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
+  return <div ref={appRoot} className="app" data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
     <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
       <nav aria-label={t('chatControls')}>{renderer && <><button className="quiet" onClick={returnToDefault}>{t('backToChat')}</button><button className="icon-button" aria-label={t('files.attach')} onClick={() => fileInput.current?.click()}><Icon name="files" /></button><button className="quiet" onClick={() => void stop()}>{t('stop')}</button><button className="icon-button" aria-label={t('reset')} onClick={() => void reset()}><Icon name="reset" /></button></>}{!preview && !auth && !account && !appearance && !files && !history && !menu && !surfaces && activityControl()}{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>

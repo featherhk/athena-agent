@@ -27,6 +27,7 @@ final class NativeCheckScene: UIResponder, UIWindowSceneDelegate {
     private var passed: [String] = [] {
         didSet { print("Native check passed: " + passed.last!); fflush(stdout) }
     }
+    private var screenshots: [String] = []
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
@@ -59,6 +60,15 @@ final class NativeCheckScene: UIResponder, UIWindowSceneDelegate {
         }
     }
 
+    private func capture(_ name: String) throws {
+        guard let window else { return }
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+        let image = renderer.image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        guard let data = image.pngData() else { return }
+        try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(name))
+        screenshots.append(name)
+    }
+
     private func check(_ controller: AthenaController) async {
         do {
             guard let web = controller.view.subviews.compactMap({ $0 as? WKWebView }).first else {
@@ -66,11 +76,35 @@ final class NativeCheckScene: UIResponder, UIWindowSceneDelegate {
             }
             try await wait { self.window?.windowScene?.activationState == .foregroundActive && !web.isLoading && web.url == self.home && !controller.view.subviews.compactMap({ $0 as? UIActivityIndicatorView }).contains(where: { $0.isAnimating }) }
             try await wait { await self.js("document.getElementById('draft') !== null", web) as? Bool == true }
-            _ = await js("document.getElementById('draft').value='A draft that must survive'; window.requestProof=17", web)
+            _ = await js("document.getElementById('draft').value='A draft that must survive'; document.getElementById('draft').setSelectionRange(2,7); window.requestProof=17", web)
             controller.view.layoutIfNeeded()
             try require(abs(web.frame.minY - controller.view.safeAreaLayoutGuide.layoutFrame.minY) < 1, "Web surface ignored the top safe area")
             try require(abs(web.frame.maxY - controller.view.keyboardLayoutGuide.layoutFrame.minY) < 1, "Composer surface is not attached to the keyboard guide")
             passed.append("safe-area-and-keyboard-guide")
+
+            // Markdown opens owned file links in a new tab. On iPhone the host
+            // must preserve the current document instead of replacing the chat.
+            _ = await js("document.getElementById('inline-note').click()", web)
+            try await wait { controller.presentedViewController is UIActivityViewController || (!web.isLoading && web.url != self.home) }
+            let linkedDraft = await js("document.getElementById('draft')?.value", web) as? String
+            try require(web.url == home && linkedDraft == "A draft that must survive", "Opening an inline file link replaced the conversation and its unsent draft")
+            try require(controller.presentedViewController is UIActivityViewController, "An inline attachment did not reach native sharing")
+            let inlineFiles = try FileManager.default.contentsOfDirectory(at: FileManager.default.temporaryDirectory, includingPropertiesForKeys: nil)
+                .filter { $0.lastPathComponent.hasPrefix("Athena-") }
+                .map { $0.appendingPathComponent("notes.txt") }.filter { FileManager.default.fileExists(atPath: $0.path) }
+            try require(inlineFiles.count == 1, "Inline link did not produce exactly one file")
+            let inlineContent = try String(contentsOf: inlineFiles[0], encoding: .utf8)
+            try require(inlineContent == "Synthetic saved notes\n", "Inline attachment bytes changed")
+            try await Task.sleep(for: .milliseconds(350))
+            try capture("inline-file-share.png")
+            let linkedSheet = controller.presentedViewController as! UIActivityViewController
+            linkedSheet.completionWithItemsHandler?(nil, false, nil, nil)
+            try await wait { controller.presentedViewController == nil }
+            let retained = await js("document.getElementById('draft').value === 'A draft that must survive' && document.getElementById('draft').selectionStart === 2 && document.getElementById('draft').selectionEnd === 7 && window.requestProof === 17", web) as? Bool
+            try require(retained == true, "Returning from sharing lost draft, selection or live document state")
+            try require(!FileManager.default.fileExists(atPath: inlineFiles[0].path), "Returning from sharing retained the temporary attachment")
+            try capture("inline-file-return.png")
+            passed.append("inline-file-link-preserves-draft-and-return-path")
 
             web.load(URLRequest(url: home.appendingPathComponent("missing")))
             try await wait { controller.presentedViewController is UIAlertController }
@@ -160,6 +194,7 @@ final class NativeCheckScene: UIResponder, UIWindowSceneDelegate {
     private func finish(_ error: Error?) {
         let result: [String: Any] = ["passed": passed, "ok": error == nil, "error": error?.localizedDescription ?? "",
                                      "origin": home.absoluteString,
+                                     "screenshots": screenshots,
                                      "physical_device_verified": false]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
         let text = String(data: data, encoding: .utf8)!

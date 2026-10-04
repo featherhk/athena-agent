@@ -19,6 +19,15 @@ struct HostPolicy {
         return (200..<300).contains(response.statusCode)
     }
 
+    /// File links may be inline text/images. They must not replace the only
+    /// conversation window when the web client requests a new browser tab.
+    func isFileContent(_ url: URL?) -> Bool {
+        guard owns(url), let url else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 5 && parts[0].isEmpty && parts[1] == "api" && parts[2] == "files"
+            && !parts[3].isEmpty && parts[3] != "." && parts[3] != ".." && parts[4] == "content"
+    }
+
     func owns(_ url: URL?) -> Bool {
         guard let url, url.user == nil, url.password == nil else { return false }
         return url.scheme?.lowercased() == home.scheme?.lowercased()

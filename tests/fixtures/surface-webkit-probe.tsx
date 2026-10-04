@@ -19,12 +19,13 @@ class Source {
   addEventListener() {} removeEventListener() {} close() { this.readyState = 2; }
 }
 window.EventSource = Source;
-let snapshot = { cursor: 1, components: [], messages: [
+let snapshot = { cursor: 1, submission_revision: 0, components: [], messages: [
   { id: 'm1', role: 'user', content: 'Keep this conversation intact.', status: 'complete' },
   { id: 'm2', role: 'assistant', content: 'Your workspace can change while your conversation stays.', status: 'complete' },
 ], runs: [], files: [], tasks: [], help_requests: [] };
 let loseReceipt = false, posts = 0, failHide = false, expandedNote = false;
 const observations = [], unexpected = [];
+const submissionReceipts = new Map(), stopReceipts = new Map();
 window.fetch = async (path, init) => {
   path = String(path); if(path.includes('/files/')) window.webkit.messageHandlers.probe.postMessage({progress:'fetch:'+path}); const body = init?.body ? JSON.parse(init.body) : undefined;
   let value;
@@ -32,6 +33,15 @@ window.fetch = async (path, init) => {
   else if (path.startsWith('/api/service')) value = { configured: true };
   else if (path === '/api/sessions') value = [{ id: 's1', title: 'Synthetic workspace', pending: 0 }];
   else if (path === '/api/sessions/s1') value = structuredClone(snapshot);
+  else if (path.startsWith('/api/sessions/s1/submissions/')) {
+    const id = path.split('/').at(-1), receipt = submissionReceipts.get(id);
+    value = receipt ? { ...receipt, found: true, replayed: true, submission_revision: snapshot.submission_revision }
+      : { found: false, client_submission_id: id, submission_revision: snapshot.submission_revision };
+  }
+  else if (path.startsWith('/api/sessions/s1/stops/')) {
+    const id = path.split('/').at(-1), receipt = stopReceipts.get(id);
+    value = receipt ? { ...receipt, found: true } : { found: false, client_stop_id: id };
+  }
   else if (path.startsWith('/api/activity')) value = { owner_id: 'probe', items: [], has_more: false };
   else if (path === '/api/frontend/observation') { observations.push(body); value = { accepted: true }; }
   else if (path.endsWith('/report')) value = { accepted: true };
@@ -40,8 +50,21 @@ window.fetch = async (path, init) => {
     if (failHide && component.id === 'older') { await delay(220); throw new Error('synthetic offline'); }
     component.view = { ...component.view, ...body.view }; component.view_revision++; value = structuredClone(component);
   }
-  else if (path.endsWith('/messages')) { posts++; if (loseReceipt) throw new Error('synthetic lost response'); value = { run_id: 'confirmed-run' }; }
-  else if (path.endsWith('/stop')) value = { status: 'stopped' };
+  else if (path.endsWith('/messages')) {
+    posts++;
+    if (typeof body.client_submission_id !== 'string' || body.expected_submission_revision !== snapshot.submission_revision) throw new Error('invalid synthetic submission');
+    // A missing receipt remains unknown. Do not make the uncertainty test pass
+    // by inventing an acceptance or automatically repeating its POST.
+    if (loseReceipt) throw new Error('synthetic lost response');
+    value = submissionReceipts.get(body.client_submission_id) || { accepted: true, run_id: 'confirmed-run', status: 'queued',
+      client_submission_id: body.client_submission_id, submission_revision: snapshot.submission_revision, replayed: false };
+    submissionReceipts.set(body.client_submission_id, value);
+  }
+  else if (path.endsWith('/stop')) {
+    if (typeof body.client_stop_id !== 'string') throw new Error('invalid synthetic stop');
+    value = stopReceipts.get(body.client_stop_id) || { ok: true, client_stop_id: body.client_stop_id, submission_revision: ++snapshot.submission_revision };
+    stopReceipts.set(body.client_stop_id, value);
+  }
   else if (path === '/api/reset') { snapshot.components = []; snapshot.cursor++; value = { ok: true }; }
   else if (path === '/api/files/sheet/preview') value = { kind: 'spreadsheet', sheets: [{ name: 'Budget', rows: [['Item', 'Amount'], ['Travel', '120']], row_numbers: [1, 2], truncated: false }], truncated: false };
   else if (path.startsWith('/api/files/note/preview')) {

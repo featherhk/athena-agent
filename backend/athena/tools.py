@@ -204,6 +204,9 @@ class ToolRunner:
             return await self.browser.operate(args, session_id, run_id)
         if op == "registry":
             return await self.registry.operate(args, session_id)
+        if op == "files":
+            from .file_tools import file_operation
+            return await file_operation(self.store, self.config, session_id, args)
         if op == "app":
             from .app_controls import app_operation, wait_app_action_receipt
             result = await app_operation(self.store, session_id, run_id, args, self.config)

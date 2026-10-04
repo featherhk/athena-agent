@@ -89,6 +89,9 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
   useEffect(() => { layoutMeta.current = { locale, reduced }; refreshLayout.current(); }, [locale, reduced]);
   useEffect(() => {
     const dispatcher = new SurfaceDispatcher();
+    const targetFrame = frame.current;
+    const restoreFocus = () => targetFrame?.contentWindow?.postMessage({ type: 'athena:restore-focus', instance }, '*');
+    targetFrame?.addEventListener('athena:restore-focus', restoreFocus);
     let health: Health | null = null, inView = false, lastReport = '', disposed = false;
     let observing = false, layoutFrame = 0, styleFrame = 0, interactionFrame = 0, lastLayout = '', lastTheme = '';
     let pendingRegions: SurfaceRegion[] = [];
@@ -236,6 +239,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       app?.removeEventListener('load', scheduleLayout, true); document.fonts?.removeEventListener('loadingdone', scheduleLayout);
       refreshLayout.current = () => {};
       styleRef.current?.(componentKey, null);
+      targetFrame?.removeEventListener('athena:restore-focus', restoreFocus);
       window.removeEventListener('message', listener); document.removeEventListener('visibilitychange', report);
     };
   }, [sessionId, component.id, component.version, instance]);

@@ -69,6 +69,23 @@ test('surface RPC responses require the actual parent, current instance and matc
   assert.equal(fixture.requests().length, 1, 'a completed receipt never sends another request');
 });
 
+test('restoring an inner focus requires the current parent, frame and active document', () => {
+  const fixture = bridge();
+  const input = fixture.frame.document.querySelector('textarea');
+  input.focus();
+  let focused = true, calls = 0;
+  fixture.frame.document.hasFocus = () => focused;
+  input.focus = options => { assert.equal(options.preventScroll, true); calls++; };
+  fixture.receive({ type: 'athena:restore-focus' }, {});
+  fixture.receive({ type: 'athena:restore-focus', instance: 'old-frame' });
+  assert.equal(calls, 0);
+  fixture.receive({ type: 'athena:restore-focus' }); assert.equal(calls, 1);
+  focused = false;
+  fixture.receive({ type: 'athena:restore-focus' }); assert.equal(calls, 1, 'a late receipt cannot steal focus back');
+  focused = true; input.remove();
+  fixture.receive({ type: 'athena:restore-focus' }); assert.equal(calls, 1, 'a removed inner control stays retired');
+});
+
 test('surface methods send their complete arguments and host rejections reach their callers', async () => {
   const fixture = bridge(), longText = 'Untruncated draft '.repeat(1700);
   const operations = [

@@ -255,7 +255,13 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
             return
         }
         if policy.owns(action.request.url) {
-            decisionHandler(action.shouldPerformDownload ? .download : .allow)
+            let fileLink = action.sourceFrame.isMainFrame && action.navigationType == .linkActivated
+                && (action.request.httpMethod ?? "GET") == "GET" && policy.isFileContent(action.request.url)
+            // A Markdown target=_blank link otherwise reaches createWebViewWith,
+            // which would replace the chat with an inline image/text attachment.
+            // WKDownload retains this WebKit session's authentication and lets the
+            // existing share queue return to the exact document and unsent draft.
+            decisionHandler(action.shouldPerformDownload || fileLink ? .download : .allow)
         } else {
             if action.sourceFrame.isMainFrame, action.navigationType == .linkActivated, let url = action.request.url { openExternal(url) }
             decisionHandler(.cancel)

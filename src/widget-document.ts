@@ -13,6 +13,8 @@ export function widgetDocument(source: string, locale: string, instance: string,
     const send = data => parent.postMessage({...data, instance}, '*');
     let sequence = 0;
     const requests = new Map(), subscribers = new Set();
+    let lastFocused = null;
+    document.addEventListener('focusin', event => { if (event.target instanceof HTMLElement) lastFocused = event.target; });
     const request = (method,args={}) => new Promise((resolve,reject) => {
       if (requests.size >= 32) { reject(new Error('surface_busy')); return; }
       const id = ++sequence;
@@ -114,6 +116,7 @@ export function widgetDocument(source: string, locale: string, instance: string,
     addEventListener('securitypolicyviolation', () => fail('blocked_resource'));
     addEventListener('message', event => {
       if (event.source !== parent || event.data?.instance !== instance) return;
+      if (event.data.type === 'athena:restore-focus' && document.hasFocus() && lastFocused?.isConnected) lastFocused.focus({preventScroll:true});
       if (${surface} && event.data.type === 'athena:surface-response') {
         const pending = requests.get(event.data.id);
         if (pending) { requests.delete(event.data.id); clearTimeout(pending.timeout);

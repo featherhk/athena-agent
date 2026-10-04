@@ -84,6 +84,7 @@ Keep device provisioning files and Xcode user state out of Git. App Store/TestFl
 - The web surface respects the iPhone safe area and keyboard guide. Supported native strings use the same nine language catalogs as the product, with English fallback.
 - Explicit external links open in an in-app Safari view; they do not gain access to the host's native permissions.
 - Downloads from the trusted origin use native sharing/saving. Cross-origin download redirects and non-2xx responses are rejected; an expired login or missing attachment is never intentionally shared as a downloaded file. Concurrently completed files wait for the active share sheet or other native modal to close; background downloads wait until the app becomes active. Failed downloads also wait for a foreground presentation slot instead of silently disappearing behind a modal. Pending failures are combined into one notice; acknowledging it continues to the queued successful files without replaying downloads or removing another transfer's file.
+- Explicit main-frame links to owned file content also use native sharing, including Markdown links that request a new tab and text/image responses marked inline. They retain the current WebKit session and leave the conversation document, draft and selection in place when sharing closes. This does not change embedded previews or turn unrelated same-origin routes into downloads.
 - A refused navigation or connection failure before a new page commits keeps the existing usable conversation, draft and scroll position. A native notice explains the failure. First-load failures and page-process termination still show the independent native retry view.
 - A two-finger long press offers page recovery even when page JavaScript fails. The native VoiceOver escape action (two-finger scrub) and hardware-keyboard Command-R offer the same confirmation, without adding a permanent toolbar. Confirmed recovery opens the trusted origin with `?recovery=1`; the matching web client uses its default interface without registered custom surfaces. It warns that an unsent draft can be lost, preserves chats/files, and never replays a model or tool request. A subsequent native Retry stays on the recovery URL, so an interrupted recovery does not reactivate the broken surface. Ordinary network retry before entering recovery keeps the ordinary entry point.
 - Voice is foreground-only in this preview. Entering the background releases microphone/playback and notifies the web client without canceling a server task. Real-device call audio, interruption, headphones and Bluetooth remain to be accepted.
@@ -112,3 +113,17 @@ Verified on 2026-10-03: the 17 Python checks and both standalone Swift checks pa
 Rechecked on 2026-10-04 for download failure recovery: the 17 Python checks and the expanded Swift download queue checks passed, and the Debug Simulator target compiled with Xcode 16.1 / SDK 18.1. A paired iPhone 16 Pro Max was available, but there were no valid code-signing identities, so no physical-device installation was attempted. Selecting the default Xcode 16.4 Simulator through the UI reached its additional-components setup prompt; no components were installed. The native share-sheet/failure-alert interaction has not been visually accepted, and this build receipt deliberately records `simulator_launched: false`.
 
 Later on 2026-10-04, the independent native-check app passed **10** UIKit/WebKit checks on an iPhone 16 Pro Max / iOS 18.1 Simulator, including an actual successful file download followed by native share-sheet presentation and cleanup, and an actual 404 download that produced an error instead of a shareable file. The Debug Simulator and unsigned Release iPhone products compiled without compiler warnings using Xcode 16.1 / SDK 18.1. The expanded host-policy tests, download-queue tests and 17 Python build checks passed. This acceptance used a separate test bundle and synthetic HTTP fixture; the production iPhone app was not installed on the paired physical device. No valid signing identities were present. Real-device gesture discovery, software-keyboard interaction, audio interruptions and account-backed end-to-end tasks remain outstanding.
+
+On 2026-10-05, an actual Simulator regression first reproduced a lost-draft
+failure: opening a same-origin inline text attachment through a new-tab link
+replaced the only conversation window. After routing owned file links to the
+existing native download queue, **11** UIKit/WebKit checks passed on iPhone 16
+Pro Max / iOS 18.1. The new check verifies one authenticated fixture download,
+exact bytes, native sharing, temporary-file cleanup and preservation of draft,
+selection and live document state after sharing closes. Share/return screenshots
+were inspected. The expanded host-policy checks and 17 Python build checks
+passed; the unsigned Release iPhone product compiled without compiler warnings.
+The test invokes the share completion callback rather than operating a real
+share extension. It uses synthetic data and a separate test app: no physical
+iPhone, production account, software keyboard or real file-picker acceptance is
+implied.

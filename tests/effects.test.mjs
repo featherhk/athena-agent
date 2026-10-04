@@ -45,7 +45,7 @@ test('sandbox bridge receives layout only from its host and cleans up subscripti
   const context = {
     innerWidth: 400, innerHeight: 240,
     parent, addEventListener: (name, callback) => handlers.set(name, callback),
-    document: { body: { innerText: 'Widget', querySelectorAll: () => [] }, documentElement: { style: { setProperty: (key, value) => css.set(key, value) } } },
+    document: { addEventListener() {}, body: { innerText: 'Widget', querySelectorAll: () => [] }, documentElement: { style: { setProperty: (key, value) => css.set(key, value) } } },
     navigator: { userActivation: { isActive: false } },
     ErrorEvent: class {}, MutationObserver: class { observe() {} },
     setTimeout: () => {}, getComputedStyle: () => ({}),

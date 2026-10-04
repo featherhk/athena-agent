@@ -11,6 +11,12 @@ struct HostPolicyTests {
             precondition(!policy.owns(URL(string:value)), "A different origin acquired native privileges")
         }
         precondition(!policy.owns(nil))
+        for value in ["https://chat.athena.featherhk.com/api/files/abc123/content", "https://chat.athena.featherhk.com/api/files/abc123/content?revision=r2#preview"] {
+            precondition(policy.isFileContent(URL(string: value)), "An owned inline file can replace the conversation")
+        }
+        for value in ["https://evil.example/api/files/abc123/content", "https://chat.athena.featherhk.com:444/api/files/abc123/content", "https://chat.athena.featherhk.com/api/files/abc123/preview", "https://chat.athena.featherhk.com/api/files//content", "https://chat.athena.featherhk.com/api/files/abc123/content/extra", "https://chat.athena.featherhk.com/?next=/api/files/abc123/content", "https://chat.athena.featherhk.com/api/files/abc%2F123/content"] {
+            precondition(!policy.isFileContent(URL(string: value)), "A non-file route became a native download")
+        }
         precondition(policy.recoveryHome.absoluteString == "https://chat.athena.featherhk.com/?recovery=1")
         precondition(policy.owns(policy.recoveryHome), "Recovery changed the native capability origin")
         let customized = HostPolicy(home: URL(string: "https://chat.athena.featherhk.com/?lang=ja&recovery=0")!)

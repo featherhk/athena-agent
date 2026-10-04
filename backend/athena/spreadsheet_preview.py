@@ -271,6 +271,31 @@ def _size(value):
     return len(json.dumps(value, ensure_ascii=False))
 
 
+def _row_number(row, previous):
+    """Resolve optional row coordinates without contradicting explicit cells."""
+    declared = row.get('r')
+    number = None
+    if declared is not None:
+        if not re.fullmatch(r'[0-9]{1,7}', declared) or not 1 <= int(declared) <= 1048576:
+            raise ValueError('Invalid worksheet row coordinate')
+        number = int(declared)
+    for cell in (item for item in row if _tag(item) == 'c'):
+        reference = cell.get('r')
+        if reference is None:
+            continue
+        match = re.fullmatch(r'[A-Z]{1,3}([0-9]{1,7})', reference)
+        if not match or not 1 <= int(match[1]) <= 1048576:
+            raise ValueError('Invalid worksheet cell coordinate')
+        cell_row = int(match[1])
+        if number is not None and number != cell_row:
+            raise ValueError('Conflicting worksheet row coordinates')
+        number = cell_row
+    number = previous + 1 if number is None else number
+    if not previous < number <= 1048576:
+        raise ValueError('Ambiguous worksheet row order')
+    return number
+
+
 def xlsx_preview(data):
     _check_directory(data)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -312,12 +337,13 @@ def xlsx_preview(data):
                 exhausted = True
                 break
             used += sheet_cost
+            previous_row = 0
             for row in (item for item in root.iter() if _tag(item) == 'row'):
                 if len(sheet['rows']) >= 200 or exhausted:
                     sheet['truncated'] = True
                     break
-                row_number = row.get('r', '')
-                row_number = int(row_number) if row_number.isdigit() and len(row_number) < 8 else len(sheet['rows']) + 1
+                row_number = _row_number(row, previous_row)
+                previous_row = row_number
                 row_cost = 16 + len(str(row_number))
                 if used + row_cost > MAX_CHARS:
                     exhausted = True; sheet['truncated'] = True

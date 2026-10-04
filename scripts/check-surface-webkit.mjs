@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 if (process.platform !== 'darwin') throw new Error('This check requires macOS WebKit.');
-const preview = process.argv.includes('--preview');
-if (process.argv.slice(2).some(value => value !== '--preview')) throw new Error('Usage: check-surface-webkit.mjs [--preview]');
-const root = resolve(import.meta.dirname, '..'), output = mkdtempSync(join(tmpdir(), preview ? 'athena-spreadsheet-webkit-' : 'athena-surface-webkit-'));
+const preview = process.argv.includes('--preview'), modal = process.argv.includes('--modal');
+if (process.argv.slice(2).some(value => !['--preview', '--modal'].includes(value)) || (preview && modal)) throw new Error('Usage: check-surface-webkit.mjs [--preview | --modal]');
+const root = resolve(import.meta.dirname, '..'), output = mkdtempSync(join(tmpdir(), preview ? 'athena-spreadsheet-webkit-' : modal ? 'athena-surface-modal-webkit-' : 'athena-surface-webkit-'));
 const catalogs = preview ? `({'./locales/en.json':en,'./locales/ar.json':${readFileSync(join(root, 'src/locales/ar.json'), 'utf8')}})` : "({'./locales/en.json':en})";
-const result = await build({ entryPoints: [join(root, preview ? 'tests/fixtures/spreadsheet-webkit-probe.tsx' : 'tests/fixtures/surface-webkit-probe.tsx')], bundle: true, write: false,
+const result = await build({ entryPoints: [join(root, preview ? 'tests/fixtures/spreadsheet-webkit-probe.tsx' : modal ? 'tests/fixtures/surface-modal-webkit-probe.tsx' : 'tests/fixtures/surface-webkit-probe.tsx')], bundle: true, write: false,
   format: 'iife', minify: true, define: { 'process.env.NODE_ENV': '"production"' }, loader: { '.css': 'empty' },
   plugins: [{ name: 'offline-catalog', setup(build) { build.onLoad({ filter: /\/i18n.tsx$/ }, () => ({
     contents: readFileSync(join(root, 'src/i18n.tsx'), 'utf8').replace("import.meta.glob('./locales/*.json', { eager: true, import: 'default' })", catalogs), loader: 'tsx',
@@ -33,14 +33,29 @@ import WebKit
   web = WKWebView(frame:NSRect(x:0,y:0,width:1080,height:780),configuration:config)
   window = NSWindow(contentRect:NSRect(x:0,y:0,width:1080,height:780),styleMask:[.titled,.closable],backing:.buffered,defer:false)
   window.contentView = web
-  window.title = "Athena · Offline ${preview ? 'Spreadsheet' : 'Surface'} Check"
+  window.title = "Athena · Offline ${preview ? 'Spreadsheet' : modal ? 'Surface Modal' : 'Surface'} Check"
   // Real WebKit visibility is required for IntersectionObserver and animation/timer delivery.
   // A hidden window plus a JavaScript document.hidden override is not an end-to-end fixture.
-  window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+  window.center(); window.makeKeyAndOrderFront(nil); window.makeFirstResponder(web); NSApp.activate(ignoringOtherApps:true)
   web.loadHTMLString(try! String(contentsOfFile:CommandLine.arguments[1],encoding:.utf8),baseURL:nil)
   Task { try? await Task.sleep(for:.seconds(20)); finish(["error":"native_timeout","last_progress":lastProgress]) }
  }
  func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
+  // Synthetic native events are confined to this offline nonpersistent test window.
+  if let body = message.body as? [String:Any], let point = body["nativeClick"] as? [String:Double], let x = point["x"], let y = point["y"] {
+   window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+   for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+    if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x:x,y:web.bounds.height-y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) { window.sendEvent(event) }
+   }
+   return
+  }
+  if let body = message.body as? [String:Any], let key = body["nativeKey"] as? String {
+   let chars = key == "Enter" ? "\\r" : key == "Tab" ? "\\t" : key
+   let code: UInt16 = key == "Enter" ? 36 : key == "Tab" ? 48 : 6
+   let modifiers: NSEvent.ModifierFlags = body["shift"] as? Bool == true ? [.shift] : []
+   if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) { window.sendEvent(event) }
+   return
+  }
   if let body = message.body as? [String:Any], let progress = body["progress"] as? String { lastProgress = progress; FileHandle.standardError.write(Data((progress + "\\n").utf8)); return }
   if let body = message.body as? [String:Any], let size = body["resize"] as? [String:Double], let width = size["width"], let height = size["height"] {
    window.setContentSize(NSSize(width:width,height:height)); return

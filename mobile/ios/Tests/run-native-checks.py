@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import plistlib
 import runpy
+import secrets
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -18,6 +20,7 @@ DOCUMENT = b'''<!doctype html><html><head><meta name="viewport" content="width=d
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>body{margin:20px;font:18px Georgia}textarea{width:100%;height:100px;box-sizing:border-box}</style></head>
 <body><h1>Offline native acceptance</h1><label for="draft">Unsent draft</label><textarea id="draft"></textarea>
+<a id="inline-note" href="/api/files/inline-note/content" target="_blank" rel="noopener noreferrer">Open saved notes</a>
 <script>window.backgroundEvents=0;window.addEventListener('athena:background',()=>window.backgroundEvents++);</script></body></html>'''
 
 
@@ -26,16 +29,25 @@ class Fixture(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        self.server.receipts.append({'method': 'GET', 'path': self.path})
+        request_receipt = {'method': 'GET', 'path': self.path}
+        self.server.receipts.append(request_receipt)
         path = urlsplit(self.path).path
         if path == '/offline':
             self.connection.shutdown(socket.SHUT_RDWR)
             self.connection.close()
             return
         downloading = path in ['/file', '/missing-file']
-        body = b'Athena synthetic file\n' if path == '/file' else DOCUMENT
-        self.send_response(200 if path in ['/', '/file'] else 404)
-        self.send_header('Content-Type', 'application/octet-stream' if downloading else 'text/html; charset=utf-8')
+        inline_note = path == '/api/files/inline-note/content'
+        authenticated = f'athena_native_fixture={self.server.fixture_cookie}' in self.headers.get('Cookie', '')
+        if inline_note:
+            request_receipt['fixture_session_present'] = authenticated
+        body = b'Synthetic saved notes\n' if inline_note else b'Athena synthetic file\n' if path == '/file' else DOCUMENT
+        self.send_response((200 if authenticated else 401) if inline_note else 200 if path in ['/', '/file'] else 404)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8' if inline_note else 'application/octet-stream' if downloading else 'text/html; charset=utf-8')
+        if inline_note:
+            self.send_header('Content-Disposition', 'inline; filename="notes.txt"')
+        if path == '/':
+            self.send_header('Set-Cookie', f'athena_native_fixture={self.server.fixture_cookie}; HttpOnly; SameSite=Lax; Path=/')
         if downloading:
             self.send_header('Content-Disposition', 'attachment; filename="report.txt"')
         self.send_header('Cache-Control', 'no-store')
@@ -92,6 +104,7 @@ def main():
     BUILD['capture'](['xcrun', 'simctl', 'install', args.simulator, str(bundle)], env=env, timeout=120)
     with ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server:
         server.receipts = []
+        server.fixture_cookie = secrets.token_hex(16)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         origin = f'http://127.0.0.1:{server.server_port}/'
         try:
@@ -104,7 +117,16 @@ def main():
     if not markers:
         raise RuntimeError(f'No native acceptance receipt; inspect {output}/console.log')
     receipt = json.loads(markers[-1])
+    if receipt.get('screenshots'):
+        data_directory = Path(BUILD['capture'](['xcrun', 'simctl', 'get_app_container', args.simulator, identifier, 'data'], env=env))
+        for name in receipt['screenshots']:
+            if Path(name).name != name or not name.endswith('.png'):
+                raise RuntimeError('Unexpected native screenshot path')
+            shutil.copyfile(data_directory / 'tmp' / name, output / name)
     receipt['requests'] = server.receipts
+    file_reads = [request for request in server.receipts if request['path'] == '/api/files/inline-note/content']
+    if len(file_reads) != 1 or not file_reads[0].get('fixture_session_present'):
+        receipt.update(ok=False, error='Inline attachment lost session cookies or downloaded more than once')
     if any(request['method'] != 'GET' for request in server.receipts):
         receipt.update(ok=False, error='Native recovery replayed a mutation')
     receipt.update(simulator_udid=args.simulator, simulator_runtime=device['runtime'], bundle=str(bundle))

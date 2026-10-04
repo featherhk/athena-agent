@@ -85,6 +85,13 @@ RUNTIME_PROPERTIES.update({
 
 RUNTIME_PROPERTIES['op']['enum'].append('agents')
 RUNTIME_PROPERTIES['op']['enum'].append('activity')
+RUNTIME_PROPERTIES['op']['enum'].append('files')
+RUNTIME_PROPERTIES.update({
+    'content_revision': {'type': 'string', 'pattern': '^s1-[a-f0-9]{64}$'},
+    'sheet_index': {'type': 'integer', 'minimum': 0, 'maximum': 5},
+    'column_offset': {'type': 'integer', 'minimum': 0, 'maximum': 39},
+    'column_limit': {'type': 'integer', 'minimum': 1, 'maximum': 40},
+})
 RUNTIME_PROPERTIES['action']['enum'].extend(['spawn', 'wait', 'cancel'])
 RUNTIME_PROPERTIES['action']['enum'].append('ack')
 RUNTIME_PROPERTIES.update({

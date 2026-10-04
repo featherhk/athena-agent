@@ -246,3 +246,28 @@ the current page. The native recovery route remains available even when the fram
 script is unavailable. Independent stop and
 recovery must remain reachable outside the replacement frame. A same-process
 JavaScript timeout is not proof of recovery from a process-wide hang.
+
+## Dialogs without losing a custom input
+
+Host dialogs temporarily make their background inert, including the selected
+surface. Focus and Tab move into the dialog; closing it returns to the original
+control. Switching from the menu to appearance inherits the original return
+destination. The iframe is not unmounted, so its draft, text selection, scroll,
+and local animation state can survive the interruption. Canonical streaming and
+layout reports continue while the dialog is open.
+
+For an opaque iframe, the parent restores focus through its current instance's
+bridge. The child remembers its own last focused element and only restores it
+while its document still has focus. No text, password, selection or DOM is sent
+to the parent. A late message cannot deliberately steal focus from another
+window. Native `dialog.showModal()` image previews keep the browser's own focus
+handling; the host manager does not redirect them into an underlying dialog.
+These are interaction guarantees for functioning browser processes, not a
+recovery mechanism for an infinite JavaScript loop.
+
+`node scripts/check-surface-webkit.mjs --modal` exercises the production App and
+bridge at desktop and narrow sizes with a disposable, nonpersistent WKWebView.
+It sends native keyboard/mouse events to that test window and verifies actual
+input, preservation, focus return, and nested image dialogs. The native browser
+may move focus to window chrome; the check does not claim to prevent that or
+establish real iPhone keyboard/VoiceOver behavior.
