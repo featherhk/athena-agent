@@ -53,7 +53,9 @@ surface 内可以任意排版它取得的内容，但不能读写父页面 DOM�
 
 - `image`：`data_url`，可赋给自己的 `<img>.src` 或绘制到 Canvas，再任意定位、旋转、缩放、调透明度。只支持 PNG/JPEG/GIF/WebP/AVIF，原始字节最多 8MiB；超过会返回 `image_too_large`，可改用 `request({action:"preview",file_id})` 宿主预览。不要把 data_url 放进消息或模型上下文，它仅在浏览器内流转。
 - `document`：Word 的 `blocks`（paragraph 的 text/heading；table 的 rows/cells/blocks）和 truncated，自己用文本节点、标题和表格排版；这是内容预览，不保证 Word 原始分页。
-- `spreadsheet`：`sheets`（name/rows/row_numbers/truncated）和总体 truncated。可任意布局表格；此接口不自带公式计算或编辑写回。
+- `spreadsheet`：`sheets`（name/rows/row_numbers/truncated）和总体 truncated。rows 是显示字符串；新预览还带对齐的 cells，含 raw/display/kind、number_format/format_status、formula/formula_status。可任意布局表格；此接口不自带公式计算或编辑写回。
+  `formula_status:missing` 必须显示“未计算”，不能冒充空白或零；saved 表示文件内保存的结果（可能是空字符串），不是重新计算验证。总体 `formula_results:not_recalculated` 必须保留说明，`calculation_warning:true` 表示文件请求重算或使用手动计算。`format_status:unsupported` 是原始值回退，不能猜测币种、比例或单位。预览加载成功不代表报价金额已核验。
+  空缓存看 raw；display 为空而 raw 非空是格式隐藏了值，应允许展开查看。支持的日期和时间采用明确的 ISO 日期与 24 小时表示，不是 Excel 区域排版复刻。
 - `text/markdown/html`：content 和 truncated。HTML 是原始源码数据，不是已经净化的活动页面，不能直接注入自己的 innerHTML；用 textContent 展示源码，或调用宿主安全预览。其他文字也不能当脚本执行。
 - `unsupported`：使用宿主文件预览/下载。
 

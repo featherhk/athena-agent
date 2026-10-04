@@ -137,8 +137,17 @@ account ownership. It returns `id`, `name`, `size`, `media_type`,
 - `kind: "document"`, `blocks`, `truncated`: DOCX paragraphs/headings and nested
   tables; text remains text, with no original Word pagination guarantee.
 - `kind: "spreadsheet"`, `sheets`, `truncated`: worksheet names, rows, original
-  row numbers and truncation markers; previews do not provide a spreadsheet
-  calculation/editing engine.
+  row numbers and truncation markers. `rows` contains display strings; optional
+  aligned `cells` retains stored values, number formats, formatting status and
+  formula/cache provenance. `formula_status: "missing"` means no calculated
+  result, not blank or zero. `"saved"` is an existing cache, including an empty
+  string, and is never proof of a fresh calculation. Preserve the top-level
+  `formula_results: "not_recalculated"` and `calculation_warning` notices, and
+  identify cells with `format_status: "unsupported"` as raw-value fallbacks.
+  Empty `display` with nonempty `raw` means formatting hides a stored value;
+  do not label it an empty formula result. Supported dates/times use explicit
+  ISO-style dates and a 24-hour clock, not Excel's regional layout.
+  Previews do not provide a spreadsheet calculation/editing engine.
 - `kind: "text" | "markdown" | "html"`, `content`, `truncated`: source text.
   HTML is **not sanitized executable markup**. Render it as text or use the
   host's `request({action: "preview", file_id})` scriptless preview; do not insert

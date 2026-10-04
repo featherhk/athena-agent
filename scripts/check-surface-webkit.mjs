@@ -5,11 +5,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 if (process.platform !== 'darwin') throw new Error('This check requires macOS WebKit.');
-const root = resolve(import.meta.dirname, '..'), output = mkdtempSync(join(tmpdir(), 'athena-surface-webkit-'));
-const result = await build({ entryPoints: [join(root, 'tests/fixtures/surface-webkit-probe.tsx')], bundle: true, write: false,
+const preview = process.argv.includes('--preview');
+if (process.argv.slice(2).some(value => value !== '--preview')) throw new Error('Usage: check-surface-webkit.mjs [--preview]');
+const root = resolve(import.meta.dirname, '..'), output = mkdtempSync(join(tmpdir(), preview ? 'athena-spreadsheet-webkit-' : 'athena-surface-webkit-'));
+const catalogs = preview ? `({'./locales/en.json':en,'./locales/ar.json':${readFileSync(join(root, 'src/locales/ar.json'), 'utf8')}})` : "({'./locales/en.json':en})";
+const result = await build({ entryPoints: [join(root, preview ? 'tests/fixtures/spreadsheet-webkit-probe.tsx' : 'tests/fixtures/surface-webkit-probe.tsx')], bundle: true, write: false,
   format: 'iife', minify: true, define: { 'process.env.NODE_ENV': '"production"' }, loader: { '.css': 'empty' },
   plugins: [{ name: 'offline-catalog', setup(build) { build.onLoad({ filter: /\/i18n.tsx$/ }, () => ({
-    contents: readFileSync(join(root, 'src/i18n.tsx'), 'utf8').replace("import.meta.glob('./locales/*.json', { eager: true, import: 'default' })", "({'./locales/en.json':en})"), loader: 'tsx',
+    contents: readFileSync(join(root, 'src/i18n.tsx'), 'utf8').replace("import.meta.glob('./locales/*.json', { eager: true, import: 'default' })", catalogs), loader: 'tsx',
   })); } }],
 });
 const css = readdirSync(join(root, 'src')).filter(name => name.endsWith('.css')).map(name => readFileSync(join(root, 'src', name), 'utf8')).join('\n');
@@ -30,7 +33,7 @@ import WebKit
   web = WKWebView(frame:NSRect(x:0,y:0,width:1080,height:780),configuration:config)
   window = NSWindow(contentRect:NSRect(x:0,y:0,width:1080,height:780),styleMask:[.titled,.closable],backing:.buffered,defer:false)
   window.contentView = web
-  window.title = "Athena · Offline Surface Check"
+  window.title = "Athena · Offline ${preview ? 'Spreadsheet' : 'Surface'} Check"
   // Real WebKit visibility is required for IntersectionObserver and animation/timer delivery.
   // A hidden window plus a JavaScript document.hidden override is not an end-to-end fixture.
   window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)

@@ -62,6 +62,19 @@ test('text, markdown and HTML are data strings; no parser, script execution or r
   }
 });
 
+test('spreadsheet surfaces receive saved-value provenance and calculation limits with typed cells', async () => {
+  const state = snapshot([file({ name: 'Quotation.xlsx' })]);
+  const sheets = [{ name: 'Quote', rows: [['8%', '120']], row_numbers: [2], truncated: false,
+    cells: [[{ raw: '0.08', display: '8%', kind: 'number', number_format: '0%', format_status: 'formatted' },
+      { raw: '120', display: '120', kind: 'formula', formula: 'SUM(A1:A2)', formula_status: 'saved' }]] }];
+  const result = await readSurfaceFile(() => state, 'owned', () => true, async () => json({
+    kind: 'spreadsheet', sheets, truncated: false, formula_results: 'not_recalculated', calculation_warning: true,
+  }));
+  assert.deepEqual(result.sheets, sheets);
+  assert.equal(result.formula_results, 'not_recalculated');
+  assert.equal(result.calculation_warning, true);
+});
+
 test('unsupported preview is explicit and malformed or failed preview never returns success', async () => {
   const state = snapshot([file()]);
   assert.equal((await readSurfaceFile(() => state, 'owned', () => true, async () => json({ kind: 'unsupported' }))).kind, 'unsupported');

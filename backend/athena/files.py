@@ -6,11 +6,9 @@ loop; directory descriptors prevent path replacement from escaping a workspace.
 from contextlib import contextmanager
 import asyncio
 import hashlib
-import io
 import mimetypes
 import os
 from pathlib import PurePosixPath
-import posixpath
 import re
 import stat
 import unicodedata
@@ -23,6 +21,7 @@ from fastapi.responses import StreamingResponse
 
 from .store import now, uid
 from .document_preview import docx_preview
+from .spreadsheet_preview import xlsx_preview
 
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_TEXT_BYTES = 512 * 1024
@@ -265,84 +264,8 @@ def _cleanup_upload(directory, handle, name, success):
     os.close(directory)
 
 
-def _xml(archive, name):
-    info = archive.getinfo(name)
-    if info.file_size > 8 * 1024 * 1024 or info.flag_bits & 1:
-        raise ValueError("Preview too large")
-    data = archive.read(name)
-    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
-        raise ValueError("Unsupported XML")
-    return ET.fromstring(data)
-
-
-def _tag(element):
-    return element.tag.rsplit("}", 1)[-1]
-
-
 def _xlsx_preview(data):
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        entries = archive.infolist()
-        if len(entries) > 2048 or sum(item.file_size for item in entries) > 32 * 1024 * 1024:
-            raise ValueError("Preview too large")
-        workbook = _xml(archive, "xl/workbook.xml")
-        relationships = _xml(archive, "xl/_rels/workbook.xml.rels")
-        targets = {item.get("Id"): item.get("Target", "") for item in relationships if item.get("TargetMode") != "External"}
-        strings = []
-        if "xl/sharedStrings.xml" in archive.namelist():
-            for item in _xml(archive, "xl/sharedStrings.xml"):
-                strings.append("".join(element.text or "" for element in item.iter() if _tag(element) == "t")[:2000])
-                if len(strings) > 100000:
-                    raise ValueError("Preview too large")
-        sheets = []
-        remaining_chars = 200000
-        for sheet in (item for item in workbook.iter() if _tag(item) == "sheet"):
-            relation = next((value for key, value in sheet.attrib.items() if key.endswith("}id")), "")
-            target = targets.get(relation, "")
-            path = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join("xl", target))
-            if not path.startswith("xl/worksheets/") or not path.endswith(".xml"):
-                continue
-            rows, row_numbers = [], []
-            truncated = False
-            root = _xml(archive, path)
-            for row in (item for item in root.iter() if _tag(item) == "row"):
-                if len(rows) >= 200 or remaining_chars <= 0:
-                    truncated = True
-                    break
-                cells = []
-                for cell in (item for item in row if _tag(item) == "c"):
-                    reference = re.match(r"([A-Z]{1,3})[0-9]+$", cell.get("r", ""))
-                    column = len(cells)
-                    if reference:
-                        column = 0
-                        for character in reference[1]:
-                            column = column * 26 + ord(character) - ord("A") + 1
-                        column -= 1
-                    if column >= 40:
-                        truncated = True
-                        continue
-                    value = next((item.text or "" for item in cell if _tag(item) == "v"), "")
-                    kind = cell.get("t")
-                    if kind == "s":
-                        value = strings[int(value)] if value.isdigit() and int(value) < len(strings) else ""
-                    elif kind == "inlineStr":
-                        value = "".join(item.text or "" for item in cell.iter() if _tag(item) == "t")
-                    elif not value:
-                        formula = next((item.text or "" for item in cell if _tag(item) == "f"), "")
-                        value = "=" + formula if formula else ""
-                    while len(cells) <= column:
-                        cells.append("")
-                    allowance = min(2000, max(0, remaining_chars))
-                    cells[column] = value[:allowance]
-                    remaining_chars -= len(cells[column])
-                    truncated = truncated or len(value) > allowance
-                rows.append(cells)
-                row_number = row.get("r", "")
-                row_numbers.append(int(row_number) if row_number.isdigit() and len(row_number) < 8 else len(rows))
-            sheets.append({"name": sheet.get("name", ""), "rows": rows, "row_numbers": row_numbers, "truncated": truncated})
-            if len(sheets) >= 6:
-                break
-        return {"kind": "spreadsheet", "sheets": sheets, "truncated": len([item for item in workbook.iter() if _tag(item) == "sheet"]) > len(sheets)}
-
+    return xlsx_preview(data)
 
 def _preview(config, record, revision=None):
     handle, size = _open_file(config, record, revision)
@@ -353,7 +276,7 @@ def _preview(config, record, revision=None):
         if suffix == ".xlsx":
             try:
                 return _xlsx_preview(handle.read(MAX_FILE_BYTES + 1))
-            except (ValueError, KeyError, OSError, zipfile.BadZipFile, ET.ParseError, RuntimeError, OverflowError):
+            except (ValueError, KeyError, OSError, zipfile.BadZipFile, ET.ParseError, RuntimeError, OverflowError, NotImplementedError):
                 return {"kind": "unsupported"}
         if suffix == ".docx":
             try:

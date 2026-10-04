@@ -63,6 +63,13 @@
 .spreadsheet-table-scroll th { background: var(--wash); color: var(--ink); font-weight: 500; }
 .spreadsheet-table-scroll thead th { position: sticky; top: 0; z-index: 1; }
 .spreadsheet-table-scroll th:first-child { min-width: 35px; text-align: center; }
+.spreadsheet-table-scroll td { font-variant-numeric: tabular-nums; }
+.spreadsheet-table-scroll td[data-kind='number'], .spreadsheet-table-scroll td[data-kind='formula'] { text-align: end; }
+.spreadsheet-cell-detail summary { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 4px; }
+.spreadsheet-cell-detail summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.spreadsheet-cell-detail dl { margin: 10px 0 2px; max-width: 240px; text-align: start; }
+.spreadsheet-cell-detail dt { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.spreadsheet-cell-detail dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 @media (max-width: 640px) { .file-preview-header { align-items: flex-start; gap: 8px; } .markdown-body pre { padding: 11px; } }
 
 .file-preview-document { max-height: 65vh; overflow: auto; padding: clamp(16px, 3vw, 32px); border: 1px solid var(--tint); background: var(--surface); color: var(--ink); font-family: var(--font-body, inherit); line-height: 1.75; overflow-wrap: anywhere; }

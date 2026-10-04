@@ -1,4 +1,4 @@
-import { createElement, memo, useEffect, useRef, useState } from 'react';
+import { createElement, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from './i18n';
 import { MarkdownContent } from './MessageBody';
 import type { PreviewObservation } from './frontend-observation';
@@ -10,12 +10,17 @@ export type FileEntry = {
   content_url: string; preview_url: string;
   content_revision?: string | null;
 };
-type Sheet = { name: string; rows: string[][]; row_numbers: number[]; truncated: boolean };
+type SheetCell = {
+  raw: string; display: string; kind: 'text' | 'number' | 'boolean' | 'date' | 'error' | 'formula';
+  number_format?: string; format_status?: 'formatted' | 'raw' | 'unsupported';
+  formula?: string; formula_status?: 'saved' | 'missing';
+};
+type Sheet = { name: string; rows: string[][]; cells?: SheetCell[][]; row_numbers: number[]; truncated: boolean };
 type DocumentBlock = { kind: 'paragraph'; text: string; heading: number }
   | { kind: 'table'; rows: { header: boolean; cells: { colspan: number; blocks: DocumentBlock[] }[] }[] };
 type Preview = { kind: 'text' | 'markdown' | 'html'; content: string; truncated: boolean }
   | { kind: 'image'; url: string }
-  | { kind: 'spreadsheet'; sheets: Sheet[]; truncated: boolean }
+  | { kind: 'spreadsheet'; sheets: Sheet[]; truncated: boolean; formula_results?: 'not_recalculated'; calculation_warning?: boolean }
   | { kind: 'document'; blocks: DocumentBlock[]; truncated: boolean }
   | { kind: 'unsupported' };
 const framePolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
@@ -26,6 +31,41 @@ const DocumentBlocks = memo(function Blocks({ blocks }: { blocks: DocumentBlock[
     : <div key={index} className="document-table-scroll"><table><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>
       {row.cells.map((cell, column) => createElement(row.header ? 'th' : 'td', { key: column, colSpan: cell.colspan, scope: row.header ? 'col' : undefined }, <DocumentBlocks blocks={cell.blocks} />))}
     </tr>)}</tbody></table></div>)}</>;
+});
+
+const SpreadsheetCell = memo(function Cell({ value, cell, address }: { value: string; cell?: SheetCell; address: string }) {
+  const { t } = useI18n();
+  const hidden = value === '' && Boolean(cell?.raw);
+  const inspectable = cell?.kind === 'formula' || cell?.format_status === 'unsupported' || hidden;
+  if (!cell || !inspectable) return <bdi>{value}</bdi>;
+  const label = cell.formula_status === 'missing' ? t('files.formulaMissing')
+    : hidden ? t('files.formatHidden')
+    : cell.formula_status === 'saved' && cell.raw === '' ? t('files.formulaEmpty') : value;
+  return <details className="spreadsheet-cell-detail">
+    <summary aria-label={`${t('files.cellDetails', { cell: address })}: ${label}`}>{label}</summary>
+    <dl>
+      <dt>{t('files.rawValue')}</dt><dd><bdi>{cell.raw === '' ? '""' : cell.raw}</bdi></dd>
+      {cell.formula !== undefined && <><dt>{t('files.formula')}</dt><dd><bdi>{cell.formula || t('files.formulaMissing')}</bdi></dd></>}
+      {cell.number_format && <><dt>{t('files.numberFormat')}</dt><dd><bdi>{cell.number_format}</bdi></dd></>}
+    </dl>
+  </details>;
+});
+
+function columnName(index: number) {
+  let name = '';
+  for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26)) name = String.fromCharCode(65 + (value - 1) % 26) + name;
+  return name;
+}
+
+const SpreadsheetTable = memo(function Table({ sheet, fallbackName }: { sheet: Sheet; fallbackName: string }) {
+  const columns = Math.max(0, ...sheet.rows.map(row => row.length));
+  return <div className="spreadsheet-table-scroll"><table aria-label={sheet.name || fallbackName}>
+    <thead><tr><th aria-hidden="true" />{Array.from({ length: columns }, (_, index) => <th key={index} scope="col">{columnName(index)}</th>)}</tr></thead>
+    <tbody>{sheet.rows.map((row, index) => <tr key={index}><th scope="row">{sheet.row_numbers[index] ?? index + 1}</th>{Array.from({ length: columns }, (_, column) => {
+      const cell = sheet.cells?.[index]?.[column];
+      return <td key={column} data-kind={cell?.kind}><SpreadsheetCell value={row[column] ?? ''} cell={cell} address={`${columnName(column)}${sheet.row_numbers[index] ?? index + 1}`} /></td>;
+    })}</tr>)}</tbody>
+  </table></div>;
 });
 
 type FilePreviewProps = { file: FileEntry; onClose?: () => void; onObservation?: (value: PreviewObservation) => void };
@@ -69,12 +109,7 @@ function FilePreviewContent({ file, onClose, onObservation }: FilePreviewProps) 
     else if (loadedFile.current === file.id && preview && (!['html', 'image'].includes(preview.kind) || mediaReady)) observe.current?.({ file_id: file.id, status: 'ready' });
   }, [file.id, preview, failed, mediaReady]);
   const sheet = preview?.kind === 'spreadsheet' ? preview.sheets[sheetIndex] : undefined;
-  const columns = sheet ? Math.max(0, ...sheet.rows.map(row => row.length)) : 0;
-  function columnName(index: number) {
-    let name = '';
-    for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26)) name = String.fromCharCode(65 + (value - 1) % 26) + name;
-    return name;
-  }
+  const unsupportedFormats = useMemo(() => sheet?.cells?.some(row => row.some(cell => cell.format_status === 'unsupported')), [sheet]);
   return <section className="file-preview" aria-label={file.name}>
     <header className="file-preview-header"><strong>{file.name}</strong><div>
       <a className="file-download" href={`${file.content_url}?download=1`} download={file.name}>{t('files.download')}</a>
@@ -97,11 +132,10 @@ function FilePreviewContent({ file, onClose, onObservation }: FilePreviewProps) 
       {preview.sheets.length > 1 && <div className="spreadsheet-tabs" role="tablist" aria-label={t('files.sheet')}>
         {preview.sheets.map((item, index) => <button key={index} type="button" role="tab" aria-selected={index === sheetIndex} onClick={() => setSheetIndex(index)}>{item.name || `${index + 1}`}</button>)}
       </div>}
-      {sheet && <div className="spreadsheet-table-scroll"><table aria-label={sheet.name || file.name}>
-        <thead><tr><th aria-hidden="true" />{Array.from({ length: columns }, (_, index) => <th key={index} scope="col">{columnName(index)}</th>)}</tr></thead>
-        <tbody>{sheet.rows.map((row, index) => <tr key={index}><th scope="row">{sheet.row_numbers[index] ?? index + 1}</th>{Array.from({ length: columns }, (_, column) => <td key={column}>{row[column] || ''}</td>)}</tr>)}</tbody>
-      </table></div>}
+      {sheet && <SpreadsheetTable sheet={sheet} fallbackName={file.name} />}
       {(!sheet || sheet.rows.length === 0) && <p className="empty-note">{t('files.empty')}</p>}
+      {preview.formula_results === 'not_recalculated' && <p className="file-preview-note">{t('files.formulaSaved')}{preview.calculation_warning ? ` ${t('files.formulaRecalculate')}` : ''}</p>}
+      {unsupportedFormats && <p className="file-preview-note">{t('files.formatUnsupported')}</p>}
       {(sheet?.truncated || preview.truncated) && <p className="file-preview-note">{t('files.rowsTruncated')}</p>}
     </div>}
     {preview && 'content' in preview && preview.truncated && <p className="file-preview-note">{t('files.previewTruncated')}</p>}

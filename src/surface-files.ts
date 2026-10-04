@@ -86,7 +86,9 @@ export async function readSurfaceFile(snapshot: () => FileSnapshot, identifier: 
     if (preview?.kind === 'document' && Array.isArray(preview.blocks))
       return { ...metadata, kind: 'document' as const, blocks: preview.blocks, truncated: preview.truncated === true };
     if (preview?.kind === 'spreadsheet' && Array.isArray(preview.sheets))
-      return { ...metadata, kind: 'spreadsheet' as const, sheets: preview.sheets, truncated: preview.truncated === true };
+      return { ...metadata, kind: 'spreadsheet' as const, sheets: preview.sheets, truncated: preview.truncated === true,
+        ...(preview.formula_results === 'not_recalculated' ? { formula_results: 'not_recalculated' as const } : {}),
+        ...(preview.calculation_warning === true ? { calculation_warning: true } : {}) };
     if (preview?.kind === 'unsupported') return { ...metadata, kind: 'unsupported' as const };
     throw new SurfaceError('preview_unavailable');
   } catch (error) {

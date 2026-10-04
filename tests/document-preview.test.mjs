@@ -122,3 +122,84 @@ test('unrelated chat rerenders do not traverse a long unchanged document again',
     assert.equal(reads, initial, 'typing elsewhere must not repeatedly walk every document block');
   } finally { await page.close(); }
 });
+
+test('a quotation preview preserves displayed amounts and distinguishes saved, missing and empty formula results', async () => {
+  const cells = [[
+    { kind: 'number', raw: '1234.5', display: '¥1,234.50', number_format: '"¥"#,##0.00', format_status: 'formatted' },
+    { kind: 'number', raw: '0.08', display: '8%', number_format: '0%', format_status: 'formatted' },
+    { kind: 'date', raw: '46299', display: '2026-10-04', number_format: 'yyyy-mm-dd', format_status: 'formatted' },
+    { kind: 'formula', raw: '120', display: '120.00', formula: 'SUM(A2:A3)', formula_status: 'saved' },
+    { kind: 'formula', raw: '', display: '=SUM(A2:A3)', formula: 'SUM(A2:A3)', formula_status: 'missing' },
+    { kind: 'formula', raw: '', display: '', formula: 'IF(A2=0,"",A2)', formula_status: 'saved' },
+    { kind: 'formula', raw: '', display: '', formula: '', formula_status: 'missing' },
+    { kind: 'formula', raw: '0', display: '', formula: 'SUM(A2:A3)', formula_status: 'saved', number_format: '0;-0;;@', format_status: 'formatted' },
+    { kind: 'number', raw: '0', display: '', number_format: '0;-0;;@', format_status: 'formatted' },
+  ]];
+  const workbook = { kind: 'spreadsheet', sheets: [{ name: 'Quote', rows: cells.map(row => row.map(cell => cell.display)),
+    cells, row_numbers: [2], truncated: false }], truncated: false, formula_results: 'not_recalculated', calculation_warning: true };
+  globalThis.fetch = async () => ({ ok: true, json: async () => workbook });
+  const page = await fixture();
+  try {
+    await page.render({ file: { ...file, name: 'Quotation.xlsx' } });
+    const values = [...page.host.querySelectorAll('tbody td')];
+    assert.deepEqual(values.slice(0, 3).map(cell => cell.textContent), ['¥1,234.50', '8%', '2026-10-04']);
+    assert.equal(values[3].querySelector('summary').textContent, '120.00');
+    assert.equal(values[4].querySelector('summary').textContent, 'files.formulaMissing');
+    assert.equal(values[5].querySelector('summary').textContent, 'files.formulaEmpty');
+    assert.equal(values[6].querySelector('summary').textContent, 'files.formulaMissing');
+    assert.equal(values[7].querySelector('summary').textContent, 'files.formatHidden');
+    assert.equal(values[8].querySelector('summary').textContent, 'files.formatHidden');
+    assert.equal(values[7].querySelector('dd').textContent, '0', 'a saved zero hidden by formatting is not an empty saved result');
+    assert.match(values[3].textContent, /SUM\(A2:A3\)/);
+    assert.equal(values[3].querySelector('details').open, false, 'inspection is optional');
+    assert.match(page.host.textContent, /files.formulaSaved/);
+    assert.match(page.host.textContent, /files.formulaRecalculate/);
+    assert.doesNotMatch(page.host.textContent, /files.formatUnsupported/);
+    assert.ok(page.host.querySelector('a[download]'));
+    assert.equal(page.host.querySelector('dialog'), null, 'results remain in the conversation');
+  } finally { await page.close(); }
+});
+
+test('unsupported number formats stay explicit, inert and scoped to the selected sheet', async () => {
+  const dangerous = '<img src="https://example.invalid/track" onerror="window.pwned=1">';
+  const workbook = { kind: 'spreadsheet', truncated: false, sheets: [
+    { name: 'Custom units', rows: [['12.5']], row_numbers: [1], truncated: false,
+      cells: [[{ kind: 'number', raw: '12.5', display: '12.5', number_format: dangerous, format_status: 'unsupported' }]] },
+    { name: 'Legacy', rows: [['0', 'false']], row_numbers: [3], truncated: false },
+  ] };
+  globalThis.fetch = async () => ({ ok: true, json: async () => workbook });
+  const page = await fixture();
+  try {
+    await page.render({ file });
+    assert.equal(page.host.querySelector('summary').textContent, '12.5');
+    assert.match(page.host.textContent, /files.formatUnsupported/);
+    assert.match(page.host.textContent, /<img src=/);
+    assert.equal(page.host.querySelectorAll('img,script,iframe').length, 0);
+    assert.equal(window.pwned, undefined);
+    await act(async () => page.host.querySelectorAll('[role="tab"]')[1].click());
+    assert.deepEqual([...page.host.querySelectorAll('tbody td')].map(cell => cell.textContent), ['0', 'false']);
+    assert.doesNotMatch(page.host.textContent, /files.formatUnsupported|files.formulaSaved/);
+    assert.equal(page.host.querySelector('details'), null);
+  } finally { await page.close(); }
+});
+
+test('typing or streaming around an unchanged worksheet does not walk its cells again', async () => {
+  let reads = 0, requests = 0;
+  const rows = Array.from({ length: 200 }, (_, index) => {
+    const row = [String(index), '123.45'];
+    Object.defineProperty(row, '0', { get() { reads++; return String(index); } });
+    return row;
+  });
+  globalThis.fetch = async () => { requests++; return { ok: true, json: async () => ({ kind: 'spreadsheet', truncated: false,
+    sheets: [{ name: 'Quote', rows, row_numbers: rows.map((_, index) => index + 1), truncated: false }] }) }; };
+  const page = await fixture();
+  try {
+    await page.render({ file });
+    assert.equal(page.host.querySelectorAll('tbody tr').length, 200);
+    const initial = reads;
+    assert.ok(initial >= 200);
+    for (let index = 0; index < 20; index++) await page.render({ file: { ...file } });
+    assert.equal(requests, 1);
+    assert.equal(reads, initial);
+  } finally { await page.close(); }
+});
