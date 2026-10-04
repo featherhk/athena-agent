@@ -252,5 +252,12 @@
   "continuity.unavailable": "État des tâches indisponible",
   "continuity.more": "Afficher plus de tâches",
   "continuity.history": "Voir les autres conversations dans l’historique",
-  "continuity.clear": "Tout a été consulté."
+  "continuity.clear": "Tout a été consulté.",
+  "voice.recoveryTitle": "Texte reconnu",
+  "voice.notSent": "Ce message vocal n’a pas été envoyé. Le texte est conservé ici pour que vous puissiez le copier.",
+  "voice.deliveryUnknown": "Impossible de confirmer la réception. Vérifiez cette conversation avant de renvoyer ce texte.",
+  "voice.copy": "Copier le texte",
+  "voice.copied": "Copié",
+  "voice.copyFailed": "La copie a échoué. Sélectionnez le texte ci-dessus et copiez-le manuellement.",
+  "voice.dismiss": "Fermer"
 }

@@ -252,5 +252,12 @@
   "continuity.unavailable": "تحديثات المهام غير متاحة",
   "continuity.more": "عرض المزيد من المهام",
   "continuity.history": "عرض المحادثات الأخرى في السجل",
-  "continuity.clear": "اطلعت على جميع التحديثات."
+  "continuity.clear": "اطلعت على جميع التحديثات.",
+  "voice.recoveryTitle": "النص المتعرّف عليه",
+  "voice.notSent": "لم تُرسل هذه الرسالة الصوتية. احتُفظ بالنص هنا لتتمكن من نسخه.",
+  "voice.deliveryUnknown": "تعذّر تأكيد التسليم. راجع هذه المحادثة قبل إرسال هذا النص مرة أخرى.",
+  "voice.copy": "نسخ النص",
+  "voice.copied": "تم النسخ",
+  "voice.copyFailed": "تعذّر النسخ. حدّد النص أعلاه وانسخه يدويًا.",
+  "voice.dismiss": "إغلاق"
 }

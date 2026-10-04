@@ -202,8 +202,11 @@ class ToolRunner:
         if op == "registry":
             return await self.registry.operate(args, session_id)
         if op == "app":
-            from .app_controls import app_operation
-            return await app_operation(self.store, session_id, run_id, args, self.config)
+            from .app_controls import app_operation, wait_app_action_receipt
+            result = await app_operation(self.store, session_id, run_id, args, self.config)
+            if result.get("status") == "requested" and isinstance(result.get("request"), dict):
+                return await wait_app_action_receipt(self.store, session_id, user, run_id, result["request"])
+            return result
         if op == "activity":
             from .activity import activity_operation
             return await activity_operation(self.store, session_id, args, run_id, self.stop_session)

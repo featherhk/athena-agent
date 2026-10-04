@@ -36,7 +36,7 @@
 
 例如读取 `app snapshot, client_id` 得 revision 7 后，调用 `app open, target:history, client_id, expected_revision:7`。前台页面在执行前已变化会返回 frontend_conflict；重新观察后决定下一步，不盲目重复。旧版客户端没有上报状态时诚实返回不可观察，需要客户端升级。
 
-UI 操作返回 `status: requested, completed: false` 和 `request.id`，仅表示请求已持久化。用 app `action: read, id` 查回报：pending 是等待页面，dispatched 是某个页面已领取、结果尚未知，applied 是页面确认执行并提交匹配语义观察，failed/dismissed 是失败或取消。不要把发送请求说成已经切换、已经下载完成或已经修改密码。
+UI 操作持久化后会在同一次工具调用内等待回执，最多5秒。返回 applied / failed / dismissed 时已有结果，无需重复查询；只有 applied 的 completed 为 true。超时返回 `wait_timed_out: true`：pending 表示最后观察到仍在等待页面，dispatched 表示页面已领取、结果未知且可能已执行。超时不是失败，动作仍可能稍后完成；不要重发动作、调用 exec sleep 或紧密轮询。需要后续核实时，用 app `action: read, id: request.id`。依赖前一步成功的动作应等 applied 后进行；不要把发送请求说成已经切换、已经下载完成或已经修改密码。stop/reset 是引擎控制，不等待浏览器回执。
 
 回执 receipt 中 observed_revision 对应核验的观察。preview 的 applied 只说明指定预览面板已打开，file_ready 单独说明内容是否加载完成，加载失败可能仍有可见面板；需要时再 snapshot 查 ready/failed。download 的回执仅为 download_requested，不能声称文件已保存到用户设备。
 

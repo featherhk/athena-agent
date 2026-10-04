@@ -252,5 +252,12 @@
   "continuity.unavailable": "Estado de las tareas no disponible",
   "continuity.more": "Mostrar más tareas",
   "continuity.history": "Ver otras conversaciones en el historial",
-  "continuity.clear": "Ya has visto todas las novedades."
+  "continuity.clear": "Ya has visto todas las novedades.",
+  "voice.recoveryTitle": "Texto reconocido",
+  "voice.notSent": "Este mensaje de voz no se ha enviado. El texto se conserva aquí para que puedas copiarlo.",
+  "voice.deliveryUnknown": "No se pudo confirmar la entrega. Revisa esta conversación antes de volver a enviar este texto.",
+  "voice.copy": "Copiar texto",
+  "voice.copied": "Copiado",
+  "voice.copyFailed": "No se pudo copiar. Selecciona el texto de arriba y cópialo manualmente.",
+  "voice.dismiss": "Cerrar"
 }

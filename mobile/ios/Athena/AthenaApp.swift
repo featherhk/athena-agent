@@ -261,6 +261,16 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
 
     func presentDownloads() {
         let ready = isViewLoaded && view.window?.windowScene?.activationState == .foregroundActive && presentedViewController == nil
+        if downloadQueue.beginFailure(canPresent: ready) {
+            let alert = UIAlertController(title: tr("download_failed"), message: tr("download_detail"), preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: tr("close"), style: .default) { [weak self, weak alert] _ in
+                guard let self else { return }
+                self.downloadQueue.finishFailure()
+                self.finishPresentation(alert)
+            })
+            present(alert, animated: true)
+            return
+        }
         let urls = downloadQueue.begin(canPresent: ready)
         guard !urls.isEmpty else { return }
         let sheet = UIActivityViewController(activityItems: urls, applicationActivities: nil)
@@ -275,11 +285,7 @@ final class AthenaController: UIViewController, WKNavigationDelegate, WKUIDelega
     }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         if let url = destinations.removeValue(forKey: ObjectIdentifier(download)) { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        guard presentedViewController == nil else { return }
-        let alert = UIAlertController(title: tr("download_failed"), message: tr("download_detail"), preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: tr("close"), style: .default) { [weak self, weak alert] _ in
-            self?.finishPresentation(alert)
-        })
-        present(alert, animated: true)
+        downloadQueue.failed()
+        presentDownloads()
     }
 }

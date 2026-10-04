@@ -159,6 +159,9 @@ async def test_native_service_environment_and_launch_flags_are_host_owned(config
     driver.chrome = Path('/Applications/Fixture Chrome.app/Contents/MacOS/Fixture Chrome')
     monkeypatch.setattr(driver, 'available', lambda: True)
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'fixture-key-must-not-leak')
+    for operation in ('STT', 'TTS'):
+        monkeypatch.setenv('ATHENA_AUDIO_' + operation + '_API_KEY', 'fixture-key-must-not-leak')
+        monkeypatch.setenv('ATHENA_AUDIO_' + operation + '_API_KEY_FILE', '/private/fixture-key-file')
     monkeypatch.setenv('AGENT_BROWSER_PROFILE', '/personal/profile')
     monkeypatch.setenv('AGENT_BROWSER_CDP', 'http://untrusted.invalid')
     captured = []

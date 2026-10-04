@@ -72,6 +72,12 @@ use the corresponding workspace and region URLs rather than mixing region keys.
 For compatible providers, set `ATHENA_AUDIO_PROVIDER=openai`, an HTTPS
 `ATHENA_AUDIO_BASE_URL` ending in the API prefix, the key file, and explicit
 `ATHENA_AUDIO_STT_MODEL`, `ATHENA_AUDIO_TTS_MODEL`, `ATHENA_AUDIO_VOICE` values.
+Recognition and synthesis may now use independent provider, base URL and key
+profiles; see [the per-operation configuration](cloud-deployment.md#independent-recognition-and-synthesis-profiles).
+Changing provider or origin does not implicitly send the shared key there. Both
+operations must be configured before the call becomes available. Mixed-provider
+local testing is supported; hosted mixed-provider billing remains disabled until
+its pricing adapter is implemented and verified.
 Defaults are `gpt-4o-mini-transcribe`, `gpt-4o-mini-tts`, and `coral`; this is a
 protocol default, not an assumption that the account can use those models.
 As checked on 2026-10-04, OpenAI has announced retirement of these transcription
@@ -197,16 +203,18 @@ solely from its hourly headline price.
 
 ### Required implementation and acceptance
 
-The present code still has one shared audio provider/key, an RMS-only detector,
-whole-utterance uploads, and buffered synthesis at both gateway and client.
+The present code has independent recognition/synthesis profiles but still uses an
+RMS-only detector, whole-utterance uploads, and buffered synthesis at both gateway
+and client.
 `httpx.stream` alone does not make playback streaming: the browser currently
 waits for a complete response before decoding it. The realtime model names above
 must not be inserted into the existing HTTP configuration and advertised as done.
 
 Implement and verify in this order:
 
-1. Give recognition and synthesis independent operator profiles, capabilities and
-   tariffs. Validate language/voice compatibility before acquiring the microphone.
+1. Independent operator profiles are implemented. Extend capability/voice
+   validation and hosted tariff adapters for each newly selected protocol before
+   acquiring the microphone; configuration alone does not prove model access.
 2. Add PCM speech-detector and turn-detector interfaces. Preserve preroll, bounded
    capture and device cleanup. Pin local assets; fail visibly or use the documented
    fallback if loading fails. Measure false interruptions, not just speed.
@@ -217,9 +225,15 @@ Implement and verify in this order:
    for suspected speech and confirm a new user turn before interrupting execution;
    the explicit Stop control remains immediate. Track which response audio was
    actually played so future context need not assume the user heard its tail.
-5. Preserve a recognized utterance when submission fails, scoped to its owner and
-   session. Distinguish definitely-unsent input from an unknown server outcome;
-   neither may cause an automatic duplicate action.
+5. Recognized text now survives failed submission in owner/session-scoped client
+   memory, separately from typed drafts. Before dispatch it is marked not sent;
+   after dispatch without a valid acceptance receipt it is unknown. Only copy and
+   dismiss are offered, with no automatic resend. Switching conversations hides
+   another conversation's text and transient errors; returning restores the text.
+   Logout, Reset, component unmount and page reload clear this temporary recovery.
+   Late responses cannot restore text into a newly authenticated account. An
+   accepted message is not marked unsent due to a later local error. Durable
+   cross-reload recovery and an idempotent message-admission protocol remain work.
 6. Record content-free latency and billed-unit metrics. Measure speech end to
    first audible response, local interruption delay, false cutoff rate and cost
    per call. Initial targets are p95 interruption within 250 ms and first response
@@ -242,3 +256,37 @@ reports the GIL disabled after imports. New synthetic-audio regressions cover
 quiet interruption while synthesis is pending, suppression of weak playback
 echo, natural completion, cancelled late audio and hang-up. This fix is source
 validation; it neither enables a cloud audio provider nor certifies a real call.
+
+### Live low-cost provider probe (2026-10-04)
+
+An operator-provided key completed one `qwen3-tts-flash` synthesis and three
+`qwen3-asr-flash` recognitions through the Beijing DashScope endpoints. Only the
+synthetic sentence “你好，我是雅典娜。我们来测试一次语音通话。” was sent; no real microphone
+or private conversation was used. The same generated PCM was repeated for the
+longer recognition samples. These are completed HTTP requests, not a live call.
+
+| Operation | Actual input / output | Provider-reported billing units | Full-response elapsed | Units × published CNY rate |
+| --- | --- | --- | --- | --- |
+| TTS | 21 input code points → 4.56 s audio | 39 characters | 2.393 s | 0.00312 |
+| ASR | 4.56 s uploaded | 4 seconds | 0.724 s | 0.00088 |
+| ASR | 13.68 s uploaded | 13 seconds | 0.726 s | 0.00286 |
+| ASR | 22.80 s uploaded | 22 seconds | 0.952 s | 0.00484 |
+
+Total: **CNY 0.01170**, using CNY 0.8 / 10,000 billing characters and CNY
+0.00022 / billed second from the official price table. This is the observed API
+usage priced at the published tariff, **not a verified invoice debit**. The
+console still showed billing in progress with no detailed rows when checked;
+free quota, settlement delay and displayed rounding must not be inferred as a
+zero-cost service. The provider's integer `usage.seconds` differs from uploaded
+WAV duration here; the ledger uses reported units without inventing a rounding
+rule. All three transcripts preserved the intended words, with punctuation
+changes. These few clean synthetic samples do not measure noisy speech accuracy
+or p95 latency. The text agent's latency and cost are excluded.
+
+The probe exposed a real format issue: a fully downloaded TTS WAV retained a
+streaming placeholder length. The adapter now normalizes the observed paired
+sentinel after validating bounded PCM and a complete HTTP response; only the two
+length fields change. Finite-length truncation, incomplete frames and unknown
+headers fail. This cannot establish that the upstream finished its intended
+utterance when it supplied no final expected length. Test audio, keys, request
+records and receipts remain outside the checkout.

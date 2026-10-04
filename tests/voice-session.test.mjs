@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { VoiceSession } from '../src/voice-session.ts';
+import { VoiceSubmissionError } from '../src/voice-recovery.ts';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function browser() {
@@ -190,4 +191,51 @@ test('native background ends microphone acquisition without cancelling server wo
     window.dispatchEvent(new Event('athena:background'));
     assert.equal(states.length,count,'the ended call detached its native lifecycle listener');
   } finally {call.end();env.restore();}
+});
+
+test('recognized words survive both definitely-unsent and unknown submission failures without retry', async () => {
+  for (const failure of [new VoiceSubmissionError('not_sent'), new Error('response lost')]) {
+    const env = browser(), recovered = [], transcripts = [], states = []; let attempts = 0, call;
+    globalThis.fetch = async url => url === '/api/voice' ? Response.json({ available: true }) : Response.json({ text: 'Keep these recognized words' });
+    try {
+      call = new VoiceSession('sid', 'en', { state: value => states.push(value), error() {}, transcript: value => transcripts.push(value),
+        recover: (text, delivery) => recovered.push({ text, delivery }), submit: async () => { attempts++; throw failure; }, interrupt: async () => {} });
+      await call.start([]); env.samples(.2, 4); env.samples(0, 8); await tick(); await tick();
+      assert.deepEqual(transcripts, ['Keep these recognized words']);
+      assert.deepEqual(recovered, [{ text: 'Keep these recognized words', delivery: failure instanceof VoiceSubmissionError ? 'not_sent' : 'unknown' }]);
+      assert.equal(states.at(-1), 'ended'); assert.equal(attempts, 1);
+      env.samples(.2, 4); env.samples(0, 8); await tick();
+      assert.equal(attempts, 1, 'the failed call never replays a possibly accepted action');
+    } finally { call?.end(); env.restore(); }
+  }
+});
+
+test('recognized words survive a failed stop request before submission begins', async () => {
+  const env = browser(), recovered = [], transcripts = []; let rejectStop, attempts = 0, call;
+  globalThis.fetch = async url => url === '/api/voice' ? Response.json({ available: true }) : Response.json({ text: 'Please change the destination' });
+  try {
+    call = new VoiceSession('sid', 'en', { state() {}, error() {}, transcript: value => transcripts.push(value),
+      recover: (text, delivery) => recovered.push({ text, delivery }), submit: async () => { attempts++; },
+      interrupt: () => new Promise((_resolve, reject) => { rejectStop = reject; }) });
+    await call.start([]); call.update([], true);
+    env.samples(.2, 4); env.samples(0, 8); await tick(); await tick();
+    assert.deepEqual(transcripts, ['Please change the destination']); assert.equal(attempts, 0);
+    rejectStop(new Error('offline')); await tick(); await tick();
+    assert.deepEqual(recovered, [{ text: 'Please change the destination', delivery: 'not_sent' }]);
+    assert.equal(attempts, 0); assert.equal(env.tracks[0].stopped, true);
+  } finally { call?.end(); env.restore(); }
+});
+
+test('a lost submission response after hangup retains unknown delivery, while a receipt retains nothing', async () => {
+  for (const successful of [false, true]) {
+    const env = browser(), recovered = []; let finish, call;
+    globalThis.fetch = async url => url === '/api/voice' ? Response.json({ available: true }) : Response.json({ text: 'A message already being sent' });
+    try {
+      call = new VoiceSession('sid', 'en', { state() {}, error() {}, transcript() {}, recover: (text, delivery) => recovered.push({ text, delivery }),
+        submit: () => new Promise((resolve, reject) => { finish = () => successful ? resolve() : reject(new Error('response lost')); }), interrupt: async () => {} });
+      await call.start([]); env.samples(.2, 4); env.samples(0, 8); await tick(); await tick();
+      call.end(); finish(); await tick(); await tick();
+      assert.deepEqual(recovered, successful ? [] : [{ text: 'A message already being sent', delivery: 'unknown' }]);
+    } finally { call?.end(); env.restore(); }
+  }
 });

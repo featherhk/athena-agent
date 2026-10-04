@@ -9,6 +9,7 @@ import ComponentControls from './ComponentControls';
 import { parseFormDraft, type FormDraft } from './component-forms';
 import CanvasActions from './CanvasActions';
 import { parseSurfaceRegions, visibleSurfaceRegions, type SurfaceRegion, type SurfaceAction } from './surface-interactions';
+import { parseTextTargets, type TextAnchorTarget } from './text-anchors';
 import './widgets.css';
 
 type Health = { state: 'mounted' | 'failed'; has_content: boolean; error_code: string | null };
@@ -86,6 +87,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     let health: Health | null = null, inView = false, lastReport = '', disposed = false;
     let observing = false, layoutFrame = 0, styleFrame = 0, interactionFrame = 0, lastLayout = '', lastTheme = '';
     let pendingRegions: SurfaceRegion[] = [];
+    let textTargets: TextAnchorTarget[] = [];
     const pendingStyles = new Map<string, TextStyleEffect>();
     let clearStyles = false;
     const componentKey = `${component.id}:${component.version}`;
@@ -103,7 +105,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     const sendLayout = () => {
       layoutFrame = 0;
       if (!observing || disposed || !app || !frame.current) return;
-      const layout = measureSurface(app, frame.current, layoutMeta.current.locale, layoutMeta.current.reduced, sendTheme());
+      const layout = measureSurface(app, frame.current, layoutMeta.current.locale, layoutMeta.current.reduced, sendTheme(), textTargets);
       const signature = JSON.stringify(layout);
       if (signature === lastLayout) return;
       lastLayout = signature;
@@ -138,6 +140,10 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       if (event.data.type === 'athena:navigate' && typeof event.data.session_id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(event.data.session_id) && navigator.userActivation?.isActive !== false) navigateRef.current?.(event.data.session_id);
       if (event.data.type === 'athena:observe') { observing = true; lastLayout = ''; scheduleLayout(); }
       if (event.data.type === 'athena:unobserve') observing = false;
+      if (event.data.type === 'athena:track') {
+        const targets = parseTextTargets(event.data.targets);
+        if (targets && JSON.stringify(targets) !== JSON.stringify(textTargets)) { textTargets = targets; scheduleLayout(); }
+      }
       if (event.data.type === 'athena:interactions') {
         const regions = parseSurfaceRegions(event.data.regions);
         if (regions) {
@@ -183,12 +189,21 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
     });
     if (app) sizeObserver.observe(app);
     if (frame.current) sizeObserver.observe(frame.current);
-    const changeObserver = new MutationObserver(scheduleLayout);
-    if (app) changeObserver.observe(app, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'data-message-id', 'data-message-role', 'data-phase'] });
+    const watched = new Set<Element>();
+    const watchContent = () => {
+      const next = new Set(app?.querySelectorAll('.agent-presence,.scroll-area,.composer-area,[data-message-text]') || []);
+      for (const element of watched) if (!next.has(element)) { sizeObserver.unobserve(element); watched.delete(element); }
+      for (const element of next) if (!watched.has(element)) { sizeObserver.observe(element); watched.add(element); }
+    };
+    watchContent();
+    const changeObserver = new MutationObserver(() => { watchContent(); scheduleLayout(); });
+    if (app) changeObserver.observe(app, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'open', 'hidden', 'inert', 'data-message-id', 'data-message-role', 'data-phase'] });
     const themeObserver = new MutationObserver(() => { sendTheme(); scheduleLayout(); });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-palette', 'data-font'] });
     window.addEventListener('scroll', scheduleLayout, true);
     window.addEventListener('resize', scheduleLayout);
+    window.visualViewport?.addEventListener('resize', scheduleLayout);
+    window.visualViewport?.addEventListener('scroll', scheduleLayout);
     app?.addEventListener('load', scheduleLayout, true);
     document.fonts?.addEventListener('loadingdone', scheduleLayout);
     document.addEventListener('visibilitychange', report);
@@ -200,6 +215,7 @@ export default function Widget({ component, sessionId, submit, onStyleText, onNa
       cancelAnimationFrame(layoutFrame); cancelAnimationFrame(styleFrame); cancelAnimationFrame(interactionFrame);
       sizeObserver.disconnect(); changeObserver.disconnect(); themeObserver.disconnect();
       window.removeEventListener('scroll', scheduleLayout, true); window.removeEventListener('resize', scheduleLayout);
+      window.visualViewport?.removeEventListener('resize', scheduleLayout); window.visualViewport?.removeEventListener('scroll', scheduleLayout);
       app?.removeEventListener('load', scheduleLayout, true); document.fonts?.removeEventListener('loadingdone', scheduleLayout);
       refreshLayout.current = () => {};
       styleRef.current?.(componentKey, null);

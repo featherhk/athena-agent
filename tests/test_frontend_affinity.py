@@ -343,6 +343,8 @@ async def test_api_binds_current_cookie_and_keeps_private_provenance_out_of_snap
 
 
 async def test_engine_executes_default_ui_action_on_message_source_without_prompt_credentials(engine, store, monkeypatch):
+    # This fixture has no consuming browser; exercise the bounded pending result.
+    monkeypatch.setattr('athena.app_controls.RECEIPT_WAIT_SECONDS', .02)
     owner, session, token = await setup(store)
     await observe_client(store, owner, session, token, 'window-two', revision=2, has_unsent_changes=True)
     payloads = []

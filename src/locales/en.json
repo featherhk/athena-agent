@@ -252,5 +252,12 @@
   "continuity.unavailable": "Task updates are unavailable",
   "continuity.more": "Show more tasks",
   "continuity.history": "See other conversations in history",
-  "continuity.clear": "You are all caught up."
+  "continuity.clear": "You are all caught up.",
+  "voice.recoveryTitle": "Recognized speech",
+  "voice.notSent": "This spoken message was not sent. Your words are kept here so you can copy them.",
+  "voice.deliveryUnknown": "Delivery could not be confirmed. Check this conversation before sending these words again.",
+  "voice.copy": "Copy text",
+  "voice.copied": "Copied",
+  "voice.copyFailed": "Copy failed. Select the text above and copy it manually.",
+  "voice.dismiss": "Dismiss"
 }

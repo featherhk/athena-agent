@@ -8,8 +8,8 @@ import { remarkReadableAutolinks } from './markdown-autolinks';
 
 const ownedImage = /^\/api\/files\/[a-zA-Z0-9_-]+\/content$/;
 
-export function MarkdownContent({ content, effect }: { content: string; effect?: TextStyleEffect }) {
-  return <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm, remarkReadableAutolinks]} rehypePlugins={[textEffectPlugin(effect)]} components={{
+export function MarkdownContent({ content, effect, messageText = false }: { content: string; effect?: TextStyleEffect; messageText?: boolean }) {
+  return <div className="markdown-body" data-message-text={messageText ? '' : undefined}><Markdown remarkPlugins={[remarkGfm, remarkReadableAutolinks]} rehypePlugins={[textEffectPlugin(effect)]} components={{
     a: ({ href, children, title }) => <a href={href} title={title} target={href?.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>,
     img: ({ src, alt }) => typeof src === 'string' && ownedImage.test(src)
       ? <img src={src} alt={alt || ''} loading="lazy" />
@@ -25,6 +25,6 @@ export function MessageBody({ content, reasoning, streaming = false, effect }: {
       <summary>{t(streaming ? 'message.reasoningStreaming' : 'message.reasoning')}</summary>
       <MarkdownContent content={reasoning} />
     </details>}
-    {content && <MarkdownContent content={content} effect={effect} />}
+    {content && <MarkdownContent content={content} effect={effect} messageText />}
   </div>;
 }

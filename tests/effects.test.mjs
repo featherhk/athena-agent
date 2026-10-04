@@ -31,7 +31,7 @@ test('layout exports only visible message geometry in iframe coordinates', () =>
   ], querySelector: () => null, getAttribute: () => 'thinking' };
   const frame = { clientWidth: 400, clientHeight: 600, getBoundingClientRect: () => ({ left: 50, right: 250, top: 80, bottom: 380, width: 200, height: 300 }) };
   assert.deepEqual(measureSurface(app, frame, 'en', true), {
-    viewport: { width: 400, height: 600 }, reduced_motion: true, locale: 'en', anchors: {}, phase: 'thinking',
+    viewport: { width: 400, height: 600 }, reduced_motion: true, locale: 'en', anchors: {}, phase: 'thinking', text_targets: [],
     messages: [{ id: 'visible', role: 'assistant', rect: { x: 20, y: 40, width: 200, height: 80 } }],
   });
 });
@@ -60,6 +60,18 @@ test('sandbox bridge receives layout only from its host and cleans up subscripti
   assert.equal(observed.length, 0);
   handlers.get('message')({ source: parent, data: { type: 'athena:layout', instance: 'instance-one', layout } });
   assert.deepEqual(observed, [layout]);
+  const target = { id: 'deadline', message_id: 'reply', quote: 'before Friday' };
+  context.Athena.track([target]);
+  assert.equal(sent.at(-1).type, 'athena:track');
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).targets)), [target]);
+  const trackedCount = sent.length;
+  context.Athena.track([target]);
+  assert.equal(sent.length, trackedCount, 'unchanged tracking cannot cause a layout loop');
+  target.quote = 'a later edit';
+  handlers.get('message')({ source: parent, data: { type: 'athena:inspect', instance: 'instance-one' } });
+  assert.equal(sent.findLast(item => item.type === 'athena:track').targets[0].quote, 'before Friday', 'host resubscription uses the saved target');
+  context.Athena.track(null);
+  assert.equal(sent.at(-1).targets.length, 0);
   context.Athena.styleText(null);
   assert.equal(sent.at(-1).type, 'athena:style-text');
   assert.equal(sent.at(-1).effect, null);

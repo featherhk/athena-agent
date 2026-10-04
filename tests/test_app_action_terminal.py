@@ -6,7 +6,7 @@ import json
 import pytest
 
 from athena.app_controls import (acknowledge_app_action, app_operation, cancel_app_actions,
-                                 claim_app_action)
+                                 claim_app_action, initialize_app_controls)
 from athena.auth import Auth, token_hash
 from athena.errors import UserError
 from frontend_fixtures import observe_client
@@ -63,7 +63,15 @@ def tool(identifier, target):
             'arguments': json.dumps({'op': 'app', 'args': {'action': 'open', 'target': target}})}}
 
 
-async def test_step_limit_durably_dismisses_only_its_unclaimed_ui_actions(engine, store, monkeypatch):
+@pytest.fixture
+def short_terminal_receipt_wait(monkeypatch):
+    # Exercise the real bounded wait without making a no-browser test consume
+    # the production five seconds per action. The actor must finish by itself.
+    monkeypatch.setattr('athena.app_controls.RECEIPT_WAIT_SECONDS', .1)
+    monkeypatch.setattr('athena.app_controls.RECEIPT_POLL_SECONDS', .005)
+
+
+async def test_step_limit_durably_dismisses_only_its_unclaimed_ui_actions(engine, store, monkeypatch, short_terminal_receipt_wait):
     _, session, _ = await account(store)
     other_run = await store.enqueue(session, 'Previously completed task')
     assert await store.claim(session) == other_run
@@ -83,9 +91,14 @@ async def test_step_limit_durably_dismisses_only_its_unclaimed_ui_actions(engine
     assert action['resolved_at'] and action['dispatched_at'] is None
     assert json.loads(action['receipt']) == {'effect': 'not_dispatched', 'may_have_applied': False}
     assert (await store.rows('SELECT status FROM app_actions WHERE id=?', (other['id'],)))[0]['status'] == 'pending'
+    tools = await store.rows('SELECT content FROM messages WHERE run_id=? AND tool_call_id=?', (run, 'show-files'))
+    assert len(tools) == 1
+    receipt = json.loads(tools[0]['content'])
+    assert receipt['wait_timed_out'] and not receipt['completed'] and receipt['status'] == 'pending'
+    assert not any(not task.done() for task in engine.active_runs.values())
 
 
-async def test_failed_run_retains_unknown_dispatched_effect_until_real_ack(engine, store, monkeypatch):
+async def test_failed_run_retains_unknown_dispatched_effect_until_real_ack(engine, store, monkeypatch, short_terminal_receipt_wait):
     user, session, token = await account(store)
     calls, sent = 0, None
 
@@ -95,13 +108,31 @@ async def test_failed_run_retains_unknown_dispatched_effect_until_real_ack(engin
         if calls == 1:
             return {'message': {'role': 'assistant', 'content': '', 'reasoning_content': '',
                                 'tool_calls': [tool('sent', 'history'), tool('not-sent', 'files')]}, 'usage': {}}
-        sent = (await store.rows("SELECT id FROM app_actions WHERE action='open' ORDER BY rowid"))[0]['id']
-        assert (await claim_app_action(store, session, user, sent, 'browser-one', token_hash(token)))['accepted']
+        assert sent is not None, 'the client must dispatch while the tool is still waiting'
         raise UserError('provider_unavailable', 'Synthetic provider failure')
+
+    async def browser_dispatch():
+        nonlocal sent
+        await initialize_app_controls(store)
+        while True:
+            rows = await store.rows('SELECT id FROM app_actions WHERE session_id=? ORDER BY rowid', (session,))
+            if rows:
+                sent = rows[0]['id']
+                assert calls == 1
+                assert (await claim_app_action(store, session, user, sent, 'browser-one', token_hash(token)))['accepted']
+                return
+            await asyncio.sleep(.005)
+
     monkeypatch.setattr('athena.engine.complete', provider)
     run = await engine.submit(session, 'Open history and files')
-    await asyncio.wait_for(asyncio.gather(*engine.actors.values()), 5)
-    assert (await store.rows('SELECT status FROM runs WHERE id=?', (run,)))[0]['status'] == 'failed'
+    await asyncio.wait_for(asyncio.gather(*engine.actors.values(), browser_dispatch()), 5)
+    assert (await store.rows('SELECT status,error_code FROM runs WHERE id=?', (run,)))[0] == {'status': 'failed', 'error_code': 'provider_unavailable'}
+    assert calls == 2 and not any(not task.done() for task in engine.active_runs.values())
+    tools = await store.rows("SELECT tool_call_id,content FROM messages WHERE run_id=? AND role='tool' ORDER BY rowid", (run,))
+    assert [item['tool_call_id'] for item in tools] == ['sent', 'not-sent']
+    receipts = [json.loads(item['content']) for item in tools]
+    assert [item['status'] for item in receipts] == ['dispatched', 'pending']
+    assert all(item['wait_timed_out'] and not item['completed'] for item in receipts)
     rows = await store.rows('SELECT id,status,receipt FROM app_actions WHERE run_id=? ORDER BY rowid', (run,))
     assert rows[0] == {'id': sent, 'status': 'dispatched', 'receipt': None}
     assert rows[1]['status'] == 'dismissed'

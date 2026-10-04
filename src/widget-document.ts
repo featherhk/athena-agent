@@ -9,7 +9,7 @@ export function widgetDocument(source: string, locale: string, instance: string,
     let failure = null, previous = '', scheduled = false, layout = null;
     let theme = {tokens:{'--ink':${JSON.stringify(color)},'--surface':${JSON.stringify(background)}},font_family:'system-ui',scheme:${JSON.stringify(scheme)}};
     const observers = new Set();
-    let regions = [], interact = null;
+    let regions = [], interact = null, targets = [];
     const send = data => parent.postMessage({...data, instance}, '*');
     const fields = () => [...document.querySelectorAll('input,textarea,select')].slice(0,128);
     const retainable = field => !['password','file','hidden','button','submit','reset','image'].includes(field.type) && !/password|one-time-code|cc-/.test(field.autocomplete || '');
@@ -66,6 +66,13 @@ export function widgetDocument(source: string, locale: string, instance: string,
         return () => { observers.delete(callback); if (!observers.size) send({type:'athena:unobserve'}); };
       },
       styleText: effect => send({type:'athena:style-text', effect}),
+      track: next => {
+        if (next !== null && (!Array.isArray(next) || next.length > 32)) throw new TypeError('track requires at most 32 text targets');
+        const copy = JSON.parse(JSON.stringify(next || []));
+        if (JSON.stringify(copy) === JSON.stringify(targets)) return;
+        targets = copy;
+        send({type:'athena:track', targets});
+      },
       interact: (next, callback) => {
         if (next !== null && (!Array.isArray(next) || next.length > 64)) throw new TypeError('interact requires at most 64 regions');
         if (callback !== undefined && typeof callback !== 'function') throw new TypeError('interact callback must be a function');
@@ -98,6 +105,7 @@ export function widgetDocument(source: string, locale: string, instance: string,
       if (event.data.type === 'athena:inspect') {
         inspect(true);
         if (observers.size) send({type:'athena:observe'});
+        send({type:'athena:track', targets});
         send({type:'athena:interactions', regions});
       }
       if (event.data.type === 'athena:interaction' && interact && regions.some(region => region.id === event.data.action?.id)) {

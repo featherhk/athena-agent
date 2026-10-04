@@ -252,5 +252,12 @@
   "continuity.unavailable": "依頼の状況を更新できません",
   "continuity.more": "さらに表示",
   "continuity.history": "履歴でほかの会話を見る",
-  "continuity.clear": "すべて確認済みです。"
+  "continuity.clear": "すべて確認済みです。",
+  "voice.recoveryTitle": "認識されたテキスト",
+  "voice.notSent": "この音声メッセージは送信されていません。認識されたテキストをここからコピーできます。",
+  "voice.deliveryUnknown": "届いたかどうか確認できませんでした。再送する前に、この会話を確認してください。",
+  "voice.copy": "テキストをコピー",
+  "voice.copied": "コピーしました",
+  "voice.copyFailed": "コピーできませんでした。上のテキストを選択して手動でコピーしてください。",
+  "voice.dismiss": "閉じる"
 }

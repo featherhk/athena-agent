@@ -1,4 +1,5 @@
 /** Host-owned styling contract. Components never receive parent DOM access. */
+import { measureTextTargets, type TextAnchor, type TextAnchorTarget } from './text-anchors.ts';
 export type TextStyle = {
   color?: string; fontFamily?: string; fontSize?: number; fontWeight?: number | 'normal' | 'bold';
   fontStyle?: 'normal' | 'italic' | 'oblique'; textDecoration?: 'none' | 'underline' | 'line-through';
@@ -12,6 +13,7 @@ export type SurfaceLayout = {
   anchors: Partial<Record<'presence' | 'conversation' | 'workspace' | 'composer' | 'controls', { x: number; y: number; width: number; height: number }>>;
   phase: string;
   reduced_motion: boolean; locale: string; theme?: SurfaceTheme;
+  text_targets: TextAnchor[];
 };
 const numberIn = (value: unknown, min: number, max: number): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
@@ -68,7 +70,7 @@ export function readSurfaceTheme(app: Element): SurfaceTheme {
   return { tokens, font_family: style.fontFamily, scheme: style.colorScheme === 'dark' ? 'dark' : 'light' };
 }
 
-export function measureSurface(app: Element, frame: HTMLIFrameElement, locale: string, reduced: boolean, theme?: SurfaceTheme): SurfaceLayout {
+export function measureSurface(app: Element, frame: HTMLIFrameElement, locale: string, reduced: boolean, theme?: SurfaceTheme, targets: TextAnchorTarget[] = []): SurfaceLayout {
   const bounds = frame.getBoundingClientRect();
   const width = frame.clientWidth, height = frame.clientHeight;
   const scaleX = bounds.width ? width / bounds.width : 1, scaleY = bounds.height ? height / bounds.height : 1;
@@ -79,8 +81,11 @@ export function measureSurface(app: Element, frame: HTMLIFrameElement, locale: s
     const id = element.dataset.messageId, role = element.dataset.messageRole;
     if (!id || (role !== 'user' && role !== 'assistant')) continue;
     const rect = element.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= bounds.top || rect.top >= bounds.bottom || rect.right <= bounds.left || rect.left >= bounds.right) continue;
-    messages.push({ id, role, rect: relative(rect) });
+    const scroll = element.closest?.('.scroll-area')?.getBoundingClientRect();
+    const left = Math.max(rect.left, bounds.left, scroll?.left ?? -Infinity), top = Math.max(rect.top, bounds.top, scroll?.top ?? -Infinity);
+    const right = Math.min(rect.right, bounds.right, scroll?.right ?? Infinity), bottom = Math.min(rect.bottom, bounds.bottom, scroll?.bottom ?? Infinity);
+    if (right <= left || bottom <= top) continue;
+    messages.push({ id, role, rect: relative({ left, top, width: right - left, height: bottom - top } as DOMRect) });
     if (messages.length === 128) break;
   }
   const anchors: SurfaceLayout['anchors'] = {};
@@ -89,5 +94,5 @@ export function measureSurface(app: Element, frame: HTMLIFrameElement, locale: s
     const rect = app.querySelector(selectors[key])?.getBoundingClientRect();
     if (rect?.width && rect.height) anchors[key] = relative(rect);
   }
-  return { viewport: { width, height }, messages, anchors, phase: app.getAttribute('data-phase') || 'idle', reduced_motion: reduced, locale, ...(theme ? { theme } : {}) };
+  return { viewport: { width, height }, messages, anchors, phase: app.getAttribute('data-phase') || 'idle', reduced_motion: reduced, locale, text_targets: targets.length ? measureTextTargets(app, frame, targets) : [], ...(theme ? { theme } : {}) };
 }

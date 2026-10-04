@@ -22,6 +22,8 @@ Answering a help request resumes the original run and retains its original sourc
 
 The client-scoped event endpoint continues delivering pending actions after navigation, independently of the selected conversation's normal event stream. Requests retain their originating conversation for auditing and acknowledgement URLs. Still-pending requests are offered again every five seconds to recover a failed transport before claim; claiming transitions durably to dispatched and never replays the UI operation. Unknown outcomes after dispatch require inspection, not automatic execution again.
 
+The originating `runtime app` call now waits up to five seconds for that durable receipt. An applied, failed or dismissed result can return to the same model turn without another tool call; only applied means completed. A timeout preserves pending/dispatched status and sets `wait_timed_out`, rather than claiming failure or resending. The bounded wait holds neither a SQLite transaction nor a session-control lock, includes database-worker delays, and is cancelled with its run. Stop, reset, reads and observations are not delayed by receipt waiting.
+
 If an HTTP failure permanently closes the browser's event source, the client replaces it only after a successful fresh observation, with a 5–30 second retry backoff. Native EventSource reconnects remain untouched. Backgrounding, page departure and logout cancel replacement retries; the observation reports a connection problem until the stream opens again. This prevents an interrupted deployment from leaving a responsive chat with a permanently dead interface-action channel.
 
 Unclaimed actions belonging to a failed or interrupted run are dismissed in the same database transaction as run finalization. Claim also rejects old persisted intents from unsuccessful terminal runs. Successful completed runs may still finish an already requested UI action. Cancellation never claims that a dispatched effect was undone: explicit stop/reset records its outcome as unknown, while pending intents record that they were never dispatched.
@@ -39,3 +41,14 @@ The selected conversation is stored per account in tab-local session storage, al
 This release makes the existing surface observable and its fixed view actions addressable. It does not make the entire React renderer a replaceable provider, observe arbitrary pixel content, control native OS windows, or allow extensions to bypass independent stop/reset controls. Arbitrary task interactions still use versioned component registration and the bounded bridge. Replacing larger frontend services remains part of the service-provider architecture, with recovery and lifecycle contracts required before claiming completion.
 
 Requirement coverage includes account/token isolation, source binding and no-fallback behavior, legacy ambiguity, committed-observation submission, same-run help resumption, autonomous-run source isolation, tab-local selection, changed revisions, background claim rejection, duplicate acknowledgement, reset late-report rejection, bounded storage, and receiving subsequent actions after navigation. Source affinity and tab-local selection describe the current checkout; a published-artifact claim requires its own release receipt.
+
+The 2026-10-04 local acceptance also exercised a real browser receipt during the
+bounded wait: opening history returned applied in 254 ms on that single trial.
+Synthetic registered content verified quote anchors across bold/code fragments,
+mobile wrapping, font changes, scrolling, conversation switches, reload and
+reset. Offscreen references remove their hit regions; fixed menus make canvas
+actions inert. Nested code/table scrollers clip each text fragment. Duplicate
+quotes remain ambiguous until explicitly disambiguated. A 62,400-character,
+32-target algorithm probe measured roughly 3–6 ms using the test DOM after
+sharing one normalized index per body; this excludes real browser layout cost
+and is not a device performance guarantee.

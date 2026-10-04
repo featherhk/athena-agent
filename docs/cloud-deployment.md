@@ -150,6 +150,39 @@ ATHENA_AUDIO_TTS_USD_PER_10K_CHARACTERS=<reviewed positive USD tariff>
 
 Use the actual compatible-mode endpoint and models available to the operator's region/workspace. Both USD tariff values must be explicitly configured; the service does not invent an exchange rate from a CNY price. TTS settlement uses provider billing-character counts, which can differ from the number of Unicode characters in the input. Arabic is not supported by the selected Qwen TTS adapter and is reported as unavailable for a call.
 
+### Independent recognition and synthesis profiles
+
+Recognition and synthesis can also be configured independently. These are **operator settings**, never a customer setup form. The existing `ATHENA_AUDIO_*` shared settings remain supported; the operation-specific settings below take precedence:
+
+| Setting | Recognition | Synthesis |
+| --- | --- | --- |
+| HTTP adapter | `ATHENA_AUDIO_STT_PROVIDER` | `ATHENA_AUDIO_TTS_PROVIDER` |
+| API root | `ATHENA_AUDIO_STT_BASE_URL` | `ATHENA_AUDIO_TTS_BASE_URL` |
+| Private key file | `ATHENA_AUDIO_STT_API_KEY_FILE` | `ATHENA_AUDIO_TTS_API_KEY_FILE` |
+| Direct key alternative | `ATHENA_AUDIO_STT_API_KEY` | `ATHENA_AUDIO_TTS_API_KEY` |
+| Model | `ATHENA_AUDIO_STT_MODEL` | `ATHENA_AUDIO_TTS_MODEL` |
+| Voice | — | `ATHENA_AUDIO_TTS_VOICE` (then legacy `ATHENA_AUDIO_VOICE`) |
+
+Supported adapter values are `openai` (HTTP multipart transcription and speech endpoints) and `dashscope` (Qwen compatible-mode ASR and native TTS). This is not support for arbitrary APIs or WebSocket Realtime models. A provider change selects that adapter's default root, model and voice unless explicitly overridden. The `openai` adapter now honors its own recognition base URL as well as its synthesis root. Both operations must be valid before `/api/voice` advertises availability, so a missing or invalid credential disables calls before microphone acquisition.
+
+An omitted operation key inherits the shared key only for the same adapter and origin (scheme, hostname and port). A different host, port or adapter requires its own explicit key. An explicitly empty key or unreadable key file disables that operation instead of silently falling back. For the documented legacy DashScope setup above, an implicit recognition provider can still reuse its shared key from `dashscope.aliyuncs.com` or `dashscope-intl.aliyuncs.com` at an official `*.maas.aliyuncs.com` workspace; both URLs must be HTTPS with no user information or explicit port. Setting `ATHENA_AUDIO_STT_PROVIDER` explicitly removes that compatibility exception: also set its key. Credential-free URLs remain required; secrets must not appear in URL parameters.
+
+For example, a **local, operator-managed backend** can use HTTP recognition and native Qwen synthesis together:
+
+```text
+ATHENA_AUDIO_STT_PROVIDER=openai
+ATHENA_AUDIO_STT_BASE_URL=https://api.openai.com/v1
+ATHENA_AUDIO_STT_API_KEY_FILE=/private/operator/recognition-key
+ATHENA_AUDIO_STT_MODEL=gpt-4o-mini-transcribe
+ATHENA_AUDIO_TTS_PROVIDER=dashscope
+ATHENA_AUDIO_TTS_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+ATHENA_AUDIO_TTS_API_KEY_FILE=/private/operator/synthesis-key
+ATHENA_AUDIO_TTS_MODEL=qwen3-tts-flash
+ATHENA_AUDIO_TTS_VOICE=Cherry
+```
+
+Independent local combinations are implemented and tested with mocked HTTP providers; this does not establish real channel availability, pricing or call latency. **Hosted mixed-provider audio remains disabled**, even with the legacy DashScope tariff present. The hosted adapter requires both resolved providers to be `dashscope` and explicit valid tariffs; independently keyed DashScope recognition and synthesis can share that meter. OpenAI-compatible or mixed hosted providers need reviewed operation-specific accounting first. No provider request or account reservation is started while audio is unavailable. Transport still buffers each utterance and generated audio response; these settings do not enable true streaming synthesis or a full-duplex Realtime connection.
+
 The worker/desktop forwards authenticated audio requests to the gateway without holding the audio provider key. Raw recordings and generated audio are processed in memory; durable conversation content is the transcript, with separate numeric voice request audit records. Reverse-proxy access logs must not be extended to record request bodies, bearer headers or audio.
 
 ## Release acceptance

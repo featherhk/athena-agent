@@ -19,6 +19,12 @@
 .voice-wave.muted { opacity: .35; }
 .voice-problem { position: absolute; z-index: 15; bottom: calc(100% + 12px); inset-inline-end: 0; width: min(320px, 75vw); display: flex; align-items: start; gap: 16px; padding: 16px; border: 1px solid var(--tint); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; line-height: 1.7; box-shadow: 0 6px 24px #00000009; }
 .voice-problem button { border: 0; background: transparent; color: var(--muted); font-size: 18px; }
+.voice-recovery { position:absolute; z-index:15; bottom:calc(100% + 12px); inset-inline-end:0; width:min(390px,calc(100vw - 40px)); display:grid; gap:12px; padding:16px; border:1px solid var(--tint); border-radius:8px; background:var(--surface); color:var(--ink); box-shadow:0 6px 24px #00000009; font-size:13px; line-height:1.6; }
+.voice-recovery p { margin:0; }
+.voice-recovery textarea { width:100%; min-width:0; max-height:160px; resize:vertical; border:1px solid var(--tint); border-radius:5px; padding:8px; background:var(--canvas); color:var(--ink); font:inherit; line-height:1.6; }
+.voice-recovery>div { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.voice-recovery button { min-height:44px; border:0; padding:4px 0; background:transparent; color:var(--accent); font:inherit; }
+.voice-recovery small { color:var(--muted); }
 @keyframes voice-pulse { from { transform: scaleY(.35); } to { transform: scaleY(1.15); } }
 @media (prefers-reduced-motion: reduce) { .voice-wave i { animation: none !important; } }
 html[data-reduce-motion='true'] .voice-wave i { animation: none !important; }

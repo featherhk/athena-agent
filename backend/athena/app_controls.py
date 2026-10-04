@@ -20,6 +20,8 @@ OPEN_TARGETS = tuple(target for target in TARGETS if target != "preview")
 ERROR_CODES = ("frontend_conflict", "frontend_unavailable", "unavailable", "user_gesture_required", "file_not_found", "navigation_failed", "execution_failed", "dismissed", "reset", "interrupted")
 INACTIVE_RUN_STATUSES = ("failed", "cancelled", "interrupted", "stopped")
 INPUT_CLEAR_ACTIONS = frozenset(("open", "close", "preview", "navigate"))
+RECEIPT_WAIT_SECONDS = 5.0
+RECEIPT_POLL_SECONDS = 0.25
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
 CATALOG = [
     {"action": "list", "optional": ["scope", "session_id", "limit", "offset"], "effect": "Discover application controls, origin requests and files in an owned conversation."},
@@ -244,6 +246,42 @@ async def list_app_actions(store, session_id, user_id):
         _scope(db, session_id, user_id)
         return [_public(row) for row in db.execute("SELECT * FROM app_actions WHERE session_id=? AND user_id=? AND status='pending' ORDER BY created_at,rowid", (session_id, user_id))]
     return await store.call(listing)
+
+
+async def wait_app_action_receipt(store, session_id, user_id, run_id, request):
+    """Await a durable browser receipt, never claim or replay an action.
+
+    Called only after app_operation committed the newly created request. The
+    independent client SSE can deliver it while this tool is still executing.
+    Cancellation belongs to the run; no detached waiter survives stop/reset.
+    """
+    identifier = _identifier(request["id"])
+    if request["session_id"] != session_id or request["run_id"] != run_id:
+        raise UserError("not_found", "This application request was not found.")
+
+    def read(db):
+        _scope(db, session_id, user_id)
+        row = db.execute("SELECT * FROM app_actions WHERE id=? AND user_id=? AND session_id=? AND run_id IS ?",
+                         (identifier, user_id, session_id, run_id)).fetchone()
+        if row is None:
+            raise UserError("not_found", "This application request was not found.")
+        return _public(row)
+
+    latest, timed_out = request, False
+    try:
+        async with asyncio.timeout(RECEIPT_WAIT_SECONDS):
+            while True:
+                latest = await store.call(read)
+                if latest["status"] not in ("pending", "dispatched"):
+                    break
+                # No transaction or session control lock is held across sleep.
+                await asyncio.sleep(RECEIPT_POLL_SECONDS)
+    except TimeoutError:
+        timed_out = True
+    result = {"status": latest["status"], "completed": latest["status"] == "applied", "request": latest}
+    if timed_out:
+        result["wait_timed_out"] = True
+    return result
 
 
 async def claim_app_action(store, session_id, user_id, action_id, client_id, auth_hash=None):

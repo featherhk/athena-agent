@@ -252,5 +252,12 @@
   "continuity.unavailable": "暂时无法更新任务状态",
   "continuity.more": "显示更多任务",
   "continuity.history": "在历史中查看其他对话",
-  "continuity.clear": "所有动态都已查看。"
+  "continuity.clear": "所有动态都已查看。",
+  "voice.recoveryTitle": "识别出的文字",
+  "voice.notSent": "这段语音尚未发送。识别出的文字保留在这里，你可以复制。",
+  "voice.deliveryUnknown": "暂时无法确认是否送达。再次发送这些文字前，请先检查当前对话。",
+  "voice.copy": "复制文字",
+  "voice.copied": "已复制",
+  "voice.copyFailed": "复制失败。请选中上方文字后手动复制。",
+  "voice.dismiss": "关闭提示"
 }

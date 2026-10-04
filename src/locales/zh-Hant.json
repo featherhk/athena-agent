@@ -252,5 +252,12 @@
   "continuity.unavailable": "暫時無法更新任務狀態",
   "continuity.more": "顯示更多任務",
   "continuity.history": "在歷史中查看其他對話",
-  "continuity.clear": "所有動態都已查看。"
+  "continuity.clear": "所有動態都已查看。",
+  "voice.recoveryTitle": "辨識出的文字",
+  "voice.notSent": "這段語音尚未送出。辨識出的文字保留在這裡，你可以複製。",
+  "voice.deliveryUnknown": "暫時無法確認是否送達。再次傳送這些文字前，請先查看目前的對話。",
+  "voice.copy": "複製文字",
+  "voice.copied": "已複製",
+  "voice.copyFailed": "複製失敗。請選取上方文字後手動複製。",
+  "voice.dismiss": "關閉提示"
 }

@@ -18,6 +18,7 @@ import DeveloperPanel from './DeveloperPanel';
 import { AccountProfile } from './AccountProfile';
 import UserHelp, { HelpReceipt } from './UserHelp';
 import VoiceCall from './VoiceCall';
+import { VoiceSubmissionError, VoiceSubmissionReceipt } from './voice-recovery';
 import { RunTrace } from './RunTrace';
 import { taskOrigin, agentOrigin } from './message-origin';
 import { AgentActivity, AgentResults } from './AgentActivity';
@@ -490,12 +491,13 @@ export default function App() {
   function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
   async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false) {
     if ((!value.trim() && (!fromComposer || attached.length === 0)) || sending || resetting || uploading) {
-      if (throwOnError) throw new Error('voice_busy');
+      if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       return;
     }
-    if (!user) { requestLogin(); return; }
+    if (!user) { requestLogin(); if (throwOnError) throw new VoiceSubmissionError('not_sent'); return; }
     const submission = submissions.current.begin(submissionScope());
-    if (!submission) { if (throwOnError) throw new Error('voice_busy'); return; }
+    if (!submission) { if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy')); return; }
+    const voiceReceipt = throwOnError ? new VoiceSubmissionReceipt() : null;
     const owner = user.id;
     let isCurrent = currentGuard(), sid = session;
     let sentDraft = drafts.current!.read(owner, sid);
@@ -504,25 +506,34 @@ export default function App() {
     try {
       if (!sid) {
         sid = (await api<{ id: string }>('/sessions', {})).id;
-        if (!isCurrent()) return;
+        if (!isCurrent()) { if (throwOnError) throw new VoiceSubmissionError('not_sent'); return; }
         const unchanged = drafts.current!.read(owner, null).revision === sentDraft.revision;
         navigate(sid, true); submissions.current.move(submission, submissionScope()); isCurrent = currentGuard(); setSending(true);
         sentDraft = { ...sentDraft, revision: unchanged ? drafts.current!.read(owner, sid).revision : -1 };
       }
       if (help && fromComposer && mode === 'queue' && help.questions.length === 1) {
+        voiceReceipt?.dispatch();
         await api(`/sessions/${sid}/help/${help.id}/answer`, { answers: { [help.questions[0].id]: value }, file_ids: [...sentFiles] });
+        voiceReceipt?.confirm();
       } else {
         const clientId = appClient.current;
         const frontendClientId = await frontendObservation.prepareSubmission(sid, clientId, () => isCurrent() && appClient.current === clientId);
-        if (!isCurrent()) return;
-        await api(`/sessions/${sid}/messages`, { text: value, mode, file_ids: [...sentFiles], frontend_client_id: frontendClientId });
+        if (!isCurrent()) { if (throwOnError) throw new VoiceSubmissionError('not_sent'); return; }
+        voiceReceipt?.dispatch();
+        const receipt = await api<{ run_id: string }>(`/sessions/${sid}/messages`, { text: value, mode, file_ids: [...sentFiles], frontend_client_id: frontendClientId });
+        if (voiceReceipt && (typeof receipt?.run_id !== 'string' || !receipt.run_id)) throw new Error('voice_interrupted');
+        voiceReceipt?.confirm();
       }
       if (fromComposer) {
         const remaining = drafts.current!.submitted(owner, sid, sentDraft);
         if (uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(remaining);
         if (isCurrent()) input.current?.focus();
       }
-    } catch (e) { if (isCurrent()) setError(e instanceof SubmissionSourceError ? fromComposer ? t('send.notSent') : errorMessage(e.code) : (e as Error).message); if (throwOnError) throw e; }
+    } catch (e) {
+      const failure = voiceReceipt?.failure(e);
+      if (isCurrent() && !failure) setError(e instanceof SubmissionSourceError ? fromComposer ? t('send.notSent') : errorMessage(e.code) : (e as Error).message);
+      if (failure) throw failure;
+    }
     finally { finishSubmission(submission, isCurrent); }
   }
   async function ensureVoiceSession() {
@@ -537,16 +548,22 @@ export default function App() {
   async function submitVoice(value: string) {
     if (session && help && voiceQuestion) {
       const submission = submissions.current.begin(submissionScope());
-      if (!submission) throw new Error('voice_busy');
+      if (!submission) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       const isCurrent = currentGuard();
+      const receipt = new VoiceSubmissionReceipt();
       try {
         const answers = { ...voiceAnswers, [voiceQuestion.id]: value };
         if (help.questions.some(question => !(question.id in answers))) {
           setVoiceHelpAnswers({ id: help.id, answers });
         } else {
-          await api(`/sessions/${session}/help/${help.id}/answer`, { answers, file_ids: [] });
+          receipt.dispatch();
+          const accepted = await api<{ id: string; status: string }>(`/sessions/${session}/help/${help.id}/answer`, { answers, file_ids: [] });
+          if (accepted?.id !== help.id || accepted.status !== 'answered') throw new Error('voice_interrupted');
+          receipt.confirm();
           if (isCurrent()) setVoiceHelpAnswers({ id: '', answers: {} });
         }
+      } catch (error) {
+        const failure = receipt.failure(error); if (failure) throw failure;
       } finally { finishSubmission(submission); }
     } else await submit(value, 'interrupt', false, true);
   }
@@ -712,7 +729,7 @@ export default function App() {
       <div className="reading-pane">
     {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
     {!resetting && floating.filter(component => panelLayout[component.id]).map(component => renderWidget(component))}
-    {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
+    {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" inert={Boolean(menu || history || auth || account || appearance || files || preview || surfaces || activity)} key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
     <main className={`scroll-area${workspace ? ' has-workspace' : ''}`} onWheel={event => { if (event.deltaY < 0) scrollIntent.current = Date.now(); }} onTouchMove={() => { scrollIntent.current = Date.now(); }} onKeyDown={event => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key)) scrollIntent.current = Date.now(); }} onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160; if (el.scrollTop > 80) setReading(true); else if (el.scrollTop <= 0 && Date.now() - scrollIntent.current < 1500) setReading(false); }}>
       {!resetting && components.filter(component => placementOf(component) === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
       {workspace && !resetting && <section className="workspace-panel" data-app-view="workspace">{renderWidget(workspace)}</section>}
@@ -729,7 +746,7 @@ export default function App() {
             {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(file => fileCard(file))}</div>}</>}
             {origin?.kind === 'agent_results' && <AgentResults origin={origin} />}
             {visible && !message.help_reply && !origin && <article className={`message ${message.role}`} data-run-id={message.run_id} tabIndex={-1} data-activity-result={run?.status === 'complete' && lastAnswerByRun.get(message.run_id) === message.id ? message.run_id : undefined}>
-              <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
+              <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text" data-message-text><StyledText text={message.content} effect={effectFor(message.id)} /></span>}{message.attachments?.map(file => fileCard(file))}</div>
               {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
               {['interrupted', 'cancelled', 'failed'].includes(message.status) && <span className="message-note">{message.status === 'cancelled' ? t('cancelled') : t('stopped')}</span>}
             </article>}

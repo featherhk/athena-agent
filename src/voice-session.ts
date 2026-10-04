@@ -1,11 +1,13 @@
 import { VoiceEndpoint, pcmWave, SpeechCursor } from './voice-core.ts';
 import type { Message } from './api';
+import { VoiceSubmissionError, type VoiceDelivery } from './voice-recovery.ts';
 
 export type VoiceState = 'connecting' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking' | 'muted' | 'ended';
 export type VoiceCallbacks = {
   state: (value: VoiceState) => void;
   error: (code: string) => void;
   transcript: (text: string) => void;
+  recover?: (text: string, delivery: VoiceDelivery) => void;
   submit: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
 };
@@ -125,6 +127,7 @@ export class VoiceSession {
   private async transcribe() {
     if (this.transcribing || this.ended) return;
     this.transcribing = true; this.updateState();
+    let recognized: string | null = null, submitting = false;
     try {
       while (this.inputQueue.length && !this.ended) {
         const audio = this.inputQueue.shift()!;
@@ -135,15 +138,20 @@ export class VoiceSession {
         const result = await response.json();
         if (this.ended) return;
         if (typeof result.text === 'string' && result.text.trim()) {
-          this.callbacks.transcript(result.text);
+          const transcript: string = result.text;
+          recognized = transcript;
+          this.callbacks.transcript(transcript);
           await this.interrupting;
-          if (this.ended) return;
+          if (this.ended) { this.callbacks.recover?.(transcript, 'not_sent'); return; }
           // Empty/in-flight old assistant output was already ignored at barge-in.
           this.holdOutput = this.recording || this.inputQueue.length > 0;
+          submitting = true;
           await this.callbacks.submit(result.text);
+          recognized = null; submitting = false;
         } else this.holdOutput = this.recording || this.inputQueue.length > 0;
       }
     } catch (error) {
+      if (recognized) this.callbacks.recover?.(recognized, !submitting ? 'not_sent' : error instanceof VoiceSubmissionError ? error.delivery : 'unknown');
       if (!this.ended && (error as Error).name !== 'AbortError') this.fail((error as Error).message);
     } finally { this.transcribing = false; this.inputRequest = undefined; this.updateState(); }
   }

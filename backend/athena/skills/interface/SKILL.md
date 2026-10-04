@@ -15,7 +15,7 @@ html 是独立页面的主体或完整 HTML，运行在隔离 iframe。内联 CS
 
 布局 placement 可为 inline（聊天卡片）、workspace（表格等工作区）、banner（提醒）、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end（为侧栏实际留出空间）、overlay（透明动画层）、fullscreen（沉浸工作区）或 presence（替换 Athena 标志）。start/end 跟随阅读方向。不能用普通聊天卡片代替用户指定的位置，也不必把动画限制在角落。fullscreen/overlay 均保留固定输入、停止和恢复外壳，不是操作系统全屏。每次注册新版本刷新对应 frame，不刷新整个应用。
 
-界面变化服务于当前目标；普通查询不需要装饰性重排。组件默认继承当前主题变量、字体和基本按钮样式，优先使用 `var(--ink)`、`var(--surface)` 等，不叠加违和的黑盒或多层卡片。涉及自由画布、任意位置交互、逐字样式、会话导航、标志或跨气泡动画时，先读 `references/bridge.md`。Athena.observe/interact/styleText/navigate 提供语义布局、状态和交互，不允许直接读写父页面。当前 CSP 仍不允许外部资源，不能宣称已支持外部视频或在线字体。
+界面变化服务于当前目标；普通查询不需要装饰性重排。组件默认继承当前主题变量、字体和基本按钮样式，优先使用 `var(--ink)`、`var(--surface)` 等，不叠加违和的黑盒或多层卡片。涉及自由画布、任意位置交互、文字定位标注、逐字样式、会话导航、标志或跨气泡动画时，先读 `references/bridge.md`。Athena.observe/track/interact/styleText/navigate 提供语义布局、状态和交互，不允许直接读写父页面。当前 CSP 仍不允许外部资源，不能宣称已支持外部视频或在线字体。
 
 ## 验证实际效果
 

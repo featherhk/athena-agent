@@ -46,7 +46,7 @@
 const unsubscribe = Athena.observe(layout => {
   // layout.viewport = {width,height}：当前 iframe 的 CSS 像素尺寸
   // layout.messages = [{id,role,rect:{x,y,width,height}}]
-  // rect 相对当前 iframe，只有在其范围内可见的 user/assistant 气泡，最多128条
+  // rect 相对当前 iframe，裁剪到画布及聊天滚动区的可见部分，最多128条
   // layout.reduced_motion, layout.locale, layout.theme
   // layout.anchors = {presence?, conversation?, workspace?, composer?, controls?}
   // 语义区域的 rect 与气泡使用同一坐标系；不可见区域缺省，区域也可能在画布外
@@ -55,6 +55,30 @@ const unsubscribe = Athena.observe(layout => {
 ```
 
 滚动、窗口缩放、内容或主题改变时宿主更新布局；没有持续发送消息或模型调用。接口只提供几何与标识，不提供父页面 DOM、账号信息或任意查询。尊重 reduced_motion，关闭无必要的持续运动。`unsubscribe()` 停止订阅。
+
+### 跟随具体文字
+
+给行程的截止时间画线、在某句话旁放动作时，用引用定位，而不是估算整条消息的位置：
+
+```js
+Athena.track([{id:'deadline',message_id:'实际消息ID',quote:'周五晚上八点'}]);
+Athena.observe(layout => {
+  const target = layout.text_targets.find(item => item.id === 'deadline');
+  // 先清除上次画面；文字滚走、删除或歧义时，也要撤销旧命中区域。
+  Athena.interact([]);
+  if (target?.status !== 'visible') return;
+  for (const rect of target.rects) {
+    // 用这些片段在自己的 HTML/SVG/Canvas 上绘制，坐标仍相对当前 iframe。
+    // 跨加粗、链接或换行会有多个片段，不要把它们合并成覆盖整段的矩形。
+  }
+});
+```
+
+`track` 替换该组件的文字目标，null 清空；它需配合 `observe` 接收布局。每项为 `{id,message_id,quote,occurrence?}`，最多32项，每段引用最多512个 UTF-16 单位，合计8192。id 唯一，只用字母、数字、下划线或连字符（最长64）。只匹配当前会话已渲染的用户/助手正文，不含思考、草稿、表单或文件预览。空白归一化，其他字符精确匹配；Markdown 标记不用写入引用。
+
+`status` 为 visible、offscreen、missing、ambiguous 或 limited，只有 visible 带 `rects`。重复引用默认 ambiguous，需用从0开始的 occurrence 指定；序号在完整正文中确定，滚动不会悄悄改成另一个同名位置。超出有界文本扫描或片段数时返回 limited，不猜测。滚动、换行、字体、主题及布局变化自动更新，不需要模型轮询。隐藏、替换、切换会话或 Reset 清除订阅；这是几何定位，不证明文字未被其他视觉元素遮挡。
+
+不要让动作挡住相邻正文；在手机上空间不足时，只画标记，把实际操作放到 inline/workspace。执行提醒等操作仍需真实后台任务，画出一个按钮并不等于完成提醒。
 
 跨气泡动画的最小 Canvas 示例（用 overlay）：
 

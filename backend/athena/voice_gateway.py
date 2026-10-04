@@ -62,7 +62,8 @@ async def initialize_gateway_voice(app, store, credits):
     config, tariff = replace(VoiceConfig.from_env(), hosted=True), VoiceTariff.from_env()
     # This tariff consumes provider-reported duration/characters. Token-priced
     # adapters need their own metering implementation before hosted enablement.
-    billing = MeteredVoice(credits, tariff) if tariff and config.provider == 'dashscope' else None
+    metered = all(config.endpoint(kind).provider == 'dashscope' for kind in ('transcribe', 'speech'))
+    billing = MeteredVoice(credits, tariff) if tariff and metered else None
     app.state.voice = VoiceService(config, store, billing=billing)
 
 
