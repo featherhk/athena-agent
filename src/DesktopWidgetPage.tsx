@@ -105,8 +105,8 @@ export default function DesktopWidgetPage() {
     } finally { operations.current.delete(controller); }
   }
   function observeFile(value: PreviewObservation) {
-    const file = current.current?.file;
-    if (!file || file.id !== value.file_id) return;
+    const file = component?.file, active = current.current?.file;
+    if (!file || file.id !== value.file_id || active?.id !== file.id || (active.content_revision || null) !== (file.content_revision || null)) return;
     desktopPost({ action: 'widgetHealth', state: value.status === 'ready' ? 'mounted' : value.status, file_id: file.id,
       content_revision: file.content_revision ?? null, ...(value.status === 'failed' ? { error_code: 'preview_unavailable' } : {}) });
   }

@@ -120,6 +120,12 @@ test('parent refresh is scope bound, fetches current preferences and preserves t
     assert.equal(f.host.querySelector('[data-file-id]'), node);
     assert.equal(node.textContent, 'Current title.xlsx'); assert.equal(f.artifactMounts, 1);
     assert.equal(f.calls.length, 4); assert.equal(f.applied.length, 2);
+    const oldObservation = f.artifact.onObservation;
+    f.component.file = { ...file, content_revision: 's1-next' };
+    await act(async () => f.window.dispatchEvent(new f.window.CustomEvent('athena:widget-refresh', { detail: { scope: 'owner:chat', component_id: 'collector', version: 2 } })));
+    const reports = f.native.length;
+    oldObservation({ file_id: file.id, status: 'ready' });
+    assert.equal(f.native.length, reports, 'Late previous-bytes receipt cannot certify the new revision');
   } finally { await f.close(); }
 });
 
