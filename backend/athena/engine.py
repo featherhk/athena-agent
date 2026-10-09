@@ -588,6 +588,7 @@ class Engine:
             for task in checks:
                 task.cancel()
             await asyncio.gather(*checks, return_exceptions=True)
+            default_profile, _ = await self.models.selected()
             def reset(db):
                 from .app_controls import cancel_app_actions
                 cancel_app_actions(db, user_id)
@@ -604,11 +605,11 @@ class Engine:
                 reset_registry(db, user_id)
                 for session in sessions:
                     current = db.execute("SELECT model_profile_id,model_epoch FROM sessions WHERE id=?", (session["id"],)).fetchone()
-                    if current["model_profile_id"] != "default":
+                    if current["model_profile_id"] != default_profile.id:
                         epoch = current["model_epoch"] + 1
-                        db.execute("UPDATE sessions SET model_profile_id='default',model_epoch=? WHERE id=?", (epoch, session["id"]))
-                        definition = db.execute("SELECT definition FROM model_profiles WHERE id='default'").fetchone()[0]
-                        db.execute("INSERT INTO model_switches VALUES (?,?,?,?,?,?,?,?,?)", (uid(), session["id"], None, current["model_profile_id"], "default", epoch, "Fixed shell reset", definition, now()))
+                        db.execute("UPDATE sessions SET model_profile_id=?,model_epoch=? WHERE id=?", (default_profile.id, epoch, session["id"]))
+                        definition = db.execute("SELECT definition FROM model_profiles WHERE id=?", (default_profile.id,)).fetchone()[0]
+                        db.execute("INSERT INTO model_switches VALUES (?,?,?,?,?,?,?,?,?)", (uid(), session["id"], None, current["model_profile_id"], default_profile.id, epoch, "Fixed shell reset", definition, now()))
                 db.execute("INSERT INTO resets VALUES (?,?,?)", (uid(), user_id, now()))
             await self.store.call(reset)
             from .preferences import preference_schema, update_preferences

@@ -82,7 +82,7 @@ def create_app(config: Config | None = None):
         lock = InstanceLock(config.data_dir / "instance.lock")
         pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="athena-worker")
         asyncio.get_running_loop().set_default_executor(pool)
-        store = Store(config.data_dir / "athena.sqlite3")
+        store = Store(config.data_dir / "athena.sqlite3", local_setup=config.local_setup)
         await store.initialize()
         await initialize_files(store)
         await initialize_registry(store)
@@ -93,7 +93,7 @@ def create_app(config: Config | None = None):
         engine = Engine(config, store)
         await engine.models.ensure_default()
         app.state.engine, app.state.store = engine, store
-        app.state.auth = Auth(store)
+        app.state.auth = Auth(store, local_setup=config.local_setup)
         app.state.cloud = None
         if config.cloud_url:
             from .cloud_client import CloudAccounts
@@ -143,7 +143,7 @@ def create_app(config: Config | None = None):
                 request.state.user = await app.state.auth.current(request.cookies.get(COOKIE))
             except ServiceError as exc:
                 return JSONResponse({'code':exc.code},status_code=exc.http_status)
-            public = {"/api/health", "/api/auth/me", "/api/auth/login", "/api/auth/register"}
+            public = {"/api/health", "/api/auth/me", "/api/auth/login", "/api/auth/register", "/api/local/setup", "/api/local/bootstrap"}
             if request.url.path not in public and not request.state.user:
                 return JSONResponse({"error": "请先登录", "code": "login_required"}, status_code=401)
         response = await call_next(request)
@@ -178,12 +178,16 @@ def create_app(config: Config | None = None):
         response.set_cookie(COOKIE, token, httponly=True, secure=bool(config.public_origin), samesite="strict", max_age=30*86400, path="/")
         return response
 
+    from .local_setup import register_routes as register_local_setup_routes, registration_allowed
+    register_local_setup_routes(app, config, login_response)
+
     @app.get("/api/auth/me")
     async def me(request: Request):
         return {"user": request.state.user, "preferences": await read_preferences(app.state.store, request.state.user["id"]) if request.state.user else None, "configured": bool(await app.state.engine.api_key()), "has_users": bool(config.cloud_url) or bool(await app.state.store.rows("SELECT id FROM users LIMIT 1"))}
 
     @app.post("/api/auth/register")
     async def register(body: Credentials):
+        await registration_allowed(app.state.store, config)
         user, token = await app.state.cloud.authenticate('register',body.username,body.password) if app.state.cloud else await app.state.auth.register(body.username, body.password)
         return await login_response(user, token)
 

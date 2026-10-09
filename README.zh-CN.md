@@ -31,7 +31,7 @@ Athena 是一个从对话开始的个人助手。说出想办的事，进度、�
 
 Athena 也能通过 `runtime` 查找和读取同账号的其他会话、新建或重命名会话，以及分叉空闲会话。已完成的运行可以从当前模型上下文中排除，也可以恢复；原始聊天记录保持完整。浏览器导航和其他外壳操作使用客户端定向、有界语义观察与持久化领取/确认；预览面板打开与文件就绪分别记录。仅返回会话 ID 并不会触发导航。详见[前端状态](docs/frontend-state.md)。验收基线见 [自然语言命令验收](docs/command-acceptance.md)。
 
-以下说明面向开发与运维。预览用户登录运维端已开通且有测试额度的账户后即可发消息，无需配置模型供应商；仅注册不会获得模型调用权限。
+源码默认采用本机 BYOK：连接自己的模型，无需 Feather 账号。托管预览仍使用已开通额度的账户登录，仅注册不会获得托管模型调用权限。
 
 需要 macOS、`uv >= 0.9`、Node.js `>= 24` 和 npm。受管浏览器还需要安装 Google Chrome 或 Chromium。
 
@@ -44,7 +44,13 @@ npm run build
 npm start
 ```
 
-打开 [Athena](http://127.0.0.1:4317)。首次启动会初始化本机数据库。随后在另一个终端通过隐藏输入配置服务凭据：
+打开 [Athena](http://127.0.0.1:4317)。全新安装会建立私有本地身份，并打开「模型连接」。选择 DeepSeek、本机模型或其他 OpenAI 兼容 Chat Completions API，填写模型 ID、基础地址和自己的密钥。保存仅表示配置已保存，不会发起付费连接测试；下一条消息会使用该配置。
+
+本机模型可使用 `http://127.0.0.1:11434/v1` 等回环地址且不填密钥，但需要先安装并运行模型服务。远端地址要求 HTTPS 和密钥；更换地址不会把旧密钥转发到新服务。修改模型会创建不可变配置，并为当前空闲会话建立可审计的上下文版本；正在执行的任务须先结束或停止。此表单不支持原生 Anthropic Messages 或 Responses 协议。
+
+免账号入门仅用于回环监听、未设置 `ATHENA_CLOUD_URL` 和 `ATHENA_PUBLIC_ORIGIN` 的本机运行。既有账户或旧聊天记录继续使用原来的登录/注册流程，不会自动合并。可将 `ATHENA_DATA_DIR` 指向仓库外的新目录独立试用。公开监听不会获得自动登录能力。未传 `--cloud-url` 的自建 Mac 包也使用 BYOK；托管包仍使用托管鉴权。
+
+旧账户安装与运维场景仍可在另一个终端通过隐藏输入配置凭据：
 
 ```sh
 uv run --directory backend python -m athena.admin provider-key
@@ -57,7 +63,7 @@ uv run --directory backend python -m athena.admin status
 uv run --directory backend python -m athena.admin provider-key --file /path/to/private/key.txt
 ```
 
-默认配置使用 DeepSeek 官方 API 的 `deepseek-flash`（DeepSeek V4.1 Flash）。服务端 `DEEPSEEK_API_KEY` 环境变量优先于保存的默认凭据。保存的凭据留在本机数据库内，不返回客户端；尚未接入系统钥匙串。修改凭据无需重启。
+默认配置使用 DeepSeek 官方 API 的 `deepseek-flash`（DeepSeek V4.1 Flash）。服务端 `DEEPSEEK_API_KEY` 环境变量优先于原始 `default` 配置的已存凭据；BYOK 表单创建的配置使用各自保存的密钥。保存的凭据留在本机数据库内，不返回客户端；尚未接入系统钥匙串。修改凭据无需重启。
 
 开发前端时使用 `npm run dev`：Vite 监听 5173 端口，将 API 请求代理到 4317 端口的后端。
 

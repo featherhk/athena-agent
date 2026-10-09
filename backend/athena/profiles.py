@@ -81,6 +81,12 @@ class Models:
 
     async def selected(self, session_id=None):
         if not session_id:
+            if self.config.local_setup:
+                from .local_setup import initial_profile, principal
+                def default(db):
+                    user = principal(db)
+                    return initial_profile(db, user['id']) if user else 'default'
+                return await self.get(await self.store.call(default)), 0
             return await self.get("default"), 0
         rows = await self.store.rows("SELECT model_profile_id,model_epoch FROM sessions WHERE id=?", (session_id,))
         if not rows:

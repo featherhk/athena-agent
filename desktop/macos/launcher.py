@@ -35,6 +35,10 @@ def configure_bundle(bundle_resources):
             raise ValueError("Invalid cloud endpoint")
     # Explicitly replace a inherited value; cloud builds must not silently fall back to local auth.
     os.environ["ATHENA_CLOUD_URL"] = value.rstrip("/")
+    # The native shell always owns a private loopback socket, regardless of a
+    # caller's inherited development-server environment.
+    os.environ["ATHENA_BIND_HOST"] = "127.0.0.1"
+    os.environ["ATHENA_PUBLIC_ORIGIN"] = ""
 
 
 async def main():
@@ -46,7 +50,7 @@ async def main():
     port = listener.getsockname()[1]
     os.environ["ATHENA_PORT"] = str(port)
     config = uvicorn.Config(create_app(), loop="asyncio", http="h11", access_log=False,
-                            log_level="warning", timeout_graceful_shutdown=5)
+                            proxy_headers=False, log_level="warning", timeout_graceful_shutdown=5)
     server = AthenaServer(config)
     parent_pid = os.getppid()
 

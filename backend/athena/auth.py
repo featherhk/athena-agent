@@ -36,13 +36,18 @@ def public_user(user):
 
 
 class Auth:
-    def __init__(self, store, *, bootstrap_owner=True):
+    def __init__(self, store, *, bootstrap_owner=True, local_setup=False):
         self.store = store
         self.bootstrap_owner = bootstrap_owner
+        self.local_setup = local_setup
 
     async def register(self, username, password):
         encoded = await asyncio.to_thread(password_hash, password)
         def insert(db):
+            if self.local_setup:
+                from .local_setup import principal
+                if principal(db):
+                    raise UserError("local_identity_managed", "This installation already has a local identity.")
             first = self.bootstrap_owner and not db.execute("SELECT 1 FROM users").fetchone()
             user = {"id": uid(), "username": username.strip(), "role": "owner" if first else "user", "developer_mode": False}
             try:

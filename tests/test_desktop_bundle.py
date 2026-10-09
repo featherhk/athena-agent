@@ -53,12 +53,20 @@ def test_cloud_bundle_configuration_is_https_only(tmp_path, monkeypatch):
     configure = runpy.run_path(str(root / "desktop/macos/launcher.py"))["configure_bundle"]
     import os
     monkeypatch.setenv("ATHENA_CLOUD_URL", "https://untrusted.invalid/v1")
+    monkeypatch.setenv("ATHENA_BIND_HOST", "0.0.0.0")
+    monkeypatch.setenv("ATHENA_PUBLIC_ORIGIN", "https://untrusted.invalid")
     path = tmp_path / "bundle-config.json"
     valid = "https://chat.athena.featherhk.com/v1"
     assert validate(valid + "/") == valid
     path.write_text(json.dumps({"version": 1, "cloud_url": valid}))
     configure(tmp_path)
     assert os.environ["ATHENA_CLOUD_URL"] == valid
+    assert os.environ["ATHENA_BIND_HOST"] == "127.0.0.1"
+    assert os.environ["ATHENA_PUBLIC_ORIGIN"] == ""
+    assert not Config.from_env().local_setup
+    path.write_text(json.dumps({"version": 1, "cloud_url": ""}))
+    configure(tmp_path)
+    assert Config.from_env().local_setup
     for value in ("http://insecure.example", "https://user:secret@example.com", "https://example.com?key=secret", "https://example.com#key", "https:///v1", "https://example.com /v1"):
         with pytest.raises(ValueError):
             validate(value)

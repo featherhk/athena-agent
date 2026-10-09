@@ -89,14 +89,19 @@ def main():
                         auth = request("/api/auth/me")
                         assert auth["user"] is None and auth["has_users"] is True
                     else:
-                        credentials = {"username": "bundle_test", "password": "temporary-test-only"}
-                        auth = request("/api/auth/register" if iteration == 0 else "/api/auth/login", credentials)
-                        assert auth["user"]["username"] == "bundle_test"
+                        setup = request("/api/local/setup")
+                        assert setup == {"mode": "local", "initialized": iteration > 0}
+                        auth = request("/api/local/bootstrap", {})
                         assert request("/api/auth/me")["user"]["id"] == auth["user"]["id"]
+                        assert request("/api/local/provider")["configured"] is False
+                        try:
+                            request("/api/auth/register", {"username": "bundle_test", "password": "temporary-test-only"})
+                            raise AssertionError("Local identity incorrectly allowed another account")
+                        except urllib.error.HTTPError as error: assert error.code == 409
                         if iteration == 0:
                             identity = auth["user"]["id"]
                         else:
-                            assert identity == auth["user"]["id"], "Account was not durable across restart"
+                            assert identity == auth["user"]["id"], "Local identity was not durable across restart"
                 finally:
                     stop(process)
             assert (data / "athena.sqlite3").is_file()
@@ -106,7 +111,7 @@ def main():
                     assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
                     assert db.execute("SELECT COUNT(*) FROM cloud_logins").fetchone()[0] == 0
             assert not list(resources.rglob("*.sqlite3")), "Runtime database leaked into app bundle"
-    print("Bundle smoke passed: relocation, GIL-free imports, startup, auth boundary, origin checks, restart, shutdown, no bundled credential. Mode: " + ("cloud (remote login untested)" if cloud_mode else "local (account persistence verified)"))
+    print("Bundle smoke passed: relocation, GIL-free imports, startup, auth boundary, origin checks, restart, shutdown, no bundled credential. Mode: " + ("cloud (remote login untested)" if cloud_mode else "local (BYOK identity persistence verified)"))
 
 
 if __name__ == "__main__":

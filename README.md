@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-Athena is a personal assistant that starts with a conversation. Describe what you want done; progress, results, and useful controls appear when needed. Everyday use should not require understanding models, API keys, or agent frameworks.
+Athena is a personal assistant that starts with a conversation. Describe what you want done; progress, results, and useful controls appear when needed. Everyday use should not require understanding agent frameworks. The open-source local edition uses your own model connection; the hosted preview uses an operator-enabled account.
 
 The current release is a **limited macOS and hosted web preview**, built with Python 3.14T, SQLite, TypeScript, and React. It is a general assistant with programmable capabilities, not a coding-only interface. The [product direction](docs/product.md) separates implemented behavior from ideas still to validate.
 
@@ -10,7 +10,7 @@ The current preview also includes a separate account/model gateway with zero-cre
 
 ## What works today
 
-- Accounts with display names and avatars, plus a fixed password-change form that keeps passwords out of model messages and tools. Provider credentials remain server-managed.
+- Accounts with display names and avatars, plus a fixed password-change form that keeps passwords out of model messages and tools. Provider credentials stay out of model messages and tool environments. The local edition has a fixed BYOK settings form; hosted credentials remain operator-managed.
 - Nine interface languages: Arabic, English, Spanish, French, Japanese, Korean, Portuguese, Simplified Chinese, and Traditional Chinese. Browser preferences are matched automatically with English fallback; native language names appear without flags, ordered by BCP 47 tags. Arabic uses right-to-left layout. Interface language, font, palette, and reduced motion are saved separately from reply preferences.
 - Streaming chat with safe Markdown rendering, separately collapsible reasoning actually returned by the provider, and distinct thinking, replying, and execution states. Durable events restore updates after reconnecting; closing the browser does not stop a task.
 - Background progress, requests for help, and unread results remain accessible across conversations, including inside file previews. Updates never navigate away from the current work; Athena can inspect and manage the same activity through `runtime`. See [task continuity](docs/task-continuity.md).
@@ -30,7 +30,7 @@ See the [acceptance criteria](docs/acceptance.md), [command-derived minimum suit
 
 ## Run locally
 
-These instructions are for developers and operators. Preview users sign in to an operator-enabled account with test credit and send a message; they do not configure a provider. Registration alone grants no model access.
+The source build defaults to **local BYOK**: connect your own model without a Feather account. Hosted preview users instead sign in to an operator-enabled account with credit; registration alone grants no hosted model access.
 
 Requirements: macOS, `uv >= 0.9`, Node.js `>= 24`, and npm. Managed browsing additionally requires installed Google Chrome or Chromium.
 
@@ -43,7 +43,13 @@ npm run build
 npm start
 ```
 
-Open [Athena](http://127.0.0.1:4317). The first start initializes the local database. In a second terminal, configure the service credential with hidden input:
+Open [Athena](http://127.0.0.1:4317). A fresh installation creates a private local identity and opens **Model connection**. Choose DeepSeek, a locally running OpenAI-compatible model, or another Chat Completions API; fill in the model ID, base URL, and your own key. Saving stores the configuration; it does not make a paid test request or claim the provider connection has been verified. The next message uses the selected connection.
+
+Local models can use a loopback URL such as `http://127.0.0.1:11434/v1` without a key; the model server must already be installed and running. Remote endpoints require HTTPS and a key. Only Chat Completions is supported by this form, not native Anthropic Messages or Responses APIs. Changing a remote API address requires entering a key again; Athena never forwards a saved key to a different address. Model changes create immutable profiles and an audited context boundary for the current idle conversation; finish or stop an active task first.
+
+Local onboarding is restricted to loopback listeners with no `ATHENA_CLOUD_URL` or `ATHENA_PUBLIC_ORIGIN`. Existing local accounts or pre-account history keep their original login/registration flow and are never silently merged. To try BYOK independently, set `ATHENA_DATA_DIR` to a new directory outside the checkout. Exposed listeners do not gain automatic local sign-in. A Mac bundle built without `--cloud-url` follows the same BYOK flow; hosted bundles retain hosted authentication.
+
+The operator CLI remains available for legacy/account installations. In a second terminal, configure a credential with hidden input:
 
 ```sh
 uv run --directory backend python -m athena.admin provider-key
@@ -56,7 +62,7 @@ Alternatively, read a credential from a local file without printing it:
 uv run --directory backend python -m athena.admin provider-key --file /path/to/private/key.txt
 ```
 
-The default profile uses the official DeepSeek API and `deepseek-flash` (DeepSeek V4.1 Flash). A server-side `DEEPSEEK_API_KEY` environment variable takes precedence over the saved default credential. Saved credentials stay in the local database and are never returned to the client. They are not yet stored in the system keychain. Credential changes need no restart.
+The default profile uses the official DeepSeek API and `deepseek-flash` (DeepSeek V4.1 Flash). A server-side `DEEPSEEK_API_KEY` environment variable takes precedence for the original `default` profile. Profiles created by the BYOK form use their own saved credential. Saved credentials stay in the local database and are never returned to the client. They are not yet stored in the system keychain. Credential changes need no restart.
 
 For frontend development, use `npm run dev`: Vite serves port 5173 and proxies API requests to the backend on port 4317.
 

@@ -1,0 +1,12 @@
+.local-setup { width: min(100%, 32rem); margin-inline: auto; text-align: start; }
+.local-setup header { margin-block-end: 1.5rem; }
+.local-setup h2 { margin-block: 0 .5rem; font-weight: 500; }
+.local-setup header p, .local-setup-note { color: var(--muted, #79717b); font-size: .9rem; line-height: 1.6; }
+.local-setup fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 1rem; }
+.local-setup label { display: grid; gap: .4rem; font-size: .9rem; }
+.local-setup input, .local-setup select { width: 100%; min-height: 2.8rem; box-sizing: border-box; color: inherit; background: var(--surface, #faf8f5); border: 1px solid var(--line, #ddd7dc); border-radius: .5rem; padding: .65rem .8rem; font: inherit; }
+.local-setup input:focus, .local-setup select:focus { outline: 2px solid var(--accent, #806881); outline-offset: 2px; }
+.local-setup-note { margin-block: .1rem .4rem; }
+.local-setup-actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-block-start: 1.2rem; }
+.local-setup-actions button { min-height: 2.7rem; padding-inline: 1.2rem; }
+.local-setup [role='alert'] { margin-block-start: 1rem; }

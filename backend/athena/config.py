@@ -32,6 +32,13 @@ class Config:
     cloud_url: str = ""
     public_origin: str = ""
     execution_socket: str = ""
+    bind_host: str = "127.0.0.1"
+    local_setup_enabled: bool = False
+
+    @property
+    def local_setup(self) -> bool:
+        return (self.local_setup_enabled and not self.cloud_url and not self.public_origin
+                and self.bind_host in ("127.0.0.1", "::1"))
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -48,6 +55,8 @@ class Config:
             cloud_url=os.environ.get("ATHENA_CLOUD_URL", ""),
             public_origin=os.environ.get("ATHENA_PUBLIC_ORIGIN", ""),
             execution_socket=os.environ.get("ATHENA_EXECUTION_SOCKET", ""),
+            bind_host=os.environ.get("ATHENA_BIND_HOST", "127.0.0.1"),
+            local_setup_enabled=True,
         )
 
     @property

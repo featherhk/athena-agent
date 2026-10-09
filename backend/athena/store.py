@@ -26,8 +26,9 @@ def uid() -> str:
 
 
 class Store:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, local_setup=False):
         self.path = path
+        self.local_setup = local_setup
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="athena-db")
         self._connection: sqlite3.Connection | None = None
 
@@ -142,8 +143,9 @@ class Store:
         identifier = uid()
         project = f"personal:{user_id}" if user_id else "personal"
         def create(db):
+            from .local_setup import initial_profile
             db.execute("INSERT OR IGNORE INTO projects VALUES (?, '我的事情')", (project,))
-            db.execute("INSERT INTO sessions(id,project_id,title,created_at,user_id) VALUES (?,?,?,?,?)", (identifier, project, title, now(), user_id))
+            db.execute("INSERT INTO sessions(id,project_id,title,created_at,user_id,model_profile_id) VALUES (?,?,?,?,?,?)", (identifier, project, title, now(), user_id, initial_profile(db, user_id) if self.local_setup else 'default'))
         await self.call(create)
         return identifier
 
