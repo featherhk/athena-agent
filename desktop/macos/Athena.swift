@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func presentOnLaunch() {
         // An explicit launch must have a visible result, including after Quit.
         // Recalling Athena never opens the microphone.
-        showCompanion()
+        showCompanion(action: "present")
     }
 
     private func makeWindow() {
@@ -168,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func toggleCompanion() {
-        if window.isVisible { hideCompanion() } else { showCompanion() }
+        if window.isVisible && companionMode != .avatar { hideCompanion() } else { showCompanion() }
     }
 
     private func showCompanion(action: String = "show") {
@@ -183,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.makeKeyAndOrderFront(nil)
         DesktopHitRegions.shared.visibilityChanged()
         scene.setPresented(true)
-        if webView.isLoading || webView.isHidden { pendingDesktopAction = action }
+        if webView.isLoading || webView.isHidden || !isLocal(webView.url) { pendingDesktopAction = action }
         else { sendDesktopAction(action) }
     }
 
@@ -205,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func stopWork() { sendDesktopAction("stop") }
 
     private func sendDesktopAction(_ action: String) {
-        guard ["show", "new", "history", "menu", "stop", "reset", "hidden"].contains(action), isLocal(webView.url) else { return }
+        guard ["present", "show", "new", "history", "menu", "stop", "reset", "hidden"].contains(action), isLocal(webView.url) else { return }
         sendDesktopDetail(["action": action])
     }
 
@@ -521,7 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingLabel.isHidden = true; webView.isHidden = false
         statusItem?.button?.toolTip = "Athena"
         if let action = pendingDesktopAction { pendingDesktopAction = nil; sendDesktopAction(action) }
-        else { sendDesktopAction(window.isVisible ? "show" : "hidden") }
+        else { sendDesktopAction(window.isVisible ? (companionMode == .avatar ? "present" : "show") : "hidden") }
         sendDesktopDetail(["action": "state", "scope": scene.observationScope, "desktop": scene.observation()])
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

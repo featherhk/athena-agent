@@ -66,9 +66,13 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             try require(window.isVisible, "Explicit launch hid the companion after a previous launch")
             passed.append("explicit-launch-is-visible-after-a-previous-launch")
             try require(window.frame.width == 180 && window.frame.height == 170, "Launch did not begin with the small avatar surface")
+            try await wait { await self.js("events.some(e=>e.action==='present')&&!events.some(e=>e.action==='show')") as? Bool == true }
+            try invoke("toggleCompanion")
+            try await wait { await self.js("events.filter(e=>e.action==='show').length===1") as? Bool == true }
+            try require(window.isVisible, "Shortcut hid the collapsed owl instead of opening the input")
             await send(["action": "resize", "mode": "compact"])
             try await wait { self.window.frame.width == 560 && self.window.frame.height == 260 }
-            passed.append("avatar-launch-expands-to-compact-input-on-request")
+            passed.append("avatar-launch-presents-without-expanding-and-shortcut-opens-input-in-one-step")
             let constrained = DesktopCompanion.frame(mode: .expanded, visibleFrame: NSRect(x: -400, y: -300, width: 320, height: 240))
             try require(NSRect(x: -400, y: -300, width: 320, height: 240).contains(constrained), "Panel exceeded small secondary screen")
             try require(!DesktopCompanion.trusts(frameIsMain: false, frameURL: origin, origin: origin, currentURL: origin), "Subframe trusted")
