@@ -97,6 +97,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             try require(draft == "Keep my draft" && proof == 37, "Hide/show reloaded the document or draft")
             passed.append("hide-show-preserves-document-draft-and-sends-background")
             passed.append("all-hidden-suspends-pointer-timer-and-recall-restores-it")
+            try await closeAndReopen()
             _ = await js("document.getElementById('download').click()")
             try await wait { self.host.fixtureCompletedDownloads == 1 }
             let bytes = try Data(contentsOf: host.fixtureDownloadDestination!)
@@ -175,6 +176,36 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             passed.append("native-reset-closes-scene-and-loads-default-without-mutation")
             finish(nil)
         } catch { finish(error) }
+    }
+    private func closeAndReopen() async throws {
+        // Guard the old invalid-window crash during Close followed by Reopen.
+        // The production companion is borderless; enable Close only in this
+        // fixture so performClose must exercise the real NSWindowDelegate path.
+        let originalStyle = window.styleMask
+        defer { window.styleMask = originalStyle }
+        window.styleMask.formUnion([.titled, .closable])
+        try require(!window.isReleasedWhenClosed && window.delegate === host,
+                    "Companion must retain its window and intercept native Close")
+        let originalWindow = ObjectIdentifier(window!)
+        let originalWeb = ObjectIdentifier(web!)
+        let backgrounds = await js("backgroundCount") as? Int ?? -1
+        for cycle in 1...5 {
+            window.performClose(nil)
+            try require(!window.isVisible, "performClose did not reach the companion close handler")
+            try require(!DesktopHitRegions.shared.fixtureTimerActive,
+                        "Native Close left pointer tracking running")
+            try await wait { await self.js("backgroundCount") as? Int == backgrounds + cycle }
+            let reopened = host.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+            try await wait { self.window.isVisible }
+            let draft = await js("document.getElementById('draft').value") as? String
+            let proof = await js("window.proof") as? Int
+            try require(reopened && ObjectIdentifier(window!) == originalWindow
+                        && ObjectIdentifier(web!) == originalWeb && web.window === window
+                        && window.contentView?.subviews.contains(where: { $0 === web }) == true
+                        && draft == "Keep my draft" && proof == 37,
+                        "Native Close/Reopen replaced the window, WebView or draft on cycle \(cycle)")
+        }
+        passed.append("native-perform-close-reopen-five-cycles-retain-window-webview-document-draft")
     }
     private func pointerRouting() async throws {
         guard CGPreflightPostEventAccess() else { pointerStatus = "not-tested-os-post-event-access-unavailable"; return }
