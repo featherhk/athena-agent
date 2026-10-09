@@ -10,7 +10,7 @@ import jsonschema
 from .config import Config
 from .prompt import read_skill
 from .store import Store, now, uid
-from .protection import protected_command
+from .protection import command_environment, protected_command
 from .profiles import Models
 from .preferences import preference_schema, read_preferences, update_preferences
 from .registry import Registry, COMPONENT_PLACEMENTS
@@ -128,10 +128,7 @@ class ToolRunner:
         workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
         artifact_id = uid()
         path = self.config.data_dir / "artifacts" / f"{artifact_id}.txt"
-        # Child commands do not inherit application/provider secrets.
-        allowed = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT", "COMSPEC")
-        env = {key: os.environ[key] for key in allowed if key in os.environ}
-        env["ATHENA_WORKSPACE"] = str(workspace)
+        env = command_environment(workspace)
         extension_area = self.config.data_dir / "extensions" / user
         if stdin is None:
             from .policies import PolicyRunner

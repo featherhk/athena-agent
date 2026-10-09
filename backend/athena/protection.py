@@ -1,8 +1,24 @@
 """Platform boundary for agent-created processes. The application is never writable."""
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
+
+
+def command_environment(workspace):
+    """Use Athena's interpreter and libraries without inheriting operator secrets."""
+    allowed = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT", "COMSPEC")
+    env = {key: os.environ[key] for key in allowed if key in os.environ}
+    # Keep a venv executable's lexical path: resolving its symlink would select
+    # the base interpreter and lose the dependencies installed in that venv.
+    python = Path(sys.executable).absolute()
+    env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", os.defpath)
+    env["ATHENA_PYTHON"] = str(python)
+    env["ATHENA_WORKSPACE"] = str(workspace)
+    env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
 
 
 def protected_command(command, config, readable, writable, *, timeout=300):
@@ -21,6 +37,12 @@ def protected_command(command, config, readable, writable, *, timeout=300):
         return json.dumps(str(Path(value).resolve()))
     # Child processes inherit the same Seatbelt restrictions, including spawned shells.
     exceptions = " ".join(f"(require-not (subpath {path(value)}))" for value in readable)
+    # Shell cd/getcwd need metadata on each ancestor of an allowed directory.
+    # Permit only those literal directories, not their contents or siblings.
+    data = config.data_dir.resolve()
+    ancestors = {parent for value in readable for parent in Path(value).resolve().parents
+                 if parent == data or parent.is_relative_to(data)}
+    traversal = " ".join(f"(literal {path(value)})" for value in sorted(ancestors))
     profile = f'''(version 1)
 (allow default)
 (deny file-write* (subpath {path(config.core_dir)}))
@@ -29,4 +51,6 @@ def protected_command(command, config, readable, writable, *, timeout=300):
 (deny file-read* (require-all (subpath {path(config.data_dir)}) {exceptions}))
 (deny file-write* (require-all (subpath {path(config.data_dir)}) {" ".join(f"(require-not (subpath {path(value)}))" for value in writable)}))
 '''
+    if traversal:
+        profile += f"(allow file-read-metadata {traversal})\n"
     return ["/usr/bin/sandbox-exec", "-p", profile, "/bin/sh", "-c", command]
