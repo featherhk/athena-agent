@@ -61,3 +61,22 @@ reads; parent directory listings and core/database/foreign-account/extension wri
 also remain blocked. The related execution, policy, voice-environment and bundle
 suite passed 74 tests. These are synthetic local checks, not a new installed-model
 Excel acceptance report.
+
+## Build 19 installed follow-up: partial improvement
+
+A new ordinary Excel request used the shipped Python and workspace without an
+installation loop. It still created a formula with no saved result, explained
+the missing LibreOffice dependency to the user, then replaced the formula with
+the static total 67. This is not an acceptable formula-preserving delivery.
+The next candidate includes locked XlsxWriter and progressive creation guidance:
+for a new workbook whose inputs and arithmetic are known, save both the formula
+and its independently checked result. Existing workbook edits still use openpyxl;
+neither library is described as a general formula calculation engine.
+
+A fresh diagnostic request read the guide and used bounded, read-only samples,
+without the invented compression threshold. However, it still called memory a
+likely cause despite near-zero sampled swapping and no current pressure evidence.
+That trial only partially passed. The guide now explicitly withholds that inference
+when the supporting evidence is absent, and does not promise that a pressure color
+alone establishes the cause of a slowdown. A new installed-model trial remains
+necessary for both behaviors.

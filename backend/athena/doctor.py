@@ -9,6 +9,7 @@ import httpx  # noqa: F401
 import uvicorn  # noqa: F401
 import jsonschema  # noqa: F401
 import openpyxl  # noqa: F401
+import xlsxwriter  # noqa: F401
 from .config import require_free_threading
 
 

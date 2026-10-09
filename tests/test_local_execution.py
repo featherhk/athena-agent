@@ -87,6 +87,44 @@ print(json.dumps({"file": "日常开支.xlsx", "gil_enabled": sys._is_gil_enable
 
 
 @local_sandbox
+async def test_new_excel_keeps_formula_and_verified_cache_in_user_preview(engine, store, config, monkeypatch):
+    from athena.spreadsheet_preview import xlsx_preview
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    session = await store.session()
+    code = '''import json, sys
+from decimal import Decimal
+import xlsxwriter
+from openpyxl import load_workbook
+amounts = [Decimal("12"), Decimal("35"), Decimal("20")]
+with xlsxwriter.Workbook("带公式的开支.xlsx") as book:
+    sheet = book.add_worksheet("开支")
+    money = book.add_format({"num_format": "0.00"})
+    sheet.write_row("A1", ["项目", "金额"])
+    for row, (name, amount) in enumerate(zip(["早餐", "午餐", "交通"], amounts), 1):
+        sheet.write(row, 0, name)
+        sheet.write_number(row, 1, float(amount), money)
+    sheet.write("A5", "合计")
+    sheet.write_formula("B5", "=SUM(B2:B4)", money, float(sum(amounts)))
+formula = load_workbook("带公式的开支.xlsx", data_only=False).active["B5"].value
+cached = load_workbook("带公式的开支.xlsx", data_only=True).active["B5"].value
+assert formula == "=SUM(B2:B4)" and cached == 67
+assert not sys._is_gil_enabled()
+print(json.dumps({"formula": formula, "cached": cached}))
+'''
+    result = await engine.tools.shell({"command": 'cd "$ATHENA_WORKSPACE" && python3 -c ' + shlex.quote(code)}, session, None)
+    assert result["exit_code"] == 0, result
+    assert json.loads(result["output"]) == {"formula": "=SUM(B2:B4)", "cached": 67}
+    output = config.data_dir / "files" / "legacy" / session / "带公式的开支.xlsx"
+    preview = xlsx_preview(output.read_bytes())
+    sheet = preview["sheets"][0]
+    cell = sheet["cells"][sheet["row_numbers"].index(5)][1]
+    assert cell["kind"] == "formula" and cell["formula"].lstrip("=") == "SUM(B2:B4)"
+    assert cell["formula_status"] == "saved" and float(cell["raw"]) == 67
+    assert cell["display"] == "67.00"
+    assert preview["formula_results"] == "not_recalculated"  # Preview must not claim to be an engine.
+
+
+@local_sandbox
 def test_workspace_traversal_keeps_data_contents_and_other_accounts_protected(config, tmp_path, monkeypatch):
     home = tmp_path / "Synthetic Home"
     (home / ".secrets").mkdir(parents=True)

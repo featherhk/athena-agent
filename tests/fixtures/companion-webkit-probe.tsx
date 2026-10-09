@@ -345,6 +345,17 @@ async function run() {
     nativeShow(); await until(() => document.querySelector('.companion-task-attention'), 'background help status'); await delay(180);
     check('background_help_appears_in_existing_status_without_moving_controls', document.querySelector('.companion-task-attention').textContent.includes('Needs your reply')
       && inside(document.querySelector('.companion-task-attention')) && sameAnchors(beforeAttention, shellAnchors()), { before: beforeAttention, after: shellAnchors() });
+    const idleRuns = snapshot.runs;
+    for (const [phase, label] of [['thinking', 'Thinking it through'], ['executing', 'Taking action'], ['responding', 'Writing a reply']]) {
+      snapshot.runs = [{ id: 'foreground-status', status: 'running', phase }, ...idleRuns]; emit();
+      await until(() => document.querySelector('.companion-status')?.textContent === label, `foreground ${phase} status`);
+      check(`current_${phase}_status_is_not_replaced_by_background_attention`, !document.querySelector('.companion-task-attention')
+        && document.querySelector('.companion-status').getAttribute('role') === 'status');
+    }
+    snapshot.runs = idleRuns; emit();
+    await until(() => document.querySelector('.companion-task-attention'), 'idle background help restored');
+    check('background_attention_returns_after_current_work_finishes_without_marking_it_read', document.querySelector('.companion-task-attention').textContent.includes('Needs your reply')
+      && calls.filter(item => item.path === '/api/activity/ack').length === 0);
     await nativeClick(document.querySelector('.companion-task-attention')); await until(() => document.querySelector('[data-app-view="activity"]'), 'background help opened');
     check('background_attention_opens_pending_question_without_acknowledging_or_executing', document.querySelector('[data-app-view="activity"]').textContent.includes('Choose the documents to organize')
       && calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop') || item.path === '/api/activity/ack').length === requestsBeforeAttention);
