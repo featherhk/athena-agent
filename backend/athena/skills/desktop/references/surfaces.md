@@ -1,6 +1,6 @@
 # 桌面组件与真实观察
 
-先从 `app list` 找当前 Mac 客户端，再读取 `app snapshot`。`state.desktop` 是带观察时间的宿主语义状态；它不是截图、像素检查或第三方应用的任意 DOM。`supported:true,platform:"macos"` 表示此宿主提供桌面组件；`presented` 表示召回入口的呈现状态。屏幕列表是 `screens:[{id,frame,visible_frame,scale}]`。`frame/visible_frame` 是全局左上坐标、单位为 macOS point；`scale` 是屏幕缩放倍率，不要把 point 当物理像素。
+先用 `runtime {"op":"app","args":{"action":"list"}}`，从返回的 `clients` 找当前 Mac 客户端；再用 `runtime {"op":"app","args":{"action":"snapshot","client_id":"实际返回的客户端ID"}}`。这是 `snapshot` 操作，不是 `observe`。`state.desktop` 是带观察时间的宿主语义状态；它不是截图、像素检查或第三方应用的任意 DOM。`supported:true,platform:"macos"` 表示此宿主提供桌面组件；`presented` 表示召回入口的呈现状态。屏幕列表是 `screens:[{id,frame,visible_frame,scale}]`。`frame/visible_frame` 是全局左上坐标、单位为 macOS point；`scale` 是屏幕缩放倍率，不要把 point 当物理像素。
 
 ## 注册与布局
 

@@ -15,7 +15,7 @@ enum DesktopCompanion {
         let margin: CGFloat = 12
         let area = visibleFrame.insetBy(dx: min(margin, visibleFrame.width / 4), dy: min(margin, visibleFrame.height / 4))
         // Answers grow upwards. The input must not slide sideways when a reply arrives.
-        let desired = NSSize(width: 560, height: mode == .compact ? 260 : min(680, max(260, preferredHeight ?? 680)))
+        let desired = NSSize(width: 560, height: min(680, max(260, preferredHeight ?? (mode == .compact ? 260 : 680))))
         let size = NSSize(width: min(desired.width, area.width), height: min(desired.height, area.height))
         let center = anchor?.x ?? area.midX
         let bottom = anchor?.y ?? min(area.minY + 72, area.maxY - size.height)

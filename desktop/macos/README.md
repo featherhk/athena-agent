@@ -8,7 +8,7 @@ Only the local sidecar's trusted main document receives the frozen `window.__ATH
 
 The companion loads `/?desktop=companion` and accepts:
 
-- `resize` with `mode: compact | expanded`; desired sizes are 560×260 and 560×680 macOS points, clamped to the current screen's visible area. Expanded mode accepts a measured `height` from 260 to 680 points to avoid excess space around short answers.
+- `resize` with `mode: compact | expanded`; desired sizes are 560×260 and 560×680 macOS points, clamped to the current screen's visible area. Both modes accept a measured `height` from 260 to 680 points: multiline drafts and Stop remain reachable in compact mode, while short answers avoid excess space in expanded mode. Recall retains the last measured height.
 - `hide`, `observe`, and `hitRegions` (DOM viewport rectangles).
 - `scene` with `scope: owner:session`, `session_id`, and up to 32 component specifications. An empty scope/session with an empty list clears the scene. Replacing the scope closes the previous account/session's panels.
 

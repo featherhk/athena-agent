@@ -18,6 +18,8 @@ html[data-desktop],html[data-desktop] body,html[data-desktop] #root { background
 .desktop-companion .composer-area { position:relative; padding:10px 0 0; margin-top:0; width:100%; max-height:65%; overflow:visible; order:3; flex-shrink:0; }
 .desktop-companion .composer-wrap { width:100%; max-width:none; }
 .desktop-companion .composer { gap:7px; padding:9px 10px 9px 13px; border-radius:23px; align-items:center; box-shadow:0 3px 14px #35293f0d; }
+/* The compact native panel is not a phone: keep Stop beside the input. */
+.desktop-companion .composer[data-task-active='true'] { display:flex; }
 .desktop-companion .composer textarea { font-size:15px; line-height:1.6; padding:7px 0; min-height:36px; max-height:96px; }
 .desktop-companion .composer .send { border-radius:50%; width:34px; height:34px; }
 .desktop-companion .composer .send.stop { width:38px; height:38px; }

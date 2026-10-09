@@ -13,6 +13,6 @@ Mac 可以用快捷键召回或收起 Athena 的形象及输入区域。默认�
 
 需要了解用户当前宿主，用 `runtime {"op":"app","args":{"action":"list"}}` 找实际客户端，再用 `action:"snapshot",client_id` 读取 `state.desktop`。必须检查 `stale`、`platform` 和 `supported`；缺省字段表示没有桌面观察，不等于已支持。网页和 iOS 的 `supported:false` 不会把桌面组件退回聊天冒充完成。
 
-在 Mac 桌面创建或改变交互时读 [references/surfaces.md](references/surfaces.md)，沿用 registry 与独立 HTML 文件。注册、宿主显示和任务实际效果分别验证。绘制一个吃文件的形象不等于文件已移动；真实文件操作仍需 CLI/工具结果与必要的可恢复原件。原生宿主尚未提供的文件拖入、系统对象拖动或点击穿透行为不能用动画假装已接通。
+在 Mac 桌面创建或改变交互时用 `runtime {"op":"skill","args":{"name":"desktop","path":"references/surfaces.md"}}` 读 [桌面组件约定](references/surfaces.md)，沿用 registry 与独立 HTML 文件。注册、宿主显示和任务实际效果分别验证。绘制一个吃文件的形象不等于文件已移动；真实文件操作仍需 CLI/工具结果与必要的可恢复原件。原生宿主尚未提供的文件拖入、系统对象拖动或点击穿透行为不能用动画假装已接通。
 
 停止和恢复属于独立宿主；不能用组件遮挡或替换恢复机制。收起形象/组件不是取消正在执行的任务，删除组件也不是撤销文件变更。源码与版本留在用户文件区，不修改应用核心、数据库或凭据。

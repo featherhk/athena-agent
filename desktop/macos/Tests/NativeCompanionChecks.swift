@@ -92,6 +92,20 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             await send(["action": "resize", "mode": "compact"])
             try await wait { self.window.frame == compactFrame }
             passed.append("expand-collapse-preserves-input-width-bottom-anchor-and-skips-unchanged-frames")
+            await send(["action": "resize", "mode": "compact", "height": 304])
+            try await wait { self.window.frame.height == 304 }
+            try require(window.frame.minX == compactFrame.minX && window.frame.minY == compactFrame.minY && window.frame.width == compactFrame.width,
+                        "Multiline compact input moved its width or bottom anchor")
+            await send(["action": "hide"])
+            try await wait { !self.window.isVisible }
+            try invoke("toggleCompanion")
+            try await wait { self.window.isVisible }
+            try require(window.frame.height == 304, "Recall discarded the measured multiline input height")
+            await send(["action": "resize", "mode": "compact"])
+            try await wait { self.window.frame == compactFrame }
+            // This controlled hide was separate from the draft/voice continuity check below.
+            _ = await js("backgroundCount=0")
+            passed.append("compact-multiline-height-and-recall-retain-input-bottom-anchor")
             _ = await js("window.frameMarker=null;addEventListener('message',e=>{if(e.data && 'marker' in e.data)frameMarker=e.data.marker});let f=document.createElement('iframe');f.sandbox='allow-scripts';f.srcdoc=\"<script>parent.postMessage({marker:!!window.__ATHENA_DESKTOP__},'*');webkit.messageHandlers.athenaDesktop.postMessage({action:'hide'});<\\/script>\";document.body.append(f)")
             try await wait { await self.js("window.frameMarker === false") as? Bool == true }
             try require(window.isVisible, "Sandbox iframe hid native panel")

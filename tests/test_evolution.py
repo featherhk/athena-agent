@@ -176,7 +176,7 @@ async def test_request_binding_keeps_code_and_schema_until_next_request(registry
     output = await tools.execute("user_increment", {"value": 4}, session, None, bindings=bindings)
     assert json.loads(output["output"]) == {"value": 5}
     assert (await tools.definitions(session))[-1]["function"]["parameters"] == new_parameters
-    with pytest.raises(jsonschema.exceptions.ValidationError):
+    with pytest.raises(ValueError, match="Required fields: text"):
         await tools.execute("user_increment", {"value": 4}, session, None)
     await operation(tools, session, "tool", "remove", name="user_increment")
     with pytest.raises(ValueError, match="disabled"):

@@ -36,9 +36,9 @@ const nativeState = () => ({ platform: 'macos', supported: true, presented,
 const publishNative = () => dispatch({ action: 'state', scope: nativeScope, desktop: nativeState() });
 window.addEventListener('probe-native-message', event => {
   const body = event.detail; nativePosts.push(body);
-  if (body.action === 'resize') window.webkit.messageHandlers.probe.postMessage({ resize: body.mode === 'expanded'
-    ? { width: 560, height: Math.min(680, Math.max(260, typeof body.height === 'number' ? body.height : 680)) }
-    : { width: 560, height: 260 } });
+  if (body.action === 'resize') window.webkit.messageHandlers.probe.postMessage({ resize: {
+    width: 560, height: Math.min(680, Math.max(260, typeof body.height === 'number' ? body.height : body.mode === 'expanded' ? 680 : 260)),
+  } });
   if (body.action === 'observe') publishNative();
   if (body.action === 'hide') { presented = false; dispatch({ action: 'hidden' }); publishNative(); }
   if (body.action === 'scene') {
@@ -179,6 +179,17 @@ async function run() {
     send(); await until(() => receipts.size === 1 && input().value === '', 'accepted send'); emit();
     await until(() => document.querySelector('[data-task-active="true"]') && innerWidth === 560, 'active task');
     check('send_has_one_bound_durable_receipt', calls.filter(item => item.path.endsWith('/messages')).length === 1 && receipts.size === 1 && snapshot.messages[0].content === draft);
+    await until(() => result(), 'running result open'); await delay(200);
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => !result() && innerHeight === 260, 'collapse running task'); await delay(180);
+    await capture('companion-compact-running');
+    check('compact_running_task_keeps_input_and_stop_inside_panel', inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input()),
+      { viewport: [innerWidth, innerHeight], composer: document.querySelector('.composer').getBoundingClientRect().toJSON(), stop: document.querySelector('.send.stop').getBoundingClientRect().toJSON(), display: getComputedStyle(document.querySelector('.composer')).display });
+    await edit('First line of my next request.\nSecond line adds context.\nThird line stays editable.'); await delay(220);
+    await capture('companion-compact-multiline');
+    check('collapsed_running_task_fits_multiline_draft_and_all_actions', !result() && inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input())
+      && [...document.querySelectorAll('.send-actions button')].every(inside), { viewport: [innerWidth, innerHeight], composer: document.querySelector('.composer').getBoundingClientRect().toJSON() });
+    await edit(''); await delay(180);
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reopen running task');
     await edit('Do not lose this next request.');
     await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden working');
     check('hidden_task_remains_running_once', snapshot.runs[0].status === 'running' && !calls.some(item => item.path.endsWith('/stop')));

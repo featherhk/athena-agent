@@ -1,4 +1,7 @@
 """Internal validation; kept out of the model's always-present tool definition."""
+import json
+import re
+import jsonschema
 from .preferences import preference_schema
 from .registry import COMPONENT_PLACEMENTS
 from .app_controls import TARGETS
@@ -61,6 +64,48 @@ RUNTIME_PROPERTIES = {
     }
 
 RUNTIME_SCHEMA = {"type": "object", "properties": RUNTIME_PROPERTIES, "required": ["op"], "additionalProperties": False}
+
+SKILL_SCHEMA = {"type": "object", "properties": {
+    **{key: RUNTIME_PROPERTIES[key] for key in ("op", "path", "offset", "limit")},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+}, "required": ["op", "name"], "additionalProperties": False}
+
+
+def validate_arguments(value, schema, *, location="arguments", operation=None):
+    """Return repairable contract errors without reflecting argument values or raw schemas."""
+    try:
+        jsonschema.validate(value, schema)
+    except jsonschema.ValidationError as error:
+        def fields(values):
+            return [item for item in values if isinstance(item, str) and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_-]{0,63}", item)][:16]
+        cursor = schema
+        for part in error.absolute_path:
+            if isinstance(part, str) and part in cursor.get("properties", {}) and fields([part]):
+                location += "." + part
+                cursor = cursor["properties"][part]
+            elif type(part) is int and isinstance(cursor.get("items"), dict):
+                location += "[]"
+                cursor = cursor["items"]
+            else:
+                break
+        rule = error.validator
+        if rule == "required":
+            missing = fields(key for key in error.validator_value if not isinstance(error.instance, dict) or key not in error.instance)
+            reason = "Required fields: " + ", ".join(missing)
+        elif rule == "additionalProperties":
+            reason = "Unexpected fields. Allowed fields here: " + ", ".join(fields(error.schema.get("properties", {})))
+        elif rule == "type":
+            reason = "Expected type: " + json.dumps(error.validator_value)
+        elif rule == "enum":
+            reason = "Use an allowed value from the operation's skill or tool definition"
+        elif rule in ("minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"):
+            reason = f"{rule}: {error.validator_value}"
+        else:
+            reason = "Value does not match the field's documented format"
+        hint = (' Read skill resources through runtime {"op":"skill","args":{"name":"desktop","path":"SKILL.md"}}; '
+                'replace name with the skill name and path with its relative resource path. Optional fields: offset, limit.'
+                if operation == "skill" else " Read the relevant skill or tool definition for the accepted fields.")
+        raise ValueError(f"Invalid tool arguments at {location}: {reason}. No action was executed.{hint}") from None
 
 # Browser contracts are discovered through its skill, not expanded in the stable
 # model-facing runtime envelope. Individual operations validate allowed fields.

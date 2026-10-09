@@ -24,7 +24,7 @@
 
 ## 观察、选择客户端与核验
 
-`app list` 返回每个客户端的 client_id、当前 session_id、foreground、revision、observed_at、expires_at 与 stale。`app snapshot` 按 client_id 返回页面、文件预览（loading/ready/failed）、工作区、组件位置和可见性、等待事项、固定错误码、是否有未发送改动；不读取草稿、密码、表单值、文件正文、DOM 或剪贴板。观察是客户端报告，不等于截图或真实内容正确性验证；过期状态不能作为当前界面事实。
+`runtime {"op":"app","args":{"action":"list"}}` 的 `clients` 返回每个客户端的 client_id、当前 session_id、foreground、revision、observed_at、expires_at 与 stale；无需额外 scope。用 `runtime {"op":"app","args":{"action":"snapshot","client_id":"实际返回的客户端ID"}}` 获取页面、文件预览（loading/ready/failed）、工作区、组件位置和可见性、等待事项、固定错误码、是否有未发送改动。工具动作名是 `snapshot`，不是前端桥接中的 `observe`。它不读取草稿、密码、表单值、文件正文、DOM 或剪贴板。观察是客户端报告，不等于截图或真实内容正确性验证；过期状态不能作为当前界面事实。
 
 视图动作可带 `client_id` 和 `expected_revision`。`app list` 的 `source` 是当前 run 绑定的消息来源摘要；来源是在前端实际提交目标会话视图并上报成功后、发送消息时保存的，不是临时猜测的窗口。省略 client_id 时优先使用此来源，导航到其他会话后仍保持。来源过期、后台、关闭、重置或登录身份变化会明确拒绝，不回退到另一窗口。只有没有来源的 run（含旧版消息）才选择当前会话唯一的新鲜前台客户端；没有可用客户端返回 frontend_unavailable，多个返回 frontend_ambiguous。失败时没有发送操作，不要声称完成或猜第一个页面就是目标。
 

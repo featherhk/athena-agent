@@ -135,6 +135,12 @@ def read_skill(name):
     return _frontmatter(text)[1].lstrip("\r\n")
 
 
+def resource_reader(name):
+    """Progressive discovery belongs to a loaded skill, not the stable prompt."""
+    return {"read_resource": {"op": "skill", "args": {"name": name, "path": "SKILL.md"}},
+            "resource_help": "Call runtime with read_resource; set args.path to the linked relative file. Optional offset/limit page its contents. Resources are read through this tool, not searched for in the operating system."}
+
+
 def read_skill_resource(name, path="SKILL.md", offset=0, limit=12000):
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 20000:
         raise ValueError("Invalid skill resource page")

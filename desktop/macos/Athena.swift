@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func resizeCompanion(_ mode: DesktopCompanion.Mode, height: CGFloat? = nil) {
         companionMode = mode
-        companionHeight = mode == .expanded ? height : nil
+        companionHeight = height
         let screen = window.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         let anchor = NSPoint(x: window.frame.midX, y: window.frame.minY)

@@ -15,7 +15,7 @@ from .profiles import Models
 from .preferences import preference_schema, read_preferences, update_preferences
 from .registry import Registry, COMPONENT_PLACEMENTS
 from .introspection import Introspection, validate_compaction_plan
-from .runtime_schema import RUNTIME_SCHEMA
+from .runtime_schema import RUNTIME_SCHEMA, SKILL_SCHEMA, validate_arguments
 
 
 def function(name, description, properties, required):
@@ -83,19 +83,21 @@ class ToolRunner:
             extension = bindings.get(name) if bindings is not None else current
             if not current or not extension or extension["user_id"] != current["user_id"]:
                 raise ValueError("Unknown or disabled tool")
-            jsonschema.validate(args, json.loads(extension["parameters"]))
+            validate_arguments(args, json.loads(extension["parameters"]))
             path = self.config.data_dir / extension["file_path"]
             command = f"{shlex.quote(sys.executable)} {shlex.quote(str(path))}"
             return await self.shell({"command": command}, session_id, run_id, json.dumps(args).encode())
         if name == "runtime":
-            if "args" in args:
-                jsonschema.validate(args, schema)
+            operation = args.get("op") if isinstance(args, dict) else None
+            if isinstance(args, dict) and "args" in args:
+                validate_arguments(args, schema, location="call", operation=operation)
                 if "op" in args["args"]:
                     raise ValueError("args cannot override the operation")
                 args = {"op": args["op"], **args["args"]}
-            jsonschema.validate(args, RUNTIME_SCHEMA)
+            validate_arguments(args, SKILL_SCHEMA if operation == "skill" else RUNTIME_SCHEMA,
+                               location="args", operation=operation)
         else:
-            jsonschema.validate(args, schema)
+            validate_arguments(args, schema)
         if name == "exec":
             return await self.shell(args, session_id, run_id)
         if name == "update_frontend":
@@ -253,13 +255,15 @@ class ToolRunner:
             return await self.registry.operate({**args, "kind": "tool",
                 "action": "register" if op == "register_tool" else "remove"}, session_id)
         if op == "skill":
+            from .skillpacks import resource_reader, read_skill_resource
             if args["name"].startswith("user_"):
-                return await self.registry.skill(session_id, args["name"], args.get("path", "SKILL.md"),
-                                                 args.get("offset", 0), args.get("limit", 12000))
-            if any(field in args for field in ("path", "offset", "limit")):
-                from .skillpacks import read_skill_resource
-                return read_skill_resource(args["name"], args.get("path", "SKILL.md"), args.get("offset", 0), args.get("limit", 12000))
-            return {"content": read_skill(args["name"])}
+                result = await self.registry.skill(session_id, args["name"], args.get("path", "SKILL.md"),
+                                                   args.get("offset", 0), args.get("limit", 12000))
+            elif any(field in args for field in ("path", "offset", "limit")):
+                result = read_skill_resource(args["name"], args.get("path", "SKILL.md"), args.get("offset", 0), args.get("limit", 12000))
+            else:
+                result = {"content": read_skill(args["name"])}
+            return {**result, **resource_reader(args["name"])}
         if op == "schedule":
             due = datetime.fromisoformat(args["due_at"])
             if due.tzinfo is None:
