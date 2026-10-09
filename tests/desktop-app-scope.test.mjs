@@ -42,6 +42,9 @@ function fixture() {
   const context = vm.createContext({ nativeActions: { current: () => {} }, uiScope, readDesktopState, desktopReceipt: { current: undefined },
     setDesktopState: value => { state.desktopState = typeof value === 'function' ? value(state.desktopState) : value; },
     setDesktopPresented: value => { presentations.push(value); setDesktopPresented(value, doc); },
+    api: async (path, body) => { calls.push(copy({ action: 'api', path, body })); return body ? { accepted: true } : { ...state.snapshot, cursor: 1 }; },
+    currentGuard: () => { const owner = uiScope.current.owner, session = uiScope.current.session; return () => owner === uiScope.current.owner && session === uiScope.current.session; },
+    setSnapshot: next => { state.snapshot = typeof next === 'function' ? next(state.snapshot) : next; },
     interactionVisible: () => interactionVisible(doc),
     desktopPost: detail => calls.push(copy(detail)),
     submit: text => { calls.push({ action: 'submit', text }); }, navigate: session => { calls.push({ action: 'navigate', session }); },
@@ -156,4 +159,32 @@ test('native hide before React commit keeps observation foreground and desktop v
 test('without a presentation marker, a hidden native receipt remains a background observation', () => {
   const result = observeFrontend(document(), facts(native(false)));
   assert.equal(result.desktop.presented, false); assert.equal(result.foreground, false);
+});
+
+
+test('native effect expiry settles while hidden, but only for the current transient identity', async () => {
+  const f = fixture();
+  f.state.snapshot.cursor = 0;
+  f.state.snapshot.components[0].expires_at = '2026-10-10T00:00:00+00:00';
+  f.doc.hidden = true;
+  f.doc.documentElement.dataset.desktopPresented = 'false';
+  f.render()(action('componentEnded'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls, [
+    { action: 'api', path: '/sessions/trip/components/collector/finish', body: { version: 2 } },
+    { action: 'api', path: '/sessions/trip', body: undefined },
+  ]);
+});
+
+test('late native endings cannot finish persistent files, replacement versions or a departed task', () => {
+  const f = fixture();
+  f.render()(action('componentEnded'));
+  assert.equal(f.calls.length, 0, 'Persistent work has no deadline');
+  f.state.snapshot.components[0].expires_at = '2026-10-10T00:00:00+00:00';
+  const receive = f.render();
+  receive(action('componentEnded', { version: 1 }));
+  receive(action('componentEnded', { scope: 'bob:trip' }));
+  f.move('alice', 'notes');
+  receive(action('componentEnded'));
+  assert.equal(f.calls.length, 0);
 });

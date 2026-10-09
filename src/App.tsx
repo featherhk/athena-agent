@@ -75,6 +75,7 @@ export default function App() {
   const desktopEscape = useRef<() => boolean>(() => false);
   const [desktopState, setDesktopState] = useState<{ scope: string; value: DesktopState } | undefined>();
   const desktopReceipt = useRef<{ scope: string; value: DesktopState } | undefined>(undefined);
+  const [desktopFileFocus, setDesktopFileFocus] = useState<{ scope: string; component: Component } | null>(null);
   const deliveredFiles = useRef(new Set<string>());
   const appRoot = useRef<HTMLDivElement>(null);
   useEffect(() => appRoot.current ? manageModalFocus(appRoot.current) : undefined, []);
@@ -329,7 +330,7 @@ export default function App() {
     }
   }
   function adjustComponent(component: Component, view: ViewChange) { void changeComponentView(component, view).catch(() => {}); }
-  async function presentFile(file: FileEntry, reveal = true) {
+  async function presentFile(file: FileEntry, reveal = true, focus = false) {
     if (desktopTransition.current.blocked) return null;
     if (!desktop) { setInlinePreview(file); setPreview(null); setFiles(null); return null; }
     const owner = uiScope.current.owner;
@@ -347,12 +348,13 @@ export default function App() {
     if (component) {
       setInlinePreview(component.file || file); setPreview(null); setFiles(null);
       setDesktopReplyOpen(false); setDesktopLog(false);
+      if (focus) setDesktopFileFocus({ scope: `${owner}:${sid}`, component });
     }
     return component || null;
   }
   function openFile(file: FileEntry) {
     const isCurrent = currentGuard();
-    void presentFile(file).catch(e => { if (isCurrent()) setError((e as Error).message); });
+    void presentFile(file, true, true).catch(e => { if (isCurrent()) setError((e as Error).message); });
   }
   const delivered = deliveredArtifact(snapshot, location.origin);
   const deliveredKey = delivered && user && session ? `${user.id}:${session}:${delivered.id}:${delivered.content_revision || ''}` : '';
@@ -1186,6 +1188,22 @@ export default function App() {
     if (action === 'new') { setDesktopMinimized(false); setMenu(false); setHistory(false); navigate(null); requestAnimationFrame(() => input.current?.focus({ preventScroll: true })); return; }
     if (action === 'stop') { void stop(); return; }
     if (action === 'reset') { void reset(); return; }
+    if (action === 'componentEnded') {
+      // Native deadlines must settle even while the companion is hidden.
+      // The API independently fences this exact version; a late timer may
+      // never terminate a replacement, another account, or another task.
+      const current = uiScope.current;
+      const component = snapshot.components.find(item => item.id === detail.component_id && item.version === detail.version);
+      if (!user || !session || current.owner !== user.id || current.session !== session
+        || detail.scope !== `${current.owner}:${current.session}` || !component?.expires_at || placementOf(component) !== 'desktop') return;
+      const isCurrent = currentGuard();
+      void api(`/sessions/${session}/components/${component.id}/finish`, { version: component.version }).then(async () => {
+        if (!isCurrent()) return;
+        const next = await api<Snapshot>(`/sessions/${session}`);
+        if (isCurrent()) setSnapshot(old => next.cursor >= old.cursor ? next : old);
+      }).catch(() => { /* The durable deadline is also reaped by the backend. */ });
+      return;
+    }
     if (action === 'submit' || action === 'navigate' || action === 'layout' || action === 'download') {
       const rejectLayout = () => { if (action === 'layout') desktopPost({ action: 'sceneResult', scope: detail.scope, component_id: detail.component_id, version: detail.version, interaction_id: detail.interaction_id, ok: false }); };
       if (!interactionVisible() || recoveryMode || resetting) { rejectLayout(); return; }
@@ -1224,6 +1242,21 @@ export default function App() {
   useEffect(() => { if (desktop) desktopPost(JSON.parse(scene)); }, [desktop, scene]);
   const desktopMetadata = JSON.stringify([preferences, snapshot.components.filter(item => item.file_id).map(item => [item.id, item.version, item.view_revision, item.file])]);
   useEffect(() => { if (desktop && user && session) desktopPost({ action: 'sceneRefresh', scope: `${user.id}:${session}` }); }, [desktop, user?.id, session, desktopMetadata]);
+  useEffect(() => {
+    if (!desktopFileFocus) return;
+    const { scope, component } = desktopFileFocus;
+    const current = snapshot.components.find(item => item.id === component.id && item.version === component.version && !item.view?.hidden
+      && item.file_id === component.file_id && item.file?.content_revision === component.file?.content_revision);
+    if (scope !== `${uiScope.current.owner}:${uiScope.current.session}` || !current) { setDesktopFileFocus(null); return; }
+    const observed = desktopState?.scope === scope ? desktopFilePreview(current.file || null, [current], desktopState.value) : null;
+    if (observed?.status === 'ready') {
+      // Only an explicit human file click takes keyboard focus. Automatic
+      // delivery and model preview requests leave the user's current app alone.
+      desktopPost({ action: 'focusSurface', scope, component_id: current.id, version: current.version,
+        file_id: current.file_id, content_revision: current.file?.content_revision });
+      setDesktopFileFocus(null);
+    } else if (observed?.status === 'failed') setDesktopFileFocus(null);
+  }, [desktopFileFocus, desktopState, snapshot.components, user?.id, session]);
   useEffect(() => {
     if (!desktop || !appRoot.current) return;
     let scheduled = 0, lastSize = '', lastRegions = '', lastDragRegions = '';

@@ -80,6 +80,7 @@ export function desktopScene(owner: string | null, session: string | null, compo
       && item.active !== false && item.active !== 0
       && (!item.file_id || (item.file?.id === item.file_id && typeof item.file.content_revision === 'string' && item.file.content_revision.length > 0 && item.file.content_revision.length <= 128))).slice(0, 32)
       .map(item => ({ id: item.id, version: item.version, view_revision: item.view_revision || 0, title: item.title,
+        ...(item.expires_at ? { expires_at: item.expires_at } : {}),
         ...(item.file_id && item.file ? { file_id: item.file_id, content_revision: item.file.content_revision || null } : {}),
         ...Object.fromEntries(Object.entries(item.view || {}).filter(([key]) => ['hidden', 'x', 'y', 'width', 'height', 'screen_id'].includes(key))) })) };
 }

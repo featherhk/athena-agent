@@ -165,3 +165,12 @@ test('native hide changes interaction visibility even if WebKit still reports th
   assert.equal(interactionVisible(document), false);
   window.happyDOM.abort();
 });
+
+
+test('transient scene forwards its absolute deadline without extending on reconciliation', () => {
+  const deadline = '2026-10-10T00:00:00+00:00';
+  const effect = { id: 'fireworks', version: 3, title: 'Fireworks', placement: 'desktop', expires_at: deadline };
+  assert.equal(desktopScene('alice', 'trip', [effect]).items[0].expires_at, deadline);
+  assert.deepEqual(desktopScene('alice', 'trip', [effect]), desktopScene('alice', 'trip', [effect]));
+  assert.equal('expires_at' in desktopScene('alice', 'trip', [{ ...effect, expires_at: null }]).items[0], false);
+});
