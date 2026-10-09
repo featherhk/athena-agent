@@ -49,7 +49,7 @@ ${companion ? `final class OfflineDocument: NSObject, WKURLSchemeHandler {
   // A hidden window plus a JavaScript document.hidden override is not an end-to-end fixture.
   window.center(); window.makeKeyAndOrderFront(nil); window.makeFirstResponder(web); NSApp.activate(ignoringOtherApps:true)
   ${companion ? 'web.load(URLRequest(url:URL(string:"athena-probe://offline/?desktop=companion")!))' : 'web.loadHTMLString(try! String(contentsOfFile:CommandLine.arguments[1],encoding:.utf8),baseURL:nil)'}
-  Task { try? await Task.sleep(for:.seconds(${companion ? 35 : 20})); finish(["error":"native_timeout","last_progress":lastProgress]) }
+  Task { try? await Task.sleep(for:.seconds(${companion ? 55 : 20})); finish(["error":"native_timeout","last_progress":lastProgress]) }
  }
  func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
   if message.name == "athenaDesktop" {
@@ -61,9 +61,13 @@ ${companion ? `final class OfflineDocument: NSObject, WKURLSchemeHandler {
   }
   // Synthetic native events are confined to this offline nonpersistent test window.
   if let body = message.body as? [String:Any], let point = body["nativeClick"] as? [String:Double], let x = point["x"], let y = point["y"] {
-   window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
-   for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-    if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x:x,y:web.bounds.height-y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) { window.sendEvent(event) }
+   window.makeKeyAndOrderFront(nil); window.makeFirstResponder(web); NSApp.activate(ignoringOtherApps:true)
+   // Activation can settle asynchronously when another local test/app was
+   // focused. Deliver the fixture click after that turn of the AppKit loop.
+   DispatchQueue.main.asyncAfter(deadline:.now() + 0.06) {
+    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+     if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x:x,y:self.web.bounds.height-y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: self.window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) { self.window.sendEvent(event) }
+    }
    }
    return
   }
@@ -98,7 +102,7 @@ ${companion ? `final class OfflineDocument: NSObject, WKURLSchemeHandler {
 const binary = join(output, 'probe');
 const compilation = spawnSync('xcrun', ['swiftc', '-parse-as-library', join(output, 'Probe.swift'), '-o', binary], { encoding: 'utf8', timeout: 90000 });
 if (compilation.status !== 0) throw new Error(compilation.stderr || compilation.error?.message);
-const run = spawnSync(binary, [join(output, 'probe.html'), join(output, 'surface.png')], { encoding: 'utf8', timeout: companion ? 40000 : 25000 });
+const run = spawnSync(binary, [join(output, 'probe.html'), join(output, 'surface.png')], { encoding: 'utf8', timeout: companion ? 60000 : 25000 });
 writeFileSync(join(output, 'receipt.json'), run.stdout || run.stderr);
 writeFileSync(join(output, 'progress.log'), run.stderr);
 console.log(output);

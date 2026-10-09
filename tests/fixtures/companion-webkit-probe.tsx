@@ -28,6 +28,7 @@ const secondSnapshot = emptySnapshot();
 const observations = [], calls = [], unexpected = [], nativePosts = [], results = {};
 const receipts = new Map(), stops = new Map();
 const appActions = new Map(), actionReceipts = new Map(), previewRequests = [];
+const nativeFileLoads = new Map();
 const resumeEntries = { 'athena-session:probe': 's1' };
 let resumeSequence = 0;
 let failNext = false, failNextPreview = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '', activityItems = [];
@@ -35,20 +36,48 @@ window.addEventListener('athena:background', () => backgroundEvents++);
 const dispatch = detail => window.dispatchEvent(new CustomEvent('athena:desktop', { detail }));
 const nativeState = () => ({ platform: 'macos', supported: true, presented,
   screens: [{ id: '1', frame: { x: 0, y: 0, width: 1512, height: 982 }, visible_frame: { x: 0, y: 25, width: 1512, height: 930 }, scale: 2 }], components: nativeComponents });
-const publishNative = () => dispatch({ action: 'state', scope: nativeScope, desktop: nativeState() });
+const publishNative = () => {
+  nativeComponents = nativeComponents.map(item => ({ ...item, visible: presented && item.state !== 'hidden' }));
+  dispatch({ action: 'state', scope: nativeScope, desktop: nativeState() });
+};
+const currentFile = id => snapshot.files.find(file => file.id === id) || snapshot.messages.flatMap(message => message.attachments || []).find(file => file.id === id);
+const refreshFileComponents = () => { for (const component of snapshot.components) if (component.file_id) component.file = structuredClone(currentFile(component.file_id) || component.file); };
+const loadNativeFile = async (component, retry = 0) => {
+  const identity = `${nativeScope}:${component.id}:${component.version}:${component.content_revision || ''}`;
+  if (!retry && nativeFileLoads.has(identity)) return;
+  nativeFileLoads.set(identity, 'loading');
+  const query = new URLSearchParams();
+  if (component.content_revision) query.set('revision', component.content_revision);
+  if (retry) query.set('retry', String(retry));
+  const response = await fetch(`/api/files/${component.file_id}/preview?${query}`);
+  const preview = await response.json();
+  const state = response.ok && preview.kind !== 'unsupported' ? 'mounted' : 'failed';
+  nativeFileLoads.set(identity, state);
+  const current = nativeComponents.find(item => item.id === component.id && item.version === component.version && item.content_revision === component.content_revision);
+  if (!current) return;
+  current.state = current.visible ? state : 'hidden';
+  if (state === 'failed') current.error_code = 'preview_unavailable'; else delete current.error_code;
+  publishNative();
+};
 window.addEventListener('probe-native-message', event => {
   const body = event.detail; nativePosts.push(body);
   if (body.action === 'resize') window.webkit.messageHandlers.probe.postMessage({ resize: {
-    width: 560, height: Math.min(680, Math.max(260, typeof body.height === 'number' ? body.height : body.mode === 'expanded' ? 680 : 260)),
+    width: body.mode === 'avatar' ? 180 : 560, height: body.mode === 'avatar' ? 170 : Math.min(680, Math.max(260, typeof body.height === 'number' ? body.height : body.mode === 'expanded' ? 680 : 260)),
   } });
   if (body.action === 'observe') publishNative();
   if (body.action === 'hide') { presented = false; dispatch({ action: 'hidden' }); publishNative(); }
   if (body.action === 'scene') {
     nativeScope = body.scope;
-    nativeComponents = body.items.map(item => ({ id: item.id, version: item.version, view_revision: item.view_revision,
-      state: item.hidden ? 'hidden' : 'mounted', visible: presented && !item.hidden,
-      rect: { x: 100, y: 60, width: item.width || 200, height: item.height || 100 }, screen_id: '1' }));
+    nativeComponents = body.items.map(item => {
+      const health = item.file_id ? nativeFileLoads.get(`${nativeScope}:${item.id}:${item.version}:${item.content_revision || ''}`) || 'loading' : 'mounted';
+      return { id: item.id, version: item.version, view_revision: item.view_revision,
+        state: item.hidden ? 'hidden' : health, visible: presented && !item.hidden,
+        rect: { x: 100, y: 60, width: item.width || 200, height: item.height || 100 }, screen_id: '1',
+        ...(item.file_id ? { file_id: item.file_id, content_revision: item.content_revision || null } : {}),
+        ...(health === 'failed' && !item.hidden ? { error_code: 'preview_unavailable' } : {}) };
+    });
     publishNative();
+    for (const item of body.items) if (item.file_id && !item.hidden) void loadNativeFile(item);
   }
 });
 window.fetch = async (path, init) => {
@@ -64,7 +93,7 @@ window.fetch = async (path, init) => {
   }
   else if (path.startsWith('/api/service')) value = { configured: true };
   else if (path === '/api/sessions') value = body ? { id: 's2' } : [{ id: 's1', title: 'Organize my documents', pending: 0 }, { id: 's2', title: 'Another task', pending: 0 }];
-  else if (path === '/api/sessions/s1') value = structuredClone(snapshot);
+  else if (path === '/api/sessions/s1') { refreshFileComponents(); value = structuredClone(snapshot); }
   else if (path === '/api/sessions/s2') value = structuredClone(secondSnapshot);
   else if (path.startsWith('/api/activity')) value = { owner_id: 'probe', items: structuredClone(activityItems), has_more: false };
   else if (path === '/api/frontend/observation') { observations.push(body); value = { accepted: true }; }
@@ -80,8 +109,20 @@ window.fetch = async (path, init) => {
     else value = { kind: 'markdown', content: path.includes('revision=revision-three') ? '# Recovered notes\nPreview recovered in place.' : path.includes('revision=revision-two') ? '# Updated notes\nCanonical file revision.' : '# Original notes\nInitial file revision.', truncated: false };
   }
   else if (path.startsWith('/api/files/provided-invoice/preview')) value = { kind: 'markdown', content: '# Selected invoice\nKeep this attachment accessible.', truncated: false };
-  else if (path === '/api/sessions/s1/components/reader/view') {
-    const component = snapshot.components.find(item => item.id === 'reader');
+  else if (/^\/api\/sessions\/s1\/files\/[^/]+\/presentation$/.test(path)) {
+    const file = currentFile(path.split('/').at(-2));
+    if (!file) throw new Error('File presentation without owned canonical fixture file');
+    let component = snapshot.components.find(item => item.file_id === file.id), created = !component;
+    if (!component) {
+      component = { id: `athena_file_${file.id}`, title: file.name, placement: 'desktop', html: '', version: 1, view_revision: 0,
+        file_id: file.id, file: structuredClone(file), view: { width: 820, height: 520, x: .15, y: .2 } };
+      snapshot.components.push(component);
+    } else if (body.reveal && component.view?.hidden) { component.view.hidden = false; component.view_revision++; }
+    value = { component: structuredClone(component), created }; setTimeout(emit, 0);
+  }
+  else if (/^\/api\/sessions\/s1\/components\/[^/]+\/view$/.test(path)) {
+    const component = snapshot.components.find(item => item.id === path.split('/').at(-2));
+    if (!component || body.version !== component.version || body.view_revision !== component.view_revision) throw new Error('Stale fixture component layout');
     component.view = { ...component.view, ...body.view }; component.view_revision++;
     value = { version: component.version, view: component.view, view_revision: component.view_revision }; setTimeout(emit, 0);
   }
@@ -138,10 +179,25 @@ const capture = async name => {
 const input = () => document.querySelector('.composer textarea');
 const result = () => document.querySelector('.companion-result:not([hidden])');
 const visibleMessage = id => result()?.querySelector(`[data-message-id="${id}"]`);
+const inReadingViewport = element => {
+  if (!element || !result()) return false;
+  const rect = element.getBoundingClientRect(), reading = result().getBoundingClientRect();
+  return rect.height > 0 && rect.bottom > reading.top && rect.top < reading.bottom;
+};
 const escape = (composing = false) => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true, isComposing: composing }));
 const edit = async text => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input(), text); input().dispatchEvent(new Event('input', { bubbles: true })); await delay(70); };
 const send = () => document.querySelector('.composer').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-const nativeClick = async element => { const bounds = element.getBoundingClientRect(); window.webkit.messageHandlers.probe.postMessage({ nativeClick: { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } }); await delay(100); };
+const nativeClick = async element => {
+  let signature = '', stableSince = performance.now();
+  await until(() => {
+    const next = JSON.stringify([innerWidth, innerHeight, element.getBoundingClientRect().toJSON()]);
+    if (signature !== next) { signature = next; stableSince = performance.now(); }
+    return performance.now() - stableSince >= 160;
+  }, 'native click target settled');
+  const bounds = element.getBoundingClientRect();
+  window.webkit.messageHandlers.probe.postMessage({ nativeClick: { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } }); await delay(100);
+};
+const nativeHide = () => window.webkit.messageHandlers.athenaDesktop.postMessage({ action: 'hide' });
 const nativeShow = () => { presented = true; dispatch({ action: 'show' }); publishNative(); };
 const inside = element => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight + 1; };
 const shellAnchors = () => Object.fromEntries(['.companion-avatar', '.composer'].map(selector => {
@@ -162,6 +218,7 @@ const settleShell = async () => {
 // layout, must keep the owl and input in the same place. The offline window's
 // own screen origin is deliberately irrelevant to this content-layout check.
 const clickWithoutShellJump = async (element, name) => {
+  await settleShell();
   const before = shellAnchors(), selectors = Object.keys(before);
   const nodes = selectors.map(selector => document.querySelector(selector));
   const start = performance.now(), firstPost = nativePosts.length, frames = [];
@@ -190,12 +247,26 @@ const repeatOwlToggle = async name => {
   const actions = () => calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop')).length;
   const beforeActions = actions();
   for (let cycle = 1; cycle <= 3; cycle++) {
-    await clickWithoutShellJump(document.querySelector('.companion-avatar'), `${name}_collapse_${cycle}_stays_anchored_every_frame`);
-    check(`${name}_collapse_${cycle}_actually_hides_result`, !result() && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'false');
-    await clickWithoutShellJump(document.querySelector('.companion-avatar'), `${name}_reopen_${cycle}_stays_anchored_every_frame`);
+    await nativeClick(document.querySelector('.companion-avatar'));
+    await until(() => innerWidth === 180 && innerHeight === 170, 'owl-only collapse');
+    await settleShell();
+    check(`${name}_collapse_${cycle}_actually_returns_to_avatar`, !result() && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'false' && !input().getBoundingClientRect().height);
+    await nativeClick(document.querySelector('.companion-avatar'));
+    await until(() => result() && innerWidth === 560, 'owl reopens latest result');
+    await settleShell();
     check(`${name}_reopen_${cycle}_retains_draft_and_does_not_execute`, Boolean(result()) && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true'
       && input() === field && input().value === draft && actions() === beforeActions);
   }
+};
+const revealResult = async () => {
+  if (result()) return;
+  // An already open input-only shell collapses first; a second owl click
+  // reveals the latest result. No model request is needed to inspect it.
+  // The production native drag overlay owns owl clicks and emits this action.
+  // Repeated direct WebKit button clicks are separately exercised above.
+  dispatch({ action: 'avatar' }); await delay(120);
+  if (!result()) { await until(() => innerWidth === 180, 'avatar before reveal'); dispatch({ action: 'avatar' }); }
+  await until(() => result() && innerWidth === 560, 'result revealed');
 };
 const widgetReplies = [];
 window.addEventListener('message', event => {
@@ -215,7 +286,11 @@ const inspectWidget = async (frame, action = 'inspect') => {
 createRoot(document.getElementById('root'), { onUncaughtError: error => window.webkit.messageHandlers.probe.postMessage({ react_error: String(error), stack: error.stack }) }).render(<I18nProvider><App /></I18nProvider>);
 async function run() {
   try {
-    await until(() => input() && innerWidth === 560, 'initial compact companion'); await delay(180);
+    await until(() => input() && innerWidth === 180, 'initial avatar-only companion'); await delay(180);
+    dispatch({ action: 'present' }); await delay(100);
+    check('default_is_only_the_avatar_without_exposed_input_or_history', innerHeight === 170 && !input().getBoundingClientRect().height
+      && inside(document.querySelector('.companion-avatar')) && !result());
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => innerWidth === 560 && inside(input()), 'owl opens input');
     check('default_has_no_header_or_chat_transcript', !document.querySelector('.topbar') && !document.querySelector('.conversation') && !result() && document.querySelector('.companion-avatar'));
     check('compact_input_and_presence_fit', innerHeight === 260 && inside(document.querySelector('.composer')) && inside(document.querySelector('.companion-avatar')), { viewport: [innerWidth, innerHeight] });
     await capture('companion-idle');
@@ -226,12 +301,15 @@ async function run() {
         avatar: document.querySelector('.companion-avatar')?.getBoundingClientRect().toJSON(), dialog: document.querySelector('[data-app-view="authentication"]').getBoundingClientRect().toJSON() });
     check('blocking_login_hides_background_controls_and_keeps_focus_in_dialog', getComputedStyle(document.querySelector('.companion-presence')).visibility === 'hidden'
       && getComputedStyle(document.querySelector('.composer')).visibility === 'hidden' && document.querySelector('[data-app-view="authentication"]').contains(document.activeElement));
+    check('blocking_dialog_removes_native_avatar_drag_overlay', nativePosts.filter(item => item.action === 'companionDragRegions').at(-1)?.regions.length === 0);
     await capture('companion-login');
     await nativeClick(document.querySelector('[data-app-view="authentication"] .dialog-top button'));
     await until(() => !document.querySelector('[data-app-view="authentication"]'), 'native login close');
     check('cancelling_login_preserves_unsent_question', !document.querySelector('[data-app-view="authentication"]') && input().value === 'Keep this question through login.');
     check('cancelling_login_restores_companion_controls', getComputedStyle(document.querySelector('.companion-presence')).visibility === 'visible'
       && getComputedStyle(document.querySelector('.composer')).visibility === 'visible' && inside(document.querySelector('.composer')));
+    await until(() => nativePosts.filter(item => item.action === 'companionDragRegions').at(-1)?.regions.length > 0, 'native avatar drag overlay restored');
+    check('closing_dialog_restores_native_avatar_drag_regions', nativePosts.filter(item => item.action === 'companionDragRegions').at(-1).regions.every(region => region.width > 0 && region.height > 0));
     send(); await until(() => document.querySelector('#username'), 'login reopened');
     for (const [selector, text] of [['#username', 'synthetic'], ['#password', 'fixture-password']]) {
       const field = document.querySelector(selector); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true }));
@@ -240,7 +318,7 @@ async function run() {
     await until(() => observations.some(item => item.session_id === 's1') && !document.querySelector('[data-app-view="authentication"]'), 'logged in');
     check('login_restores_same_question_without_sending_it', input().value === 'Keep this question through login.' && !calls.some(item => item.path.endsWith('/messages')));
     await edit('Please organize these documents.'); const draft = input().value, field = input();
-    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'native hidden observation');
+    nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'native hidden observation');
     check('hiding_keeps_draft_and_does_not_stop_or_send', input() === field && input().value === draft && !calls.some(item => item.path.endsWith('/messages') || item.path.endsWith('/stop')) && backgroundEvents > 0);
     nativeShow(); await until(() => observations.at(-1)?.foreground === true, 'shown observation'); await delay(80);
     check('recall_keeps_same_input_and_restores_focus', input() === field && input().value === draft && document.activeElement === field);
@@ -249,7 +327,7 @@ async function run() {
     await until(() => document.querySelector('[data-task-active="true"]') && innerWidth === 560, 'active task');
     check('send_has_one_bound_durable_receipt', calls.filter(item => item.path.endsWith('/messages')).length === 1 && receipts.size === 1 && snapshot.messages[0].content === draft);
     await until(() => result(), 'running result open'); await delay(200);
-    await clickWithoutShellJump(document.querySelector('.companion-avatar'), 'collapsing_result_keeps_shell_anchored_every_frame');
+    await clickWithoutShellJump(document.querySelector('.companion-result-heading button'), 'collapsing_only_details_keeps_shell_anchored_every_frame');
     await until(() => !result() && innerHeight === 260, 'collapse running task'); await delay(180);
     await capture('companion-compact-running');
     check('compact_running_task_keeps_input_and_stop_inside_panel', inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input()),
@@ -259,10 +337,10 @@ async function run() {
     check('collapsed_running_task_fits_multiline_draft_and_all_actions', !result() && inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input())
       && [...document.querySelectorAll('.send-actions button')].every(inside), { viewport: [innerWidth, innerHeight], composer: document.querySelector('.composer').getBoundingClientRect().toJSON() });
     await edit(''); await delay(180);
-    await clickWithoutShellJump(document.querySelector('.companion-avatar'), 'opening_result_keeps_shell_anchored_every_frame');
+    await revealResult();
     await until(() => result(), 'reopen running task');
     await edit('Do not lose this next request.');
-    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden working');
+    nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'hidden working');
     check('hidden_task_remains_running_once', snapshot.runs[0].status === 'running' && !calls.some(item => item.path.endsWith('/stop')));
     nativeShow(); await until(() => observations.at(-1)?.foreground === true, 'working recalled');
     dispatch({ action: 'stop' }); await until(() => stops.size === 1, 'explicit native stop'); emit();
@@ -277,16 +355,16 @@ async function run() {
     await capture('companion-result');
     document.querySelector('.companion-result-heading button').click(); await until(() => !result() && innerWidth === 560, 'put result away');
     check('putting_result_away_returns_to_companion_without_erasing_it', snapshot.messages.some(item => item.id === 'a1') && input().value === 'Do not lose this next request.');
-    await nativeClick(document.querySelector('.companion-avatar')); await until(() => visibleMessage('a1'), 'avatar reopens result');
+    await revealResult(); await until(() => visibleMessage('a1'), 'avatar reopens result');
     check('avatar_reopens_previous_result_without_new_request', document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true' && calls.filter(item => item.path.endsWith('/messages')).length === 1 && visibleMessage('u1')?.textContent === draft);
-    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hide reading result');
+    nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'hide reading result');
     nativeShow(); await until(() => observations.at(-1)?.foreground === true && visibleMessage('a1'), 'recall reading result');
     check('recall_restores_reading_without_activity_feed_item', visibleMessage('u1') && visibleMessage('a1') && input() === field && input().value === 'Do not lose this next request.');
     document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse before help');
     // The next fixture-native click uses viewport coordinates; wait until the
     // asynchronous native resize has applied before calculating those points.
     await settleShell();
-    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden before help');
+    nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'hidden before help');
     snapshot.runs = [{ id: 'r1', status: 'waiting_user', phase: 'waiting' }];
     snapshot.help_requests = [{ id: 'h1', run_id: 'r1', session_id: 's1', status: 'pending', questions: [{ id: 'q1', question: 'Which month should I start with?', options: [{ label: 'October' }] }] }]; emit();
     await delay(200); nativeShow(); await until(() => document.querySelector('.user-help') && innerWidth === 560, 'recalled pending help');
@@ -297,9 +375,10 @@ async function run() {
     await edit('Do not lose this next request.');
     dispatch({ action: 'history' }); await until(() => document.querySelector('[data-app-view="history"]'), 'history');
     check('history_is_reachable_without_replacing_input', document.querySelector('.session-list')?.textContent.includes('Organize my documents') && input() === field);
+    await settleShell();
     await nativeClick(document.querySelector('.session-list .session.selected')); await delay(250);
     check('selecting_current_history_keeps_completed_reply_and_unsent_draft', !document.querySelector('[data-app-view="history"]') && visibleMessage('a1')?.textContent.includes('Your files are ready.')
-      && input() === field && input().value === 'Do not lose this next request.');
+      && input() === field && input().value === 'Do not lose this next request.', { history: Boolean(document.querySelector('[data-app-view="history"]')), result: Boolean(result()), sameInput: input() === field, draft: input()?.value });
     dispatch({ action: 'menu' }); await until(() => document.querySelector('[data-app-view="menu"]'), 'menu');
     check('menu_retains_account_and_recovery', document.querySelector('[data-app-view="menu"]')?.textContent.includes('Account') && document.querySelector('[data-app-view="menu"]')?.textContent.includes('Reset'));
     await nativeClick(document.querySelector('[data-app-view="menu"] .dialog-top button'));
@@ -331,6 +410,25 @@ async function run() {
     snapshot.messages.push({ id: 'a3', role: 'assistant', content: 'Read one note, then decide what to keep.', status: 'complete', run_id: 'r3' }); emit();
     await until(() => visibleMessage('a3'), 'queued task complete'); await delay(180);
     await repeatOwlToggle('idle_long_result');
+    check('late_mounted_result_follows_latest_answer_after_initial_empty_snapshot', inReadingViewport(visibleMessage('a3'))
+      && result().scrollHeight - result().clientHeight - result().scrollTop <= 3);
+    const reading = result();
+    reading.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true })); reading.scrollTop = 0;
+    reading.dispatchEvent(new Event('scroll', { bubbles: true })); await delay(60);
+    const beforeReading = reading.scrollTop;
+    snapshot.messages.find(message => message.id === 'a3').content += '\n\nMore information arrived while you read earlier messages.'; emit();
+    await until(() => visibleMessage('a3')?.textContent.includes('More information arrived'), 'stream while reading older context');
+    check('new_output_does_not_pull_reader_away_from_older_messages', result() === reading && Math.abs(reading.scrollTop - beforeReading) <= 1);
+    snapshot.runs.find(run => run.id === 'r3').status = 'running'; emit();
+    await until(() => document.querySelector('[data-task-active="true"]'), 'working before minimizing');
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => innerWidth === 180, 'minimized while task runs');
+    snapshot.runs.find(run => run.id === 'r3').status = 'complete';
+    snapshot.messages.find(message => message.id === 'a3').content = 'The current request completed while Athena was minimized.\n\nCURRENT_RESULT_VISIBLE_AFTER_REOPEN'; emit();
+    await delay(160);
+    check('background_completion_does_not_force_avatar_open', innerWidth === 180 && !result());
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result() && innerWidth === 560, 'reopen completed current request'); await delay(180);
+    check('owl_reopen_shows_current_completion_instead_of_only_history', inReadingViewport(visibleMessage('a3'))
+      && visibleMessage('a3').textContent.includes('CURRENT_RESULT_VISIBLE_AFTER_REOPEN') && result().scrollHeight - result().clientHeight - result().scrollTop <= 3);
     await edit('Keep this component draft too.');
     snapshot.components = [{ id: 'note', title: 'Working note', placement: 'inline', version: 1, view_revision: 0, html: noteHTML }]; emit();
     await until(() => document.querySelector('[data-component-id="note"] iframe') && widgetReplies.length > 0, 'inline working note');
@@ -338,14 +436,18 @@ async function run() {
     const editedNote = await inspectWidget(noteFrame, 'edit');
     document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse with inline component');
     check('collapse_hides_reading_surface_even_with_inline_component', document.querySelector('.companion-result')?.hidden && document.querySelector('[data-component-id="note"] iframe') === noteFrame && input().value === 'Keep this component draft too.');
-    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reopen inline component');
+    await revealResult(); await until(() => result(), 'reopen inline component');
     const recalledNote = await inspectWidget(noteFrame);
     check('collapse_reopen_keeps_iframe_document_form_and_selection', document.querySelector('[data-component-id="note"] iframe') === noteFrame && recalledNote.identity === editedNote.identity && recalledNote.text === 'Keep my selected words' && recalledNote.start === 5 && recalledNote.end === 7, recalledNote);
     snapshot.components.push({ id: 'ornament', title: 'Independent ornament', placement: 'overlay', version: 1, view_revision: 0, html: '<span>Independent ornament</span><script>Athena.interact([{id:"ornament",label:"Use ornament",rect:{x:2,y:6,width:12,height:12}}],()=>{});</script>' }); emit();
     await until(() => document.querySelector('[data-component-id="ornament"]'), 'overlay registered');
     check('overlay_is_outside_the_default_reading_card', !document.querySelector('[data-component-id="ornament"]').closest('.companion-result'));
-    await until(() => document.querySelector('[data-component-id="ornament"] .canvas-action') && nativePosts.filter(item => item.action === 'hitRegions').at(-1)?.regions.some(region => region.x === 2 && region.y === 6 && region.width === 12 && region.height === 12), 'overlay native hit region');
-    check('overlay_interactive_rectangle_is_in_native_hit_regions', nativePosts.filter(item => item.action === 'hitRegions').at(-1).regions.some(region => region.x === 2 && region.y === 6 && region.width === 12 && region.height === 12));
+    const hasOrnamentRegion = () => {
+      const rect = document.querySelector('[data-component-id="ornament"] .canvas-action')?.getBoundingClientRect();
+      return rect && rect.width === 12 && rect.height === 12 && nativePosts.filter(item => item.action === 'hitRegions').at(-1)?.regions.some(region => ['x','y','width','height'].every(key => Math.abs(region[key] - rect[key]) < 1));
+    };
+    await until(hasOrnamentRegion, 'overlay native hit region');
+    check('overlay_interactive_rectangle_is_in_native_hit_regions', hasOrnamentRegion());
     await nativeClick(document.querySelector('.companion-menu')); await until(() => document.querySelector('[data-app-view="menu"]'), 'avatar menu');
     check('companion_menu_exposes_history_and_account', document.querySelector('[data-app-view="menu"]').textContent.includes('Previous conversations') && document.querySelector('[data-app-view="menu"]').textContent.includes('Account'));
     escape(); await until(() => !document.querySelector('[data-app-view="menu"]'), 'escape closes menu');
@@ -354,11 +456,12 @@ async function run() {
     check('composition_escape_does_not_dismiss_companion', Boolean(result()) && presented && input().value === 'Keep this component draft too.');
     escape(); await until(() => !result(), 'escape closes reading');
     check('escape_collapses_reading_before_hiding', presented && document.querySelector('[data-component-id="note"] iframe') === noteFrame);
-    escape(); await until(() => !presented, 'escape hides compact companion');
-    check('escape_hides_without_cancelling_or_losing_drafts', calls.filter(item => item.path.endsWith('/stop')).length === 1 && input().value === 'Keep this component draft too.');
+    escape(); await until(() => innerWidth === 180, 'escape minimizes to avatar');
+    check('escape_minimizes_without_cancelling_or_losing_drafts', presented && !input().getBoundingClientRect().height && calls.filter(item => item.path.endsWith('/stop')).length === 1 && input().value === 'Keep this component draft too.');
     nativeShow(); await until(() => observations.at(-1)?.foreground === true, 'recall compact companion');
-    check('recall_preserves_explicitly_collapsed_reading_state', !result() && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'false');
-    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reading restored after escape');
+    await until(() => innerWidth === 560 && inside(input()), 'keyboard recall opens input');
+    check('recall_preserves_explicitly_collapsed_reading_state', !result());
+    await revealResult(); await until(() => result(), 'reading restored after escape');
     snapshot.components = [{ id: 'collector', title: 'Desktop collector', placement: 'desktop', version: 1, view_revision: 0, html: '<button>Collect</button>', view: { width: 80, height: 64, x: .8, y: .2 } }]; emit();
     await until(() => nativePosts.some(item => item.action === 'scene' && item.items?.[0]?.id === 'collector') && observations.some(item => item.desktop?.components?.[0]?.id === 'collector'), 'desktop scene receipt');
     const scene = nativePosts.filter(item => item.action === 'scene' && item.items?.[0]?.id === 'collector').at(-1);
@@ -366,21 +469,39 @@ async function run() {
     check('native_receipt_appears_in_frontend_observation', observations.at(-1).desktop.components[0].state === 'mounted');
     const file = { id: 'report', session_id: 's1', name: 'Notes summary.md', path: 'outputs/notes.md', size: 100, media_type: 'text/markdown', source: 'output', created_at: '2026-10-09T00:00:00Z', content_url: '/api/files/report/content', preview_url: '/api/files/report/preview', content_revision: 'revision-one' };
     snapshot.files = [file]; snapshot.messages.find(message => message.id === 'a3').attachments = [structuredClone(file)]; emit();
+    await until(() => nativeComponents.some(item => item.file_id === file.id && item.state === 'mounted'), 'automatic desktop file delivery');
+    check('completed_file_opens_a_desktop_surface_without_expanding_chat', !result() && !document.querySelector('.file-preview')
+      && snapshot.components.filter(item => item.file_id === file.id).length === 1 && inside(input()));
     const previewReceipt = await applyAction('preview', { file_id: file.id, file });
-    await until(() => result()?.textContent.includes('Original notes'), 'selected attached file preview');
-    check('attached_file_preview_is_displayed_once', previewReceipt.status === 'applied' && result().querySelectorAll('.file-preview[aria-label="Notes summary.md"]').length === 1 && result().querySelectorAll('[data-inline-preview-id="report"]').length === 1);
+    await until(() => observations.at(-1)?.preview?.status === 'ready', 'native file preview observation');
+    check('agent_preview_uses_registered_native_file_and_exact_bytes', previewReceipt.status === 'applied'
+      && nativeComponents.some(item => item.file_id === file.id && item.content_revision === 'revision-one' && item.state === 'mounted')
+      && !document.querySelector('.file-preview') && !result());
+    const filePanel = snapshot.components.find(item => item.file_id === file.id);
+    dispatch({ action: 'layout', scope: 'probe:s1', component_id: filePanel.id, version: filePanel.version,
+      view_revision: filePanel.view_revision, file_id: file.id, content_revision: file.content_revision,
+      interaction_id: 'close-file-one', layout: { hidden: true } });
+    await until(() => snapshot.components.find(item => item.file_id === file.id)?.view?.hidden, 'native close persisted');
+    emit(); await delay(160);
+    check('closed_deliverable_stays_closed_across_snapshot_refresh', nativeComponents.find(item => item.file_id === file.id)?.state === 'hidden'
+      && calls.filter(item => item.path.endsWith('/presentation') && item.body.reveal === false).length === 1);
+    await revealResult();
+    const card = result().querySelector('.attachment-open'); await nativeClick(card);
+    await until(() => nativeComponents.some(item => item.file_id === file.id && item.visible), 'file card reopens native surface');
+    check('file_card_reopens_same_surface_without_duplicate_registration', snapshot.components.filter(item => item.file_id === file.id).length === 1 && !result());
     snapshot.files = [{ ...file, size: 101, content_revision: 'revision-two' }]; emit();
-    await until(() => result()?.textContent.includes('Canonical file revision.'), 'canonical attachment file update');
-    check('attached_preview_uses_current_canonical_file_revision', previewRequests.at(-1) === '/api/files/report/preview?revision=revision-two' && result().querySelectorAll('.file-preview[aria-label="Notes summary.md"]').length === 1
-      && !result().textContent.includes('Initial file revision.') && snapshot.messages.find(message => message.id === 'a3').attachments[0].content_revision === 'revision-one');
+    await until(() => nativeComponents.some(item => item.file_id === file.id && item.content_revision === 'revision-two' && item.state === 'mounted'), 'canonical desktop attachment file update');
+    check('desktop_preview_uses_current_file_revision_without_changing_message_history', previewRequests.at(-1) === '/api/files/report/preview?revision=revision-two'
+      && snapshot.messages.find(message => message.id === 'a3').attachments[0].content_revision === 'revision-one' && !document.querySelector('.file-preview'));
     failNextPreview = true; snapshot.files = [{ ...file, content_revision: 'revision-three' }]; emit();
-    await until(() => result()?.querySelector('.file-preview .empty-note button'), 'failed file preview retry');
-    const previewContainer = result().querySelector('.artifact-result'), beforeRetry = previewRequests.length;
-    await delay(100); await nativeClick(result().querySelector('.file-preview .empty-note button'));
-    await until(() => result()?.textContent.includes('Preview recovered in place.'), 'retried inline preview');
-    check('file_preview_retry_recovers_in_place_without_reopening_chat', result().querySelector('.artifact-result') === previewContainer
-      && previewRequests.length === beforeRetry + 1 && previewRequests.at(-1) === '/api/files/report/preview?revision=revision-three&retry=1'
-      && result().querySelectorAll('.file-preview').length === 1 && input().value === 'Keep this component draft too.');
+    await until(() => observations.at(-1)?.preview?.status === 'failed', 'failed native file preview observed');
+    check('failed_native_file_is_not_acknowledged_as_a_ready_preview', nativeComponents.find(item => item.file_id === file.id).error_code === 'preview_unavailable');
+    const beforeRetry = previewRequests.length;
+    await loadNativeFile(nativeComponents.find(item => item.file_id === file.id), 1);
+    await until(() => observations.at(-1)?.preview?.status === 'ready', 'native file retry observed');
+    check('native_file_retry_refreshes_same_revision_without_reopening_chat', previewRequests.length === beforeRetry + 1
+      && previewRequests.at(-1) === '/api/files/report/preview?revision=revision-three&retry=1' && !result()
+      && input().value === 'Keep this component draft too.');
     await edit('Keep this failed message.'); failNext = true; send(); await until(() => document.querySelector('.composer-area .notice'), 'failed send');
     check('send_error_is_visible_and_draft_is_retained', input().value === 'Keep this failed message.' && inside(document.querySelector('.composer')) && Boolean(document.querySelector('.composer-area .notice')?.textContent));
     await capture('companion-error');
@@ -399,7 +520,7 @@ async function run() {
     const beforeAttention = shellAnchors(), requestsBeforeAttention = calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop') || item.path === '/api/activity/ack').length;
     activityItems = [{ run_id: 'background-help', session_id: 's2', title: 'Choose the documents to organize', status: 'waiting_user', phase: 'waiting',
       needs_user: true, help_id: 'h2', attention_key: 'help-two', created_at: '2026-10-09', updated_at: '2026-10-09' }];
-    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hide before background help');
+    nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'hide before background help');
     nativeShow(); await until(() => document.querySelector('.companion-task-attention'), 'background help status'); await delay(180);
     check('background_help_appears_in_existing_status_without_moving_controls', document.querySelector('.companion-task-attention').textContent.includes('Needs your reply')
       && inside(document.querySelector('.companion-task-attention')) && sameAnchors(beforeAttention, shellAnchors()), { before: beforeAttention, after: shellAnchors() });
@@ -419,7 +540,7 @@ async function run() {
       && calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop') || item.path === '/api/activity/ack').length === requestsBeforeAttention);
     escape(); await until(() => !document.querySelector('[data-app-view="activity"]'), 'close background help view');
     activityItems = [{ ...activityItems[0], status: 'interrupted', needs_user: false, help_id: null }];
-    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hide before stopped update');
+    nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'hide before stopped update');
     nativeShow(); await until(() => !document.querySelector('.companion-task-attention'), 'stopped update is quiet');
     check('stopped_background_task_does_not_leave_a_permanent_attention_badge', input().value === 'Keep this failed message.' && document.querySelector('.companion-status').textContent.includes('Continue'));
     activityItems = [];
@@ -463,12 +584,18 @@ async function run() {
     check('delegation_and_help_use_receipts_without_losing_provided_files', !visibleMessage('delegated-result') && !result().textContent.includes('INTERNAL_DELEGATED_RESULT_INSTRUCTIONS')
       && result().querySelector('.agent-receipt').textContent.includes('Review the quote') && result().querySelector('.help-response-files').textContent.includes('Invoice.md')
       && result().querySelector('.help-receipt').textContent.includes('This one') && !result().textContent.includes('private-timer-id'));
-    result().querySelector('.help-response-files .attachment-open').click(); await until(() => result()?.textContent.includes('Keep this attachment accessible.'), 'help attachment preview');
-    check('help_provided_output_file_can_still_open_its_inline_preview', result().querySelectorAll('.file-preview[aria-label="Invoice.md"]').length === 1
-      && result().querySelector('.help-response-files').textContent.includes('Invoice.md'));
+    result().querySelector('.help-response-files .attachment-open').click();
+    await until(() => nativeComponents.some(item => item.file_id === 'provided-invoice' && item.state === 'mounted'), 'help attachment native surface');
+    check('help_provided_output_file_opens_on_desktop_without_chat_preview', !document.querySelector('.file-preview')
+      && nativeComponents.some(item => item.file_id === 'provided-invoice' && item.visible));
     check('no_unexpected_transport', unexpected.length === 0, unexpected);
-    results.evidence = { real_backend: false, real_provider: false, native_scene_effects: 'synthetic', keyboard_mouse: 'dedicated WKWebView fixture', installed_application_touched: false };
+    results.evidence = { real_backend: false, real_provider: false, native_scene_effects: 'synthetic',
+      desktop_files: 'canonical synthetic file identities and preview responses; independent native windows require separate acceptance',
+      keyboard_mouse: 'dedicated WKWebView fixture', installed_application_touched: false };
     window.webkit.messageHandlers.probe.postMessage(results);
-  } catch (error) { window.webkit.messageHandlers.probe.postMessage({ ...results, error: String(error), stack: error.stack, unexpected, recent_paths: calls.slice(-6).map(item => item.path) }); }
+  } catch (error) { window.webkit.messageHandlers.probe.postMessage({ ...results, error: String(error), stack: error.stack, unexpected,
+    native_hits: nativePosts.filter(item => item.action === 'hitRegions').slice(-2),
+    ornament_rect: document.querySelector('[data-component-id="ornament"] .canvas-action')?.getBoundingClientRect().toJSON(),
+    recent_paths: calls.slice(-6).map(item => item.path) }); }
 }
 void run();
