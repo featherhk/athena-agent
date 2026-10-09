@@ -142,16 +142,45 @@ final class CompanionGestureView: NSView {
         window.setFrame(target, display: true)
     }
     private func end() {
-        guard start != nil else { return }
-        start = nil
+        guard let start else { return }
+        #if !ATHENA_NATIVE_CHECKS
+        DesktopCompanion.recordDiagnostic("owl-pointer-up", fields: ["dragged": dragging ? 1 : 0,
+            "moved": window?.frame.origin != start.frame.origin ? 1 : 0])
+        #endif
+        self.start = nil
         if dragging { moved?() } else { activate?() }
         dragging = false
     }
-    override func mouseDown(with event: NSEvent) { begin(pointer: NSEvent.mouseLocation) }
-    override func mouseDragged(with event: NSEvent) { move(pointer: NSEvent.mouseLocation) }
-    override func mouseUp(with event: NSEvent) { end() }
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        #if !ATHENA_NATIVE_CHECKS
+        DesktopCompanion.recordDiagnostic("owl-pointer-down", fields: [:])
+        #endif
+        begin(pointer: window.convertPoint(toScreen: event.locationInWindow))
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let window else { return }
+        // Mouse events can already be queued when we handle them. Reading the
+        // global cursor here would assign every event the latest cursor position.
+        move(pointer: window.convertPoint(toScreen: event.locationInWindow))
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard let window else { return }
+        move(pointer: window.convertPoint(toScreen: event.locationInWindow)); end()
+    }
     #if ATHENA_NATIVE_CHECKS
-    func fixtureGesture(from: NSPoint, to: NSPoint) { begin(pointer: from); move(pointer: to); end() }
+    func fixtureGesture(from: NSPoint, to: NSPoint) {
+        guard let window else { return }
+        func event(_ type: NSEvent.EventType, _ point: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: point), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+        }
+        mouseDown(with: event(.leftMouseDown, from))
+        mouseDragged(with: event(.leftMouseDragged, NSPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)))
+        mouseDragged(with: event(.leftMouseDragged, to))
+        mouseUp(with: event(.leftMouseUp, to))
+    }
     #endif
 }
 

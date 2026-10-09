@@ -239,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "scene": if let localURL { scene.reconcile(body, origin: localURL) }
         case "sceneResult": scene.completeInteraction(body)
         case "sceneRefresh": scene.refreshDocuments(body)
+        case "focusSurface": scene.focus(body)
         default: break
         }
     }

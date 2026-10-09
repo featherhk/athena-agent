@@ -288,6 +288,19 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         guard let child = scene.fixtureWebView(id: "file_surface"), let panel = child.window else { throw NSError(domain: "fixture", code: 8) }
         try require(panel.title == "Synthetic ledger.xlsx" && !panel.styleMask.contains(.titled) && panel.level.rawValue < window.level.rawValue,
                     "File work surface became a conversation window or covered the companion")
+        let focus: [String: Any] = ["action": "focusSurface", "scope": "owner:session_a", "component_id": "file_surface", "version": 1,
+            "file_id": "file_ledger", "content_revision": "sha256-v1"]
+        window.makeKeyAndOrderFront(nil)
+        let staleFocusRequests: [[String: Any]] = [["scope": "owner:stale_session"], ["version": 2], ["file_id": "wrong"], ["content_revision": "old"]]
+        for invalid in staleFocusRequests {
+            await send(focus.merging(invalid) { _, new in new })
+            try require(!panel.isKeyWindow, "Stale file request stole keyboard focus")
+        }
+        await send(focus)
+        try await wait { panel.isKeyWindow }
+        try require(panel.firstResponder === child, "Exact file focus did not select its trusted WebKit view")
+        window.makeKeyAndOrderFront(nil)
+        passed.append("explicit-file-focus-requires-current-scope-file-version-and-mounted-surface")
         try require(child.url?.query?.contains("file=file_ledger") == true && components().first?["file_id"] as? String == "file_ledger"
                     && components().first?["content_revision"] as? String == "sha256-v1", "File content identity missing from child and observation")
         _ = await js("window.refreshes=[];window.stableDocument=61;addEventListener('athena:widget-refresh',event=>refreshes.push(event.detail))", in: child)
@@ -332,8 +345,18 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         try await wait { panel.frame == moved }
         try require(panel.frame == moved, "Failed layout persistence did not restore previous frame")
         passed.append("native-layout-retains-pending-frame-acknowledges-persistence-and-rolls-back-failure")
-        await send(["action": "maximizeWidget"], in: child)
+        let beforeResize = panel.frame
+        scene.fixtureResize(id: "file_surface", by: NSPoint(x: 45, y: -29))
         try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===3") as? Bool == true }
+        try require(abs(panel.frame.width - beforeResize.width - 45) < 0.001
+                    && abs(panel.frame.height - beforeResize.height - 29) < 0.001 && panel.frame.maxY == beforeResize.maxY,
+                    "File resize ignored event coordinates when the global cursor did not move")
+        var resized = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
+        resized["ok"] = false; resized["action"] = "sceneResult"; await send(resized)
+        try await wait { panel.frame == beforeResize }
+        passed.append("file-resize-uses-delivered-event-coordinates-without-moving-global-cursor")
+        await send(["action": "maximizeWidget"], in: child)
+        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===4") as? Bool == true }
         var maximized = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
         try require(panel.frame == panel.screen?.visibleFrame, "Maximize clipped a file surface to the conversation")
         maximized["ok"] = true; maximized["view_revision"] = 3; maximized["action"] = "sceneResult"; await send(maximized)
@@ -342,12 +365,14 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         await send(["action": "downloadFile", "file_id": "forged", "content_revision": "forged"], in: child)
         try await wait { await self.js("events.some(e=>e.action==='download'&&e.file_id==='file_ledger'&&e.content_revision==='sha256-v1')") as? Bool == true }
         await send(["action": "closeWidget"], in: child)
-        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===4") as? Bool == true }
+        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===5") as? Bool == true }
         var closed = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
         closed["ok"] = true; closed["view_revision"] = 4; closed["action"] = "sceneResult"; await send(closed)
         try await wait { self.components().first?["view_revision"] as? Int == 4 }
         item["hidden"] = true; item["view_revision"] = 4; reconcile()
         try require(!panel.isVisible && components().first?["state"] as? String == "hidden", "Closed surface revived after scene reconciliation")
+        await send(focus)
+        try require(!panel.isVisible && !panel.isKeyWindow, "Focusing a hidden file reopened a closed work surface")
         passed.append("file-maximize-download-and-close-route-identity-bound-actions-and-durable-view")
         item["hidden"] = false; item["view_revision"] = 5; item["content_revision"] = "sha256-v2"
         reconcile()

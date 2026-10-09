@@ -19,7 +19,7 @@ private final class SurfaceGestureView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard enabled, let window else { return }
         if resizeGrip.contains(convert(event.locationInWindow, from: nil)) {
-            resizeStart = (window.frame, NSEvent.mouseLocation)
+            resizeStart = (window.frame, window.convertPoint(toScreen: event.locationInWindow))
         } else {
             window.performDrag(with: event)
             completed?()
@@ -27,15 +27,31 @@ private final class SurfaceGestureView: NSView {
     }
     override func mouseDragged(with event: NSEvent) {
         guard let (start, pointer) = resizeStart, let window else { return }
-        let now = NSEvent.mouseLocation, area = window.screen?.visibleFrame ?? start
+        let now = window.convertPoint(toScreen: event.locationInWindow), area = window.screen?.visibleFrame ?? start
         let width = min(area.maxX - start.minX, max(min(320, area.width), start.width + now.x - pointer.x))
         let height = min(start.maxY - area.minY, max(min(240, area.height), start.height - now.y + pointer.y))
         window.setFrame(NSRect(x: start.minX, y: start.maxY - height, width: width, height: height), display: true)
     }
     override func mouseUp(with event: NSEvent) {
         guard resizeStart != nil else { return }
+        mouseDragged(with: event)
         resizeStart = nil; completed?()
     }
+    #if ATHENA_NATIVE_CHECKS
+    func fixtureResize(by delta: NSPoint) {
+        guard let window else { return }
+        let from = window.convertPoint(toScreen: convert(NSPoint(x: bounds.width - 5, y: bounds.height - 5), to: nil))
+        let to = NSPoint(x: from.x + delta.x, y: from.y + delta.y)
+        func event(_ type: NSEvent.EventType, _ point: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: point), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+        }
+        mouseDown(with: event(.leftMouseDown, from))
+        mouseDragged(with: event(.leftMouseDragged, to))
+        mouseUp(with: event(.leftMouseUp, to))
+    }
+    #endif
 }
 
 /// Agent-authored pages live in separate panels. Their main documents relay a small,
@@ -245,6 +261,17 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
             item.web.evaluateJavaScript("dispatchEvent(new CustomEvent('athena:widget-refresh',{detail:\(json)}))", completionHandler: nil)
         }
     }
+    /// Only a user-requested file open raises its work surface. Reconciliation,
+    /// background delivery and geometry changes remain non-activating.
+    func focus(_ body: [String: Any]) {
+        guard presented, body["scope"] as? String == scope, let id = Self.identifier(body["component_id"]),
+              let item = items[id], Self.integer(body["version"]) == item.version,
+              let file = item.spec["file_id"] as? String, body["file_id"] as? String == file,
+              body["content_revision"] as? String == item.spec["content_revision"] as? String,
+              item.state == "mounted", item.spec["hidden"] as? Bool != true, item.panel.isVisible else { return }
+        item.panel.makeKeyAndOrderFront(nil)
+        item.panel.makeFirstResponder(item.web)
+    }
     func screensChanged() { for item in items.values { position(item) }; publish() }
     func closeAll() {
         for id in Array(items.keys) { remove(id) }
@@ -435,5 +462,6 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         guard let item = items[id] else { return }
         item.panel.setFrame(frame, display: true); commitFrame(item)
     }
+    func fixtureResize(id: String, by delta: NSPoint) { items[id]?.gestures?.fixtureResize(by: delta) }
     #endif
 }
