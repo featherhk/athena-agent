@@ -99,7 +99,7 @@ test('sandbox bridge receives layout only from its host and cleans up subscripti
   assert.equal(css.get('--ink'), '#dfeee0');
   assert.equal(css.get('--font'), 'Georgia');
   context.document.body.innerText = '';
-  context.document.body.querySelectorAll = () => [{ getBoundingClientRect: () => ({ width: 30, height: 30 }) }];
+  context.document.body.firstElementChild = { getBoundingClientRect: () => ({ width: 30, height: 30 }) };
   handlers.get('message')({ source: parent, data: { type: 'athena:inspect', instance: 'instance-one' } });
   assert.equal(sent.findLast(item => item.type === 'athena:health').has_content, true, 'CSS-only shapes are content');
   stop();

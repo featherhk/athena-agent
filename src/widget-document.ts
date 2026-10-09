@@ -6,7 +6,8 @@ export function widgetDocument(source: string, locale: string, instance: string,
   const scheme = theme?.scheme === 'dark' ? 'dark' : 'light';
   const bridge = `(() => {
     const instance = ${JSON.stringify(instance)};
-    let failure = null, previous = '', scheduled = false, layout = null;
+    let failure = null, previous = '', layout = null;
+    let healthTimer = 0, healthDue = 0, hasVisibleContent = false, settled = false;
     let theme = {tokens:{'--ink':${JSON.stringify(color)},'--surface':${JSON.stringify(background)}},font_family:'system-ui',scheme:${JSON.stringify(scheme)}};
     const observers = new Set();
     let regions = [], interact = null, targets = [];
@@ -38,7 +39,7 @@ export function widgetDocument(source: string, locale: string, instance: string,
     let explicitSize = false, sizeFrame = 0, reportedHeight = 0, viewportWidth = innerWidth, viewportHeight = innerHeight;
     const measureHeight = () => {
       sizeFrame = 0;
-      if (explicitSize || ${transparent} || observers.size || !document.body) return;
+      if (document.hidden || explicitSize || ${transparent} || observers.size || !document.body) return;
       const height = Math.max(80, Math.min(1000, Math.ceil(document.body.getBoundingClientRect().height)));
       const heightOnly = innerWidth === viewportWidth && innerHeight !== viewportHeight;
       viewportWidth = innerWidth; viewportHeight = innerHeight;
@@ -46,25 +47,54 @@ export function widgetDocument(source: string, locale: string, instance: string,
       if (heightOnly && reportedHeight && height > reportedHeight) return;
       if (height !== reportedHeight) { reportedHeight = height; send({type:'athena:resize', height}); }
     };
-    const sizeSoon = () => { if (!sizeFrame) sizeFrame = requestAnimationFrame(measureHeight); };
+    const sizeSoon = () => { if (!document.hidden && !sizeFrame) sizeFrame = requestAnimationFrame(measureHeight); };
     const hasContent = () => {
       const body = document.body;
       if (!body) return false;
       if (body.innerText.trim()) return true;
       // CSS shapes need no text, canvas, or image; observe their actual boxes too.
-      return [...body.querySelectorAll('*')].slice(0,5000)
-        .some(element => {
-          const box = element.getBoundingClientRect(), style = getComputedStyle(element);
-          return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
-        });
+      // Walk in document order and stop at the first visible box. Do not build
+      // a NodeList/array of the entire document merely to keep its first nodes.
+      let element = body.firstElementChild, visited = 0;
+      while (element && visited++ < 5000) {
+        const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+        if (box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0') return true;
+        if (element.firstElementChild) { element = element.firstElementChild; continue; }
+        while (element !== body && !element.nextElementSibling) element = element.parentElement;
+        element = element === body ? null : element.nextElementSibling;
+      }
+      return false;
     };
-    const inspect = force => {
-      scheduled = false;
-      const report = {type:'athena:health', state:failure ? 'failed' : 'mounted', has_content:hasContent(), error_code:failure};
+    const reportHealth = force => {
+      const report = {type:'athena:health', state:failure ? 'failed' : 'mounted', has_content:hasVisibleContent, error_code:failure};
       const signature = JSON.stringify(report);
       if (force || previous !== signature) { previous = signature; send(report); }
     };
-    const fail = code => { if (!failure || failure === 'empty_document') { failure = code; inspect(true); } };
+    const clearHealthTimer = () => { if (healthTimer) clearTimeout(healthTimer); healthTimer = 0; healthDue = 0; };
+    const inspect = force => {
+      clearHealthTimer();
+      if (document.hidden) return;
+      hasVisibleContent = hasContent();
+      if (hasVisibleContent && failure === 'empty_document') failure = null;
+      if (!hasVisibleContent && settled && !failure) failure = 'empty_document';
+      reportHealth(force);
+    };
+    const healthSoon = delay => {
+      if (document.hidden) return;
+      const due = Date.now() + delay;
+      // Keep the earliest deadline: a continuous animation cannot postpone
+      // inspection forever, while text removal can advance a pending check.
+      if (healthTimer && healthDue <= due) return;
+      clearHealthTimer(); healthDue = due;
+      healthTimer = setTimeout(() => inspect(false), delay);
+    };
+    const fail = code => {
+      if (!failure || failure === 'empty_document') {
+        failure = code;
+        // Failures remain observable while hidden, without forcing layout.
+        if (document.hidden) reportHealth(true); else inspect(true);
+      }
+    };
     window.Athena = {
       get theme() { return theme; },
       submit: text => send({type:'athena:submit', text}),
@@ -160,17 +190,23 @@ export function widgetDocument(source: string, locale: string, instance: string,
     });
     addEventListener('DOMContentLoaded', () => {
       inspect(true);
-      new ResizeObserver(sizeSoon).observe(document.body);
+      new ResizeObserver(() => { sizeSoon(); healthSoon(500); }).observe(document.body);
       sizeSoon();
       document.addEventListener('input', rememberForm);
       document.addEventListener('change', rememberForm);
-      new MutationObserver(() => {
-        if (!scheduled) {
-          scheduled = true;
-          setTimeout(() => { if (failure === 'empty_document' && hasContent()) failure = null; inspect(false); }, 50);
-        }
+      new MutationObserver(records => {
+        // Attributes can affect visibility through arbitrary CSS selectors,
+        // so retain bounded checks instead of ignoring animated styles.
+        healthSoon(records.some(record => record.type !== 'attributes') ? 50 : 500);
       }).observe(document.body, {childList:true, subtree:true, characterData:true, attributes:true});
-      setTimeout(() => { if (!hasContent()) fail('empty_document'); }, 3000);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          clearHealthTimer();
+          if (sizeFrame) cancelAnimationFrame(sizeFrame);
+          sizeFrame = 0;
+        } else { inspect(true); sizeSoon(); }
+      });
+      setTimeout(() => { settled = true; inspect(false); }, 3000);
     });
   })();`;
   return `<!doctype html><html lang="${language}" dir="${language === 'ar' ? 'rtl' : 'ltr'}"><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>:root{--canvas:${background};--surface:${background};--wash:#f5edf9;--tint:#eadef3;--ink:${color};--muted:#82738f;--accent:#9570bd;--on-accent:#fff;--font:system-ui;color-scheme:${scheme}}*{box-sizing:border-box}body{font:16px/1.5 var(--font);color:var(--ink);background:${transparent ? 'transparent' : 'var(--surface)'};margin:0;padding:${surface ? '0' : '12px'}}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer;background:var(--wash);border:1px solid var(--tint);border-radius:10px;padding:8px 12px}input,select,textarea{background:var(--surface);border:1px solid var(--tint);border-radius:8px;padding:8px}button:hover{border-color:var(--accent)}a{color:var(--accent)}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}</style><script>${bridge}</script></head><body>${source}</body></html>`;

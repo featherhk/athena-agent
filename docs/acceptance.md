@@ -63,3 +63,22 @@ Installed Build 23 exposed a gap in the native fixture: dragging a file work sur
 The regression now enters through the actual container's hit-test route. It checks the file title and bottom-right resize grip, passes table cells and header controls to WebKit, rejects vertically mirrored hit areas, and verifies that the owl does not capture the composer. The new parent-route test failed against the old code. After converting the incoming point from the superview, all 41 native companion checks passed, including resize coordinates, layout persistence acknowledgement/rollback and transient expiry.
 
 This fixture does not inject global pointer events or prove post-fix installed-app dragging; OS event-posting access was unavailable to the isolated test executable. The release still needs the real mouse/Computer Use drag check against the rebuilt installed app.
+
+
+## Local source setup — 2026-10-10
+
+The current production frontend and backend were started with a fresh temporary data directory, explicit loopback binding and no cloud gateway or provider credentials. A separate loopback HTTP server returned a synthetic Chat Completions SSE response in multiple chunks. No customer database or installed app was used and no paid model request was made.
+
+The in-app browser completed this user journey:
+
+1. Open the fresh instance. **Model connection** appears without asking for an Athena login.
+2. Select the local preset, enter the fixture model and endpoint, and save with an empty key. The settings close; saving itself sends no model request.
+3. Send a message. The real HTTP request reaches the fixture with the selected model and `stream: true`; the user message and completed assistant reply are visible.
+4. Refresh. Both messages return. The menu offers **Model connection**, without hosted login or balance controls. Reopening it preserves provider, model and base URL; the key field remains empty.
+5. Close settings with Escape. Focus returns to the menu button.
+
+A read-only database check found exactly one local identity, one conversation, two completed messages and one completed model request. The persisted default profile and conversation both selected the local configuration. A guarded-DOM check of the actual frontend observation function confirmed that it never reads provider, model or password input values and reports only the host-owned account-view metadata.
+
+Chrome's client blocked the specific `localhost` test origin in this run with `ERR_BLOCKED_BY_CLIENT`; its block was not bypassed. The existing authorized in-app browser successfully opened that same origin. This result is distinct from the managed-browser executor's tests and does not establish general provider compatibility, a paid cloud connection or installed-app acceptance.
+
+The review also found and fixed an IPv6 loopback boundary: `[::1]` could start in local mode but its browser Origin was rejected. Targeted HTTP tests now cover same-origin bootstrap, session-cookie reuse, keyless local configuration and the selected profile in a new conversation. Alternate ports, HTTPS origins, mapped/other IPv6 addresses and deceptive hostnames remain rejected.
