@@ -245,6 +245,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         await send(["action": "companionDragRegions", "regions": [["x": 230, "y": 32, "width": 100, "height": 100]]])
         try await wait { self.host.fixtureCompanionGestureHit(NSPoint(x: 270, y: 65)) }
         try require(!host.fixtureCompanionGestureHit(NSPoint(x: 270, y: 220)), "Owl drag layer intercepted the text composer")
+        passed.append("owl-parent-hit-routing-translates-top-left-regions-and-passes-composer-input")
         let origin = window.frame
         let pointer = NSPoint(x: origin.midX, y: origin.midY)
         host.fixtureCompanionGesture(from: pointer, to: NSPoint(x: pointer.x + 2, y: pointer.y))
@@ -314,6 +315,12 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
                     && !scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: 800, y: 24))
                     && scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: panel.frame.width - 5, y: panel.frame.height - 5)),
                     "Native drag regions obstructed cells/header controls or omitted resize grip")
+        for point in [NSPoint(x: 50, y: 200), NSPoint(x: 800, y: 24),
+                      NSPoint(x: 50, y: panel.frame.height - 24), NSPoint(x: panel.frame.width - 5, y: 5)] {
+            try require(scene.fixtureGestureTarget(id: "file_surface", point: point) == "web",
+                        "Parent hit routing captured table text/header buttons or mirrored title/grip vertically")
+        }
+        passed.append("file-parent-hit-routing-selects-title-and-bottom-grip-without-capturing-web-content")
         passed.append("file-work-surface-has-bound-identity-title-and-dedicated-native-gesture-regions")
         passed.append("parent-refresh-is-scoped-and-preserves-native-document")
         await send(["action": "widgetHealth", "state": "failed", "file_id": "wrong", "content_revision": "sha256-v1", "error_code": "preview_unavailable"], in: child)

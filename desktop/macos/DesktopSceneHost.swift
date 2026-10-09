@@ -13,7 +13,10 @@ private final class SurfaceGestureView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     private var resizeGrip: NSRect { NSRect(x: max(0, bounds.width - 20), y: max(0, bounds.height - 20), width: 20, height: 20) }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard enabled, !isHidden, bounds.contains(point), resizeGrip.contains(point) || dragRegions.contains(where: { $0.contains(point) }) else { return nil }
+        // AppKit supplies a point in the superview's coordinates. Our DOM hit
+        // map is top-left based, whereas the ordinary container is not flipped.
+        let local = convert(point, from: superview)
+        guard enabled, !isHidden, bounds.contains(local), resizeGrip.contains(local) || dragRegions.contains(where: { $0.contains(local) }) else { return nil }
         return self
     }
     override func mouseDown(with event: NSEvent) {
@@ -512,7 +515,17 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     private(set) var fixtureStateReports = 0
     private(set) var fixtureDocumentLoads = 0
     func fixtureWebView(id: String) -> WKWebView? { items[id]?.web }
-    func fixtureGestureHit(id: String, point: NSPoint) -> Bool { items[id]?.gestures?.hitTest(point) != nil }
+    func fixtureGestureHit(id: String, point: NSPoint) -> Bool { fixtureGestureTarget(id: id, point: point) == "gesture" }
+    func fixtureGestureTarget(id: String, point: NSPoint) -> String {
+        guard let item = items[id], let container = item.panel.contentView else { return "none" }
+        // Enter through the real parent route with a top-left document point;
+        // calling the overlay directly would hide flipped-coordinate mistakes.
+        let local = NSPoint(x: point.x, y: container.isFlipped ? point.y : container.bounds.height - point.y)
+        let target = container.hitTest(container.convert(local, to: container.superview))
+        if target === item.gestures { return "gesture" }
+        if target === item.web || target?.isDescendant(of: item.web) == true { return "web" }
+        return "other"
+    }
     func fixtureCommitFrame(id: String, frame: NSRect) {
         guard let item = items[id] else { return }
         item.panel.setFrame(frame, display: true); commitFrame(item)

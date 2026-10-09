@@ -602,7 +602,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var fixtureStatusMenu: NSMenu? { statusItem?.menu }
     var fixtureCompanionPlacement: [String: Any]? { companionPlacement }
     func fixtureCompanionGesture(from: NSPoint, to: NSPoint) { companionGestures.fixtureGesture(from: from, to: to) }
-    func fixtureCompanionGestureHit(_ point: NSPoint) -> Bool { companionGestures.hitTest(point) != nil }
+    func fixtureCompanionGestureHit(_ point: NSPoint) -> Bool {
+        guard let container = window.contentView else { return false }
+        let local = NSPoint(x: point.x, y: container.isFlipped ? point.y : container.bounds.height - point.y)
+        return container.hitTest(container.convert(local, to: container.superview)) === companionGestures
+    }
     /// Separate test executable only; it never starts a backend or opens an account.
     func configureNativeFixture(_ home: URL) -> (NSWindow, WKWebView) {
         precondition(recovery.request(for: home) != nil)

@@ -114,7 +114,8 @@ final class CompanionGestureView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        !isHidden && bounds.contains(point) && regions.contains(where: { $0.contains(point) }) ? self : nil
+        let local = convert(point, from: superview)
+        return !isHidden && bounds.contains(local) && regions.contains(where: { $0.contains(local) }) ? self : nil
     }
     @discardableResult func updateRegions(_ payload: Any?) -> Bool {
         guard let objects = payload as? [[String: Any]], objects.count <= 16 else { return false }

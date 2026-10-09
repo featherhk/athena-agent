@@ -55,3 +55,11 @@ The real-provider evaluation uses a temporary account/database and removes its f
 ## Honest limits
 
 This is extensibility with recovery, not arbitrary safe self-rewriting of the application core. The new [managed-browser adapter](browser-execution.md) is separately tested on synthetic pages; it does not provide full desktop control. No claim of production billing, operating-system isolation across platforms, or exact local provider tokenization is made. XLSX previews show bounded cells and cached values, not a full spreadsheet engine. Safari and the in-app browser were used for the earlier visual acceptance; the earlier Chrome client-side block is distinct from the new executor's isolated Chrome tests. Browser observations are recorded separately from deterministic or model-routing checks. Generated sidebars and other components remain session scoped; they do not automatically become an account-wide shell. Live weather refresh still requires an explicit backend data/task implementation; registering a card does not prove automatic fresh data.
+
+## Native pointer routing regression — 2026-10-10
+
+Installed Build 23 exposed a gap in the native fixture: dragging a file work surface's title selected its text instead of moving the surface. Both the file gesture layer and owl gesture layer used top-left DOM rectangles in flipped views, but `NSView.hitTest` supplied points in their unflipped parent coordinates. The earlier tests called the gesture layer directly and missed that conversion.
+
+The regression now enters through the actual container's hit-test route. It checks the file title and bottom-right resize grip, passes table cells and header controls to WebKit, rejects vertically mirrored hit areas, and verifies that the owl does not capture the composer. The new parent-route test failed against the old code. After converting the incoming point from the superview, all 41 native companion checks passed, including resize coordinates, layout persistence acknowledgement/rollback and transient expiry.
+
+This fixture does not inject global pointer events or prove post-fix installed-app dragging; OS event-posting access was unavailable to the isolated test executable. The release still needs the real mouse/Computer Use drag check against the rebuilt installed app.
