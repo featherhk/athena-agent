@@ -171,3 +171,77 @@ across a complete application restart is not yet a reliable product guarantee.
 A follow-up should use an account-scoped durable client recovery record, validate
 session/file ownership, and reconcile existing operation IDs without replaying
 possibly completed actions. Pinning the port alone would not solve this issue.
+
+## Build 18 follow-up candidate
+
+Source `a08a8271e9340c04dc2402dce30abe2b142d4c11` includes the failures found
+during the installed build 17 pass:
+
+- Skill reads expose an executable resource-reading shape. Validation rejects
+  unexpected arguments with bounded repair instructions, without reflecting
+  submitted values. An engine regression repairs the exact wrong-field failure
+  and reads the reference without shell execution. Stable prompt/tool prefixes
+  did not change.
+- The compact desktop composer uses a single row even while a task is active.
+  Both compact and expanded native layouts honor measured height; multiline
+  input and Stop remain reachable, with the bottom anchor retained on recall.
+
+The clean source passed **1,023 backend tests with 7 skipped**, **374 frontend
+tests**, TypeScript/Vite and the repository data guard. Python 3.14.8T doctor
+reported the GIL disabled after dependency imports. The native fixture passed
+25 checks. The real WKWebView fixture passed **50 checks**, including both new
+clipping regressions: single-line running input fits a 260-point panel; the
+multiline running case uses 304 points and retains a 14-point bottom margin.
+These are layout measurements, not frame-rate claims.
+
+Local WKWebView receipt:
+`/tmp/athena-acceptance/athena-companion-webkit-4EHDrp/receipt.json`.
+
+The pre-build-17 SQLite backup and current database compared equal for all
+71 preexisting message records; SQLite quick_check returned `ok`. Test messages
+were appended through the UI, and the requested component gained a new
+registered version. No old message was rewritten or deleted.
+
+### Installed build 18 acceptance
+
+The exact build 18 bundle was installed after a normal quit, with the previous
+bundle and SQLite database backed up outside the repository. Signature integrity
+passed; the installed Info.plist reports build 18. The authenticated account
+remained available.
+
+A fresh conversation asked for transparent, nonblocking Mac desktop fireworks
+lasting ten seconds. No tool syntax or implementation hint was provided. The
+real model completed the task with seven runtime calls, no tool errors and no
+CLI search: read the desktop skill/reference, discover and inspect the client,
+register the component, set its desktop layout, and inspect the actual host
+receipt. The host reported the requested version mounted and visible across
+the main screen's 1512×944-point visible area. No animation card appeared in the
+companion. This demonstrates unassisted skill discovery and native placement;
+it does not add full-screen pixel, frame-rate or third-party click-through proof.
+
+During that real run, the reading surface was collapsed and a three-line draft
+was typed without sending. An actual installed-app screenshot showed all three
+lines, the voice control, interruption control, Stop and queued-send control
+fully visible. The test draft was then cleared without submission. Expanding
+the avatar restored the question and completed reply. A transient reconnect
+notice cleared without losing the result. The app was left open with the
+reading surface collapsed and an empty input.
+
+The completion reply still exposes too much implementation detail for an
+ordinary user; this remains a product follow-up, alongside the restart recovery
+issue above. There is no claim that subjective responsiveness or all Mac
+interaction problems are now solved.
+
+Local installed receipt: `/tmp/athena-build18-installed-acceptance.json`.
+
+### Distribution
+
+The immutable build 18 preview is published at:
+
+https://app.athena.featherhk.com/downloads/a08a827/Athena-0.1.0-macos-arm64-preview.dmg
+
+The public HTTPS download was read in full: **51,819,552 bytes**, SHA256
+`2a5d4659eecea34206b51db83326a6668dfa833cbca8dc18ec22afa280285115`, matching
+the clean local manifest. The candidate is ad-hoc signed for integrity testing,
+without Developer ID signing or Apple notarization. The public default feed
+remains build 15; no website, New API service or cloud runtime was redeployed.
