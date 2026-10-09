@@ -27,9 +27,9 @@ const declares = (node, names) => ts.isVariableStatement(node) && node.declarati
 const lifecycle = app.body.statements.slice(app.body.statements.findIndex(node => declares(node, ['rendererIdentity'])),
   app.body.statements.findIndex(node => declares(node, ['actualSurface'])) + 1)
   .filter(node => !declares(node, ['rendererIdentity', 'rendererActivation', 'rendererRevision'])).map(node => node.getText(source)).join('\n');
-const compiled = ts.transpileModule(`function bind({user,session,renderer,rendererKey,snapshot,orbPhase,locale,reduced,sending,uploading,resetting,text,attached,help,activeRendererActivation,ready=true,resumeReady=true}) {
+const compiled = ts.transpileModule(`function bind({user,session,renderer,rendererKey,snapshot,orbPhase,locale,reduced,sending,uploading,resetting,text,attached,help,activeRendererActivation,ready=true,resumeReady=true,desktop=false}) {
   ${variable('helpDraftScope')}
-  ${['currentGuard', 'submissionGuard', 'submissionScope', 'showDraft', 'editDraft', 'acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'invalidateActions', 'stop', 'openFiles', 'returnToDefault'].map(fn).join('\n')}
+  ${['currentGuard', 'submissionGuard', 'submissionScope', 'showDraft', 'editDraft', 'acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'invalidateActions', 'stop', 'openFiles', 'presentFile', 'returnToDefault'].map(fn).join('\n')}
   ${variable('surfaceScope')}
   ${variable('surfaceHost')}
   return surfaceHost;
@@ -91,6 +91,9 @@ function fixture() {
     setHistory: value => { views.push({ target: 'history', value }); }, setFiles: value => { views.push({ target: 'files', value }); },
     setAccount: value => { views.push({ target: 'account', value }); }, setAppearance: value => { views.push({ target: 'appearance', value }); },
     setActivity: value => { views.push({ target: 'activity', value }); }, setSurfaces: value => { views.push({ target: 'surfaces', value }); },
+    setSnapshot: update => { state.snapshot = typeof update === 'function' ? update(state.snapshot) : update; },
+    setDesktopReplyOpen: value => { views.push({ target: 'desktop-reply', value }); }, setDesktopLog: value => { views.push({ target: 'desktop-log', value }); },
+    ensureVoiceSession: async () => { throw new Error('Unexpected session creation'); },
     setPreview: value => { views.push({ target: 'modal-preview', value }); }, setInlinePreview: value => { views.push({ target: 'inline-preview', value }); }, setDismissedRenderer: value => { state.dismissedRenderer = value; },
     setRendererHealth: update => { state.rendererHealth = update(state.rendererHealth); },
     placementOf: item => item.view?.placement || item.placement,
@@ -221,7 +224,7 @@ test('host actions use existing views and reject unavailable files and arbitrary
   }
   assert.deepEqual(f.views.map(view => view.target), ['history', 'account', 'appearance', 'activity', 'surfaces']);
   await host.call('request', { action: 'preview', file_id: 'report' });
-  assert.deepEqual(f.views.at(-1), { target: 'inline-preview', value: file('report') });
+  assert.deepEqual(f.views.slice(-3), [{ target: 'inline-preview', value: file('report') }, { target: 'modal-preview', value: null }, { target: 'files', value: null }]);
   await rejects(host.call('request', { action: 'preview', file_id: 'foreign' }), 'file_not_found');
   await rejects(host.call('request', { action: 'open', target: 'eval' }), 'unsupported_target');
   await rejects(host.call('request', { action: 'erase_history' }), 'unsupported_action');
@@ -250,7 +253,8 @@ test('surface file reads include public message attachments and stay inside the 
   const host = f.render(), result = await host.call('file', { file_id: 'attached' });
   assert.equal(result.kind, 'document'); assert.equal(result.blocks[0].text, 'Owned attachment');
   assert.deepEqual(requests, ['/api/files/attached/preview']);
-  await host.call('request', { action: 'preview', file_id: 'attached' }); assert.equal(f.views.at(-1).target, 'inline-preview');
+  await host.call('request', { action: 'preview', file_id: 'attached' });
+  assert.deepEqual(f.views.slice(-3), [{ target: 'inline-preview', value: file('attached') }, { target: 'modal-preview', value: null }, { target: 'files', value: null }]);
   for (const file_id of ['unknown', 'tool-only', 'https://unrelated.invalid/file']) await rejects(host.call('file', { file_id }), 'file_not_found');
   assert.equal(requests.length, 1);
 });
@@ -400,4 +404,51 @@ test('generated surface cannot replace a draft or send new work during final des
   await rejects(host.call('request', { action: 'send', expected_revision: draft.revision }), 'not_sent');
   assert.deepEqual(f.drafts.current.read('alice', 'travel'), draft);
   assert.equal(f.calls.length, 0);
+});
+
+
+test('desktop surface preview delegates to durable presentation and rereads canonical state before showing it', async () => {
+  const f = fixture(); f.state.desktop = true;
+  const canonical = { ...file('report'), content_revision: 's1-current' };
+  const component = { id: 'athena_file_report', version: 1, file_id: 'report', file: canonical, placement: 'desktop', view: { hidden: false } };
+  const committed = { ...copy(f.state.snapshot), cursor: 6, components: [component] };
+  f.transport(async path => path.endsWith('/presentation') ? { component, created: true } : committed);
+  assert.equal((await f.render().call('request', { action: 'preview', file_id: 'report' })).status, 'requested');
+  assert.deepEqual(f.calls, [
+    { path: '/sessions/travel/files/report/presentation', body: { reveal: true } },
+    { path: '/sessions/travel', body: undefined },
+  ]);
+  assert.deepEqual(copy(f.state.snapshot), committed);
+  assert.deepEqual(f.views, [
+    { target: 'inline-preview', value: canonical }, { target: 'modal-preview', value: null }, { target: 'files', value: null },
+    { target: 'desktop-reply', value: false }, { target: 'desktop-log', value: false },
+  ]);
+  assert.equal(f.errors.length, 0);
+});
+
+test('a desktop preview request cannot reopen a concurrently hidden or removed file component', async () => {
+  for (const unavailable of ['hidden', 'removed']) {
+    const f = fixture(); f.state.desktop = true;
+    const component = { id: 'athena_file_report', version: 1, file_id: 'report', file: file('report'), placement: 'desktop', view: { hidden: true } };
+    const committed = { ...copy(f.state.snapshot), cursor: 6, components: unavailable === 'removed' ? [] : [component] };
+    f.transport(async path => path.endsWith('/presentation') ? { component, created: false } : committed);
+    assert.equal((await f.render().call('request', { action: 'preview', file_id: 'report' })).status, 'requested');
+    assert.equal(f.calls.length, 2);
+    assert.deepEqual(f.views, [], unavailable);
+    assert.deepEqual(copy(f.state.snapshot), committed);
+  }
+});
+
+test('a desktop presentation reply after an account or conversation switch never opens old work', async () => {
+  for (const next of [['alice', 'other'], ['bob', 'travel']]) {
+    const f = fixture(), gate = deferred(); f.state.desktop = true;
+    f.transport(() => gate.promise);
+    const pending = f.render().call('request', { action: 'preview', file_id: 'report' });
+    await ticks(); assert.equal(f.calls.length, 1);
+    f.switch(...next);
+    gate.resolve({ component: { id: 'athena_file_report', file_id: 'report' }, created: true });
+    assert.equal((await pending).status, 'requested');
+    assert.equal(f.calls.length, 1, 'Retired UI must not request another snapshot or retry the side effect');
+    assert.deepEqual(f.views, []);
+  }
 });
