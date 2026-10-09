@@ -60,7 +60,7 @@ The current untracked `docs/collab/` board contains local workspace paths and in
 
 The current workflow uses `push` and `pull_request`, an ephemeral GitHub-hosted macOS runner, and `contents: read`. It has no `pull_request_target`, deployment step, self-hosted runner, explicit repository secret reference, or artifact upload. `uv sync --locked`, `npm ci`, history scanning, and the normal checks are appropriate starting controls.
 
-Before public contributions, pin third-party actions to reviewed full commit SHAs; current references use mutable major tags. Set checkout's `persist-credentials: false` so dependency/test processes do not inherit an unnecessary persisted checkout credential. Confirm fork-workflow approval settings in GitHub's administration UI/API; those repository settings were not available in this connector audit. Do not add privileged deployment, signing, or payment secrets to the untrusted PR job.
+The initially mutable major-tag action references were subsequently pinned to their reviewed full commit SHAs in commit `32d5ec5`; checkout now sets `persist-credentials: false`. Confirm fork-workflow approval settings in GitHub's administration UI/API; those repository settings were not available in this connector audit and remain unverified. Do not add privileged deployment, signing, or payment secrets to the untrusted PR job.
 
 ## Final acceptance after repairs
 

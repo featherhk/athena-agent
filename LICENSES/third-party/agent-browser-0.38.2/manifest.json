@@ -4478,11 +4478,12 @@
       "channel_manifest_url": "https://static.rust-lang.org/dist/channel-rust-1.99.0.toml"
     }
   ],
-  "collected_notice_sha256": "1a39756694a92310be5e8c78e59274bf0e29ef287c119f58d8b4c56e5a4a120d",
+  "collected_notice_sha256": "4e7c9629d71efe0b53110660a830df8c16aaee0ab84a890210a1321ffaf9f438",
   "collection_date": "2026-10-10",
   "standard_license_supplement_packages": [
     "fax",
     "fax_derive",
     "simd_helpers"
-  ]
+  ],
+  "collected_text_line_endings": "LF (upstream legal wording retained; CRLF normalized for portable Git checkout)"
 }
