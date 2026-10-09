@@ -53,6 +53,8 @@ import CompanionSurfaceControls from './CompanionSurfaceControls';
 import CompanionTaskAttention from './CompanionTaskAttention';
 import { DesktopResumeStore, readResumeClaim } from './desktop-resume';
 import { DesktopTransitionFence } from './desktop-transition';
+import { LocalSetup } from './LocalSetup';
+import { loadIdentity } from './local-identity';
 import { desktopRole, desktopPost, desktopScene, readDesktopState, interactionVisible, setDesktopPresented, companionHitRegions, type DesktopState } from './desktop-bridge';
 import { artifactLinkFile, deliveredArtifact, desktopFilePreview } from './desktop-artifacts';
 import './desktop.css';
@@ -82,6 +84,8 @@ export default function App() {
   const { t, locale, choice, reduced, preferences, applyPreferences } = useI18n();
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const [localMode, setLocalMode] = useState(false);
+  const [localSettings, setLocalSettings] = useState(false);
   const [resumeReady, setResumeReady] = useState(!desktop);
   const [desktopFrozen, setDesktopFrozen] = useState(false);
   const desktopTransition = useRef(new DesktopTransitionFence());
@@ -219,7 +223,7 @@ export default function App() {
   }, enqueueAppAction, () => { appClient.current = crypto.randomUUID(); setActionWake(old => old + 1); }, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
   const continuity = useTaskContinuity(user?.id || null, () => { acceptUser(null); setAuth('login'); setError(errorMessage('login_required')); });
   useVisibleActivity(continuity, session, snapshot.runs,
-    Boolean(preview || account || appearance || files || history || activity || menu || surfaces || auth || workspace || renderer || resetting), snapshot.cursor);
+    Boolean(preview || account || appearance || files || history || activity || menu || surfaces || auth || localSettings || workspace || renderer || resetting), snapshot.cursor);
   useEffect(() => {
     const run = pendingActivityView.current;
     if (!run || !snapshot.runs.some(item => item.id === run)) return;
@@ -502,7 +506,7 @@ export default function App() {
     }
     uiScope.current = { owner: next?.id || null, session: nextSession, generation: uiScope.current.generation + 1, control: uiScope.current.control + 1 };
     applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setPreview(null); setFiles(null); setSessions([]);
-    pendingActivityView.current = null; conversationScroll.policy.resume(); setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
+    pendingActivityView.current = null; conversationScroll.policy.resume(); setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false); setLocalSettings(false);
     setDesktopLog(false); setDesktopReplyOpen(Boolean(desktop && nextSession));
     setSending(false); setUploading(false); setResetting(false); setSession(nextSession); showDraft(drafts.current!.read(next?.id || null, nextSession));
     setSnapshot(empty()); setError(''); setTextEffects({}); setInlinePreview(null); setInlineObservation(null);
@@ -526,9 +530,12 @@ export default function App() {
   async function loadAccount() {
     const ticket = authEpoch.current;
     try {
-      const result = await api<{ user: User | null; preferences?: Preferences; configured: boolean; has_users: boolean }>('/auth/me');
-      if (authEpoch.current !== ticket) return;
-      if (await restoreUser(result.user, result.preferences, ticket)) { setHasUsers(result.has_users); setReady(true); }
+      const result = await loadIdentity(api, () => authEpoch.current === ticket);
+      if (!result || authEpoch.current !== ticket) return;
+      if (await restoreUser(result.user, result.preferences, ticket)) {
+        setLocalMode(result.local); setLocalSettings(result.needsSetup);
+        setHasUsers(result.has_users); setReady(true);
+      }
     } catch { if (authEpoch.current === ticket) setError(t('error.connection')); }
   }
   useEffect(() => { void loadAccount(); }, []);
@@ -604,7 +611,7 @@ export default function App() {
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229 || event.defaultPrevented || hasNativeModal(document)) return;
       if (desktopEscape.current()) { event.preventDefault(); return; }
-      closeAccount(); setMenu(false); setAppearance(false); setAuth(null); setHistory(false); setFiles(null); setPreview(null); setSurfaces(false); setActivity(false); setPassword('');
+      closeAccount(); setMenu(false); setAppearance(false); setAuth(null); setHistory(false); setFiles(null); setPreview(null); setSurfaces(false); setActivity(false); setLocalSettings(false); setPassword('');
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
@@ -757,7 +764,7 @@ export default function App() {
     } finally { intents.current!.stopFinished(owner, sid, revision); refreshIntents(old => old + 1); }
   }
 
-  function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
+  function requestLogin() { if (localMode) { void loadAccount(); return; } setAuth(hasUsers ? 'login' : 'register'); }
   async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false, retryIntent?: SubmissionIntent) {
     if (desktopTransition.current.blocked || !ready || !resumeReady || (!value.trim() && (!fromComposer || attached.length === 0) && !retryIntent) || sending || resetting || uploading) {
       if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
@@ -1144,7 +1151,7 @@ export default function App() {
   const desktopHasResult = Boolean(desktopMessages.length || latestRun || latestFiles.length || lastError || inlinePreview || desktopWidgets.length);
   const desktopResult = desktopHasResult && desktopReplyOpen && !desktopMinimized;
   const desktopQuestion = conversationSubject(desktopMessages);
-  const desktopTransient = Boolean(auth || menu || history || account || files || preview || appearance || surfaces || activity);
+  const desktopTransient = Boolean(localSettings || auth || menu || history || account || files || preview || appearance || surfaces || activity);
   const desktopAvatar = desktop && desktopMinimized && !desktopTransient;
   function collapseCompanion() {
     setDesktopLog(false); setDesktopReplyOpen(false); setDesktopMinimized(true);
@@ -1164,7 +1171,7 @@ export default function App() {
     desktopPost({ action: 'hide' }); return true;
   };
   useEffect(() => { if (desktop && (busy || waiting)) setDesktopReplyOpen(true); }, [desktop, busy, waiting]);
-  const desktopExpanded = Boolean(error || serviceMessage || attached.length || uploading || chooseFiles || desktopLog || desktopResult || renderer || help || auth || history || account || files || preview || menu || appearance || surfaces || activity || voiceActive || pendingIntents.length || pendingStops.length);
+  const desktopExpanded = Boolean(error || serviceMessage || attached.length || uploading || chooseFiles || desktopLog || desktopResult || renderer || help || localSettings || auth || history || account || files || preview || menu || appearance || surfaces || activity || voiceActive || pendingIntents.length || pendingStops.length);
   const nativeActions = useRef<(detail: Record<string, unknown>) => void>(() => {});
   nativeActions.current = detail => {
     const action = detail.action;
@@ -1237,7 +1244,7 @@ export default function App() {
     return () => { window.removeEventListener('athena:desktop', receive); delete document.documentElement.dataset.desktop; delete document.documentElement.dataset.desktopPresented; };
   }, [desktop]);
   const desktopLayout = useRef({ avatar: true, expanded: false, modal: false });
-  desktopLayout.current = { avatar: desktopAvatar, expanded: desktopExpanded, modal: Boolean(desktopLog || renderer || help || auth || history || account || files || preview || menu || appearance || surfaces || activity) };
+  desktopLayout.current = { avatar: desktopAvatar, expanded: desktopExpanded, modal: Boolean(desktopLog || renderer || help || localSettings || auth || history || account || files || preview || menu || appearance || surfaces || activity) };
   const scene = JSON.stringify(desktopScene(user?.id || null, session, snapshot.components, recoveryMode || resetting));
   useEffect(() => { if (desktop) desktopPost(JSON.parse(scene)); }, [desktop, scene]);
   const desktopMetadata = JSON.stringify([preferences, snapshot.components.filter(item => item.file_id).map(item => [item.id, item.version, item.view_revision, item.file])]);
@@ -1347,7 +1354,7 @@ export default function App() {
       <div className="reading-pane">
     {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
     {!resetting && floating.filter(component => panelLayout[component.id]).map(component => renderWidget(component))}
-    {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" inert={Boolean(menu || history || auth || account || appearance || files || preview || surfaces || activity)} key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
+    {!resetting && components.filter(component => placementOf(component) === 'overlay').map(component => <div className="scene-overlay" inert={Boolean(localSettings || menu || history || auth || account || appearance || files || preview || surfaces || activity)} key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
     <main ref={conversationScroll.ref} className={`scroll-area${workspace ? ' has-workspace' : ''}`} {...conversationScroll.handlers}>
       {!resetting && components.filter(component => placementOf(component) === 'banner').map(component => <div className="agent-banner" role="status" key={`${component.id}-${component.version}`}>{renderWidget(component)}</div>)}
       {workspace && !resetting && <section className="workspace-panel" data-app-view="workspace">{renderWidget(workspace)}</section>}
@@ -1424,7 +1431,16 @@ export default function App() {
     {surfaces && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setSurfaces(false); }}><section className="dialog surface-dialog" data-app-view="surfaces" role="dialog" aria-modal="true" aria-label={t('surface.all')}><div className="dialog-top"><h2>{t('surface.all')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setSurfaces(false)}>×</button></div><div className="surface-list">{snapshot.components.map(component => <div className="surface-row" key={component.id}><button className="surface-open" onClick={() => { adjustComponent(component, { hidden: false }); setSurfaces(false); }}><span>{component.title}</span><small>{t(component.view?.hidden ? 'surface.hidden' : 'surface.visible')}</small></button><ComponentControls component={component} change={view => adjustComponent(component, view)} /></div>)}</div></section></div>}
     {toast && <div className="toast" role="status">{toast}</div>}
     {Boolean(user?.developer_mode) && <ErrorBoundary panel close={() => void developer(false)}><DeveloperPanel session={session} close={() => void developer(false)} /></ErrorBoundary>}
-    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" data-app-view="menu" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items">{desktop && <button onClick={() => { setMenu(false); navigate(null); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>{t('newChat')}</button>}{desktop && <button onClick={() => { setMenu(false); setActivity(true); }}><Icon name="history" />{t('continuity.title')}</button>}<button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
+    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" data-app-view="menu" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items">{desktop && <button onClick={() => { setMenu(false); navigate(null); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>{t('newChat')}</button>}{desktop && <button onClick={() => { setMenu(false); setActivity(true); }}><Icon name="history" />{t('continuity.title')}</button>}<button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button>{localMode ? <button onClick={() => { setMenu(false); setLocalSettings(true); }}><Icon name="user" />{t('localSetup.title')}</button> : <button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button>}<button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
+    {localMode && localSettings && user && <div className="overlay centered"><section className="dialog" data-app-view="account" role="dialog" aria-modal="true" aria-label={t('localSetup.title')}>
+      <LocalSetup key={user.id} sessionId={session} onCancel={() => setLocalSettings(false)} onSaved={() => {
+        if (uiScope.current.owner !== user.id) return;
+        setLocalSettings(false); setServiceMessage(''); setToast(t('localSetup.saved'));
+        const isCurrent = currentGuard();
+        if (session) void api<Snapshot>(`/sessions/${session}`).then(next => { if (isCurrent()) setSnapshot(old => next.cursor >= old.cursor ? next : old); }).catch(() => {});
+      }} />
+      <label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>
+    </section></div>}
     {appearance && <div className="overlay centered"><section className="dialog" data-app-view="appearance" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{key === 'ui_palette' && preferences.ui_palette.startsWith('#') && <option value={preferences.ui_palette}>{preferences.ui_palette}</option>}{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
     {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" data-app-view="history" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
     {auth && <div className="overlay centered"><form className="dialog" data-app-view="authentication" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {
