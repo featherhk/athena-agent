@@ -1178,6 +1178,7 @@ export default function App() {
       return;
     }
     if (action === 'hidden') { setDesktopPresented(false); window.dispatchEvent(new Event('athena:background')); return; }
+    if (action === 'present') { setDesktopPresented(true); return; }
     if (action === 'avatar') { toggleAvatar(); return; }
     if (action === 'show') { setDesktopPresented(true); setDesktopMinimized(false); requestAnimationFrame(() => { if (!document.querySelector('[aria-modal="true"]')) input.current?.focus({ preventScroll: true }); }); return; }
     if (action === 'menu') { setMenu(true); return; }
@@ -1186,11 +1187,12 @@ export default function App() {
     if (action === 'stop') { void stop(); return; }
     if (action === 'reset') { void reset(); return; }
     if (action === 'submit' || action === 'navigate' || action === 'layout' || action === 'download') {
-      if (!interactionVisible() || recoveryMode || resetting) return;
+      const rejectLayout = () => { if (action === 'layout') desktopPost({ action: 'sceneResult', scope: detail.scope, component_id: detail.component_id, version: detail.version, interaction_id: detail.interaction_id, ok: false }); };
+      if (!interactionVisible() || recoveryMode || resetting) { rejectLayout(); return; }
       const component = snapshot.components.find(item => item.id === detail.component_id && item.version === detail.version && !item.view?.hidden);
       const current = uiScope.current;
-      if (!user || !session || current.owner !== user.id || current.session !== session || detail.scope !== `${current.owner}:${current.session}` || !component || placementOf(component) !== 'desktop') return;
-      if (component.file_id && (component.file_id !== detail.file_id || component.file?.content_revision !== detail.content_revision)) return;
+      if (!user || !session || current.owner !== user.id || current.session !== session || detail.scope !== `${current.owner}:${current.session}` || !component || placementOf(component) !== 'desktop') { rejectLayout(); return; }
+      if (component.file_id && (component.file_id !== detail.file_id || component.file?.content_revision !== detail.content_revision)) { rejectLayout(); return; }
       if (action === 'layout') {
         const identity = { action: 'sceneResult', scope: detail.scope, component_id: component.id, version: component.version, interaction_id: detail.interaction_id };
         if (detail.view_revision !== (component.view_revision || 0) || !detail.layout || typeof detail.layout !== 'object' || Array.isArray(detail.layout)) { desktopPost({ ...identity, ok: false }); return; }
@@ -1245,7 +1247,8 @@ export default function App() {
       if (signature !== lastSize) { desktopPost(size); lastSize = signature; }
       const regions = companionHitRegions(), regionSignature = JSON.stringify(regions);
       if (regionSignature !== lastRegions) { desktopPost({ action: 'hitRegions', regions }); lastRegions = regionSignature; }
-      const avatar = app.querySelector<HTMLElement>('.companion-avatar')?.getBoundingClientRect();
+      const avatarNode = app.querySelector<HTMLElement>('.companion-avatar');
+      const avatar = avatarNode && getComputedStyle(avatarNode).visibility !== 'hidden' && avatarNode.getClientRects().length ? avatarNode.getBoundingClientRect() : null;
       const dragRegions = avatar && avatar.width > 0 && avatar.height > 0 ? [{ x: avatar.x, y: avatar.y, width: avatar.width, height: avatar.height }] : [];
       const dragSignature = JSON.stringify(dragRegions);
       if (dragSignature !== lastDragRegions) { desktopPost({ action: 'companionDragRegions', regions: dragRegions }); lastDragRegions = dragSignature; }
@@ -1254,7 +1257,7 @@ export default function App() {
       for (const node of next) if (!watched.has(node)) { watched.add(node); observer.observe(node); }
     }, 80); };
     const observer = new ResizeObserver(report); observer.observe(appRoot.current);
-    const mutations = new MutationObserver(report); mutations.observe(appRoot.current, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'open', 'data-desktop-expanded', 'data-desktop-avatar'] });
+    const mutations = new MutationObserver(report); mutations.observe(appRoot.current, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'open', 'data-desktop-expanded', 'data-desktop-avatar', 'data-desktop-modal'] });
     window.addEventListener('resize', report); document.addEventListener('focusin', report); report();
     return () => { observer.disconnect(); mutations.disconnect(); window.removeEventListener('resize', report); document.removeEventListener('focusin', report); clearTimeout(scheduled); };
   }, [desktop]);

@@ -43,6 +43,7 @@ function fixture() {
     setDesktopState: value => { state.desktopState = typeof value === 'function' ? value(state.desktopState) : value; },
     setDesktopPresented: value => { presentations.push(value); setDesktopPresented(value, doc); },
     interactionVisible: () => interactionVisible(doc),
+    desktopPost: detail => calls.push(copy(detail)),
     submit: text => { calls.push({ action: 'submit', text }); }, navigate: session => { calls.push({ action: 'navigate', session }); },
     placementOf: component => component.view?.placement || component.placement,
     setDesktopReplyOpen() {}, setDesktopLog() {}, setMenu() {}, setHistory() {}, stop() {}, reset() {},
@@ -122,6 +123,20 @@ test('hidden or recovering native hosts do not accept background component inter
     if (mode === 'resetting') f.state.resetting = true;
     const dispatch = f.render(); dispatch(action('submit')); dispatch(action('navigate'));
     assert.deepEqual(f.calls, [], mode);
+  }
+});
+
+test('a rejected layout always releases the native pending gesture without making a write', () => {
+  for (const mode of ['hidden', 'recovering', 'resetting', 'scope', 'removed', 'file']) {
+    const f = fixture();
+    if (mode === 'hidden') setDesktopPresented(false, f.doc);
+    if (mode === 'recovering') f.state.recoveryMode = true;
+    if (mode === 'resetting') f.state.resetting = true;
+    if (mode === 'scope') f.move('bob', 'trip');
+    if (mode === 'removed') f.state.snapshot.components = [];
+    if (mode === 'file') Object.assign(f.state.snapshot.components[0], { file_id: 'file', file: { content_revision: 'new' } });
+    f.render()(action('layout', { interaction_id: 'gesture-one', view_revision: 1, layout: { hidden: true } }));
+    assert.deepEqual(f.calls, [{ action: 'sceneResult', scope: 'alice:trip', component_id: 'collector', version: 2, interaction_id: 'gesture-one', ok: false }], mode);
   }
 });
 
