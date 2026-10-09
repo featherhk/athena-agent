@@ -20,6 +20,16 @@ export function activityGroups(items: ActivityItem[], currentSession: string | n
   return [...groups.values()].map(group => group.sort((a, b) => activityPriority(a) - activityPriority(b) || b.updated_at.localeCompare(a.updated_at)))
     .sort((a, b) => activityPriority(a[0]) - activityPriority(b[0]) || b[0].updated_at.localeCompare(a[0].updated_at));
 }
+/** The compact companion only replaces its status for an actionable
+ * update elsewhere. Terminal items in this feed have not been acknowledged. */
+export function companionAttention(items: ActivityItem[], currentSession: string | null): {
+  count: number; label: 'continuity.needsYou' | 'continuity.failed' | 'continuity.ready';
+} | null {
+  const groups = activityGroups(items.filter(item => (item.needs_user && activeActivity(item)) || ['complete', 'failed'].includes(item.status)), currentSession);
+  if (!groups.length) return null;
+  return { count: groups.length, label: groups.some(group => group.some(item => item.needs_user)) ? 'continuity.needsYou'
+    : groups.some(group => group.some(item => item.status === 'failed')) ? 'continuity.failed' : 'continuity.ready' };
+}
 export function readableActivity(item: ActivityItem, session: string | null, runs: { id: string; status: string }[], visible: boolean) {
   return visible && item.session_id === session && !activeActivity(item) && runs.some(run => run.id === item.run_id && run.status === item.status);
 }

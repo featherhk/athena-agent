@@ -30,7 +30,7 @@ const receipts = new Map(), stops = new Map();
 const appActions = new Map(), actionReceipts = new Map(), previewRequests = [];
 const resumeEntries = { 'athena-session:probe': 's1' };
 let resumeSequence = 0;
-let failNext = false, failNextPreview = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '';
+let failNext = false, failNextPreview = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '', activityItems = [];
 window.addEventListener('athena:background', () => backgroundEvents++);
 const dispatch = detail => window.dispatchEvent(new CustomEvent('athena:desktop', { detail }));
 const nativeState = () => ({ platform: 'macos', supported: true, presented,
@@ -66,7 +66,7 @@ window.fetch = async (path, init) => {
   else if (path === '/api/sessions') value = body ? { id: 's2' } : [{ id: 's1', title: 'Organize my documents', pending: 0 }, { id: 's2', title: 'Another task', pending: 0 }];
   else if (path === '/api/sessions/s1') value = structuredClone(snapshot);
   else if (path === '/api/sessions/s2') value = structuredClone(secondSnapshot);
-  else if (path.startsWith('/api/activity')) value = { owner_id: 'probe', items: [], has_more: false };
+  else if (path.startsWith('/api/activity')) value = { owner_id: 'probe', items: structuredClone(activityItems), has_more: false };
   else if (path === '/api/frontend/observation') { observations.push(body); value = { accepted: true }; }
   else if (path.includes('/app-actions/') && path.endsWith('/claim')) {
     const id = path.split('/').at(-2); value = { accepted: !actionReceipts.has(id), request: appActions.get(id) };
@@ -332,6 +332,22 @@ async function run() {
     const previousSession = [...document.querySelectorAll('.session-list .session')].find(item => item.textContent.includes('Organize my documents'));
     previousSession.click(); await until(() => input().value === 'Keep this failed message.' && nativeScope === 'probe:s1', 'old task draft restored');
     check('returning_to_previous_task_restores_its_own_unsent_draft', input().value === 'Keep this failed message.' && snapshot.messages.length === oldMessages.length && secondSnapshot.messages.length === 1);
+    const beforeAttention = shellAnchors(), requestsBeforeAttention = calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop') || item.path === '/api/activity/ack').length;
+    activityItems = [{ run_id: 'background-help', session_id: 's2', title: 'Choose the documents to organize', status: 'waiting_user', phase: 'waiting',
+      needs_user: true, help_id: 'h2', attention_key: 'help-two', created_at: '2026-10-09', updated_at: '2026-10-09' }];
+    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hide before background help');
+    nativeShow(); await until(() => document.querySelector('.companion-task-attention'), 'background help status'); await delay(180);
+    check('background_help_appears_in_existing_status_without_moving_controls', document.querySelector('.companion-task-attention').textContent.includes('Needs your reply')
+      && inside(document.querySelector('.companion-task-attention')) && sameAnchors(beforeAttention, shellAnchors()), { before: beforeAttention, after: shellAnchors() });
+    await nativeClick(document.querySelector('.companion-task-attention')); await until(() => document.querySelector('[data-app-view="activity"]'), 'background help opened');
+    check('background_attention_opens_pending_question_without_acknowledging_or_executing', document.querySelector('[data-app-view="activity"]').textContent.includes('Choose the documents to organize')
+      && calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop') || item.path === '/api/activity/ack').length === requestsBeforeAttention);
+    escape(); await until(() => !document.querySelector('[data-app-view="activity"]'), 'close background help view');
+    activityItems = [{ ...activityItems[0], status: 'interrupted', needs_user: false, help_id: null }];
+    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hide before stopped update');
+    nativeShow(); await until(() => !document.querySelector('.companion-task-attention'), 'stopped update is quiet');
+    check('stopped_background_task_does_not_leave_a_permanent_attention_badge', input().value === 'Keep this failed message.' && document.querySelector('.companion-status').textContent.includes('Continue'));
+    activityItems = [];
     snapshot.components = [{ id: 'reader', title: 'Custom reader without recovery controls', placement: 'surface', version: 1, view_revision: 0,
       html: '<main><h1>Read my document</h1><p>This generated surface has no stop, reset or navigation controls.</p></main>' }];
     snapshot.runs.unshift({ id: 'surface-run', status: 'running', phase: 'executing' }); emit();

@@ -1,9 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ActivityFeed, activeActivity, activityGroups, readableActivity } from '../src/task-continuity.ts';
+import { ActivityFeed, activeActivity, activityGroups, companionAttention, readableActivity } from '../src/task-continuity.ts';
 
 const flush = async () => { for (let n = 0; n < 12; n++) await Promise.resolve(); };
 const item = (change = {}) => ({ run_id: 'r1', session_id: 's1', title: 'Task one', status: 'complete', phase: 'idle', attention_key: 'key1', created_at: '2026-10-04', updated_at: '2026-10-04', needs_user: false, ...change });
+
+test('compact attention excludes the current conversation and nonactionable background states', () => {
+  assert.equal(companionAttention([item()], 's1'), null);
+  for (const status of ['queued', 'running', 'waiting_agents', 'cancelled', 'interrupted']) {
+    assert.equal(companionAttention([item({ status })], 'other'), null, status);
+  }
+  assert.deepEqual(companionAttention([item()], null), { count: 1, label: 'continuity.ready' });
+  assert.deepEqual(companionAttention([item({ status: 'failed' })], 'other'), { count: 1, label: 'continuity.failed' });
+  assert.deepEqual(companionAttention([item({ status: 'waiting_agents', needs_user: true })], 'other'), { count: 1, label: 'continuity.needsYou' });
+});
+
+test('compact attention prioritizes pending help and counts conversations without mutating the feed', () => {
+  const rows = [item(), item({ run_id: 'r2', session_id: 's2', status: 'failed' }),
+    item({ run_id: 'r3', session_id: 's2', status: 'waiting_user', needs_user: true }),
+    item({ run_id: 'r4', session_id: 'current', status: 'waiting_user', needs_user: true })];
+  const original = JSON.stringify(rows);
+  assert.deepEqual(companionAttention(rows, 'current'), { count: 2, label: 'continuity.needsYou' });
+  assert.equal(JSON.stringify(rows), original);
+  assert.deepEqual(companionAttention(rows, 's2'), { count: 2, label: 'continuity.needsYou' });
+});
 function fixture(owner = 'david') {
   const requests = [], changes = [], timers = new Map(); let timer = 0, lost = 0;
   const clock = { later: (callback, delay) => { timers.set(++timer, { callback, delay }); return timer; }, cancel: id => timers.delete(id) };
@@ -12,6 +32,17 @@ function fixture(owner = 'david') {
   return { feed, requests, changes, timers, answer, lost: () => lost,
     tick: async delay => { for (const [id, task] of [...timers]) if (task.delay === delay) { timers.delete(id); task.callback(); } await flush(); } };
 }
+
+test('compact attention clears only when the existing feed acknowledges a terminal update', async () => {
+  const f = fixture(); f.feed.resume(); await f.answer(0);
+  assert.deepEqual(companionAttention(f.feed.state.items, null), { count: 1, label: 'continuity.ready' });
+  assert.equal(f.requests.length, 1, 'reading the status cannot acknowledge or execute work');
+  const acknowledgment = f.feed.acknowledge(item());
+  await f.answer(1, undefined, { acknowledged: true, item: null });
+  assert.equal(await acknowledgment, true);
+  assert.equal(companionAttention(f.feed.state.items, null), null);
+  f.feed.stop();
+});
 
 test('polls only while visible and coalesces overlapping refresh requests', async () => {
   const f = fixture(); f.feed.refresh(); assert.equal(f.requests.length, 0);
