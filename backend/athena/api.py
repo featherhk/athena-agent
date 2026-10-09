@@ -118,6 +118,8 @@ def create_app(config: Config | None = None):
             pool.shutdown(wait=True)
             lock.close()
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+    from .desktop_resume import register_routes as register_desktop_resume_routes
+    register_desktop_resume_routes(app, config)
 
     @app.middleware("http")
     async def local_only(request, call_next):

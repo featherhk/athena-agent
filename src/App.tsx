@@ -49,6 +49,9 @@ import { useFrontendObservation } from './useFrontendObservation';
 import { observesAppAction, type PreviewObservation } from './frontend-observation';
 import { manageModalFocus, hasNativeModal } from './modal-focus';
 import CompanionPortrait from './CompanionPortrait';
+import CompanionSurfaceControls from './CompanionSurfaceControls';
+import CompanionTaskAttention from './CompanionTaskAttention';
+import { DesktopResumeStore, readResumeClaim } from './desktop-resume';
 import { desktopRole, desktopPost, desktopScene, readDesktopState, interactionVisible, setDesktopPresented, companionHitRegions, type DesktopState } from './desktop-bridge';
 import './desktop.css';
 
@@ -73,6 +76,7 @@ export default function App() {
   const { t, locale, choice, reduced, preferences, applyPreferences } = useI18n();
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const [resumeReady, setResumeReady] = useState(!desktop);
   const [hasUsers, setHasUsers] = useState(true);
   const [session, setSession] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>(empty);
@@ -130,17 +134,21 @@ export default function App() {
   const helpDrafts = useRef<HelpDraftStore | null>(null);
   const [, setHelpDraftRevision] = useState(0);
   const selection = useRef<SessionSelection | null>(null);
+  const desktopResume = useRef<DesktopResumeStore | null>(null);
+  if (desktop && !desktopResume.current) desktopResume.current = new DesktopResumeStore(
+    (path, body) => frontendRequest(new AbortController().signal, signal => api(path, body, signal), 8000),
+    () => setError(t('desktop.saveFailed')));
   if (!selection.current) {
     let tabStorage: Storage | null = null, sharedStorage: Storage | null = null;
     try { tabStorage = sessionStorage; } catch { /* Memory fallback. */ }
     try { sharedStorage = localStorage; } catch { /* Tab persistence still works. */ }
-    selection.current = new SessionSelection(tabStorage, sharedStorage);
+    selection.current = new SessionSelection(desktopResume.current || tabStorage, desktop ? null : sharedStorage);
   }
   if (!drafts.current) {
     let storage: Storage | null = null; try { storage = sessionStorage; } catch { /* Use memory. */ }
-    drafts.current = new DraftStore(storage);
-    intents.current = new SubmissionIntents(storage);
-    helpDrafts.current = new HelpDraftStore(storage);
+    drafts.current = new DraftStore(desktopResume.current || storage);
+    intents.current = new SubmissionIntents(desktopResume.current || storage);
+    helpDrafts.current = new HelpDraftStore(desktopResume.current || storage);
   }
   const appActionSeen = useRef(new Set<string>());
   const appActionQueue = useRef(Promise.resolve());
@@ -262,6 +270,9 @@ export default function App() {
   }
   function navigate(next: string | null, migrate = false) {
     if (desktop) { setDesktopLog(false); setDesktopReplyOpen(Boolean(next)); }
+    // Selecting the already open conversation changes presentation only. Its
+    // unchanged effect dependencies would never reload an emptied snapshot.
+    if (uiScope.current.session === next) { setHistory(false); setMenu(false); return; }
     pendingActivityView.current = null; setInlinePreview(null); setInlineObservation(null);
     conversationScroll.policy.resume();
     const scope = uiScope.current;
@@ -374,6 +385,7 @@ export default function App() {
       const isCurrent = () => scopeStillCurrent() && isSameAccount() && interactionVisible();
       appActionActive.current++;
       try {
+        if (action.action === 'sign_out') await desktopResume.current?.flush(owner);
         if (!await prepareAppClaim({ barrier: submissions.current, scope: submissionScope(), current: isCurrent, report: frontendObservation.report })) return;
         const applied = await consumeAppAction(action, client, api, (request, guard) => appActionHandler.current(request, guard), isCurrent, isSameAccount);
         if (applied && action.action === 'sign_out' && isSameAccount()) acceptUser(null);
@@ -383,6 +395,7 @@ export default function App() {
   }
   useEffect(() => { for (const action of snapshot.app_actions || []) enqueueAppAction(action); }, [snapshot.app_actions, session, user?.id, actionWake]);
   function acceptUser(next: User | null, saved?: Preferences) {
+    if (!next) { desktopResume.current?.deactivate(); setResumeReady(true); }
     if (uiScope.current.owner !== (next?.id || null)) { surfaceDrafts.current.clear(); setSurfaces(false); }
     const previous = uiScope.current.owner;
     appClient.current = crypto.randomUUID();
@@ -394,7 +407,7 @@ export default function App() {
       if (guest.text && !existing.text && !existing.attached.length) drafts.current!.write(next.id, nextSession, { text: guest.text, attached: [] });
       drafts.current!.clear(null, null);
     } else if (!next && previous) drafts.current!.clear(null, null);
-    if (next) {
+    if (next && !desktop) {
       try {
         const cached = JSON.parse(sessionStorage.getItem('athena-upgrade-draft') || 'null');
         if (cached?.user_id === next.id && Date.now() - cached.saved_at < 600000) {
@@ -407,19 +420,46 @@ export default function App() {
     uiScope.current = { owner: next?.id || null, session: nextSession, generation: uiScope.current.generation + 1, control: uiScope.current.control + 1 };
     applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setPreview(null); setFiles(null); setSessions([]);
     pendingActivityView.current = null; conversationScroll.policy.resume(); setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
-    setDesktopLog(false); setDesktopReplyOpen(false);
+    setDesktopLog(false); setDesktopReplyOpen(Boolean(desktop && nextSession));
     setSending(false); setUploading(false); setResetting(false); setSession(nextSession); showDraft(drafts.current!.read(next?.id || null, nextSession));
     setSnapshot(empty()); setError(''); setTextEffects({}); setInlinePreview(null); setInlineObservation(null);
+  }
+  async function restoreUser(next: User | null, saved: Preferences | undefined, ticket: number) {
+    if (desktop && next) {
+      setResumeReady(false);
+      const writer = crypto.randomUUID();
+      const restored = readResumeClaim(await api('/desktop/resume/claim', { writer }), writer);
+      if (authEpoch.current !== ticket) return false;
+      desktopResume.current!.activate(next.id, restored);
+      // Recreate account-scoped caches only after durable storage is hydrated.
+      selection.current = new SessionSelection(desktopResume.current);
+      drafts.current = new DraftStore(desktopResume.current);
+      intents.current = new SubmissionIntents(desktopResume.current);
+      helpDrafts.current = new HelpDraftStore(desktopResume.current);
+    }
+    if (authEpoch.current !== ticket) return false;
+    acceptUser(next, saved); setResumeReady(true); return true;
   }
   async function loadAccount() {
     const ticket = authEpoch.current;
     try {
       const result = await api<{ user: User | null; preferences?: Preferences; configured: boolean; has_users: boolean }>('/auth/me');
       if (authEpoch.current !== ticket) return;
-      acceptUser(result.user, result.preferences); setHasUsers(result.has_users); setReady(true);
+      if (await restoreUser(result.user, result.preferences, ticket)) { setHasUsers(result.has_users); setReady(true); }
     } catch { if (authEpoch.current === ticket) setError(t('error.connection')); }
   }
   useEffect(() => { void loadAccount(); }, []);
+  useEffect(() => {
+    if (!desktop) return;
+    const flush = async () => {
+      await desktopResume.current!.flush(uiScope.current.owner || undefined);
+      return true;
+    };
+    window.__ATHENA_FLUSH_RESUME__ = flush;
+    const leaving = () => { void flush().catch(() => {}); };
+    window.addEventListener('pagehide', leaving);
+    return () => { delete window.__ATHENA_FLUSH_RESUME__; window.removeEventListener('pagehide', leaving); };
+  }, [desktop, resumeReady]);
   useEffect(() => {
     if (!user) return;
     let stopped = false, checking = false;
@@ -431,7 +471,8 @@ export default function App() {
       const current = upgradeState.current;
       if (!stopped && version && current.safe && !appActionActive.current && document.activeElement?.tagName !== 'IFRAME' && !readingActivity() && current.user?.id === user.id && uiScope.current.owner === user.id && authEpoch.current === authTicket) {
         try {
-          if (!drafts.current!.persist(user.id, uiScope.current.session)) { checking = false; return; }
+          if (desktop) await desktopResume.current!.flush(user.id);
+          else if (!drafts.current!.persist(user.id, uiScope.current.session)) { checking = false; return; }
           sessionStorage.setItem('athena-upgrade-draft', JSON.stringify({ user_id: user.id, session_id: uiScope.current.session, saved_at: Date.now() }));
           window.location.reload();
         } catch { /* Keep the page and draft when private storage is unavailable. */ }
@@ -616,6 +657,7 @@ export default function App() {
     intents.current!.addStop(intent); intents.current!.stopStarted(owner, sid); refreshIntents(old => old + 1);
     let revision: number | undefined;
     try {
+      await desktopResume.current?.flush(owner);
       const receipt = await frontendRequest(new AbortController().signal, signal => api(`/sessions/${sid}/stop`, { client_stop_id: intent.id }, signal), 20000);
       revision = readStopReceipt(receipt, intent.id)!;
       intents.current!.confirmStop(intent, revision);
@@ -628,7 +670,7 @@ export default function App() {
 
   function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
   async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false, retryIntent?: SubmissionIntent) {
-    if ((!value.trim() && (!fromComposer || attached.length === 0) && !retryIntent) || sending || resetting || uploading) {
+    if (!ready || !resumeReady || (!value.trim() && (!fromComposer || attached.length === 0) && !retryIntent) || sending || resetting || uploading) {
       if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       return;
     }
@@ -684,6 +726,13 @@ export default function App() {
           intent = { id: crypto.randomUUID(), owner, session: sid, text: value, mode, file_ids: [...sentFiles], revision,
             draft: fromComposer && sentDraft.revision >= 0 ? sentDraft : null };
           intents.current!.add(intent);
+        }
+        await desktopResume.current?.flush(owner);
+        if (!isCurrent()) {
+          // No POST has happened. Leaving during the persistence wait is a
+          // known unsent attempt, not an uncertain delivery to reconcile later.
+          if (!retrying) { intents.current!.remove(intent); refreshIntents(old => old + 1); }
+          if (throwOnError) throw new VoiceSubmissionError('not_sent'); return;
         }
         voiceReceipt?.dispatch(); dispatched = true;
         const raw = await frontendRequest(new AbortController().signal,
@@ -896,6 +945,7 @@ export default function App() {
     const ticket = authEpoch.current;
     invalidateActions();
     try {
+      await desktopResume.current?.flush(uiScope.current.owner || undefined);
       try { await api('/auth/logout', {}); }
       catch (error) {
         if (authEpoch.current !== ticket) return;
@@ -1083,7 +1133,7 @@ export default function App() {
   return <div ref={appRoot} className={`app${desktop ? ' desktop-companion' : ''}`} data-desktop-expanded={desktopExpanded} data-desktop-modal={desktop && desktopTransient} data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
     {desktop && <div className="companion-presence" data-desktop-hit>
       {presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <button className="companion-avatar" type="button" aria-expanded={desktopResult} aria-label={desktopHasResult ? t(desktopResult ? 'desktop.collapse' : 'desktop.reopen') : t('desktop.focus')} onClick={() => { if (desktopHasResult) { setDesktopReplyOpen(!desktopResult); setInlinePreview(null); } else input.current?.focus(); }}><CompanionPortrait phase={orbPhase} listening={voiceActive} /></button>}
-      <span className="companion-status" role="status" title={desktopQuestion}>{busy || waiting ? t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`) : desktopQuestion ? t('desktop.continue') : t('desktop.prompt')}</span>
+      <CompanionTaskAttention items={continuity.state.items} currentSession={session} open={() => setActivity(true)}><span className="companion-status" role="status" title={desktopQuestion}>{busy || waiting ? t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`) : desktopQuestion ? t('desktop.continue') : t('desktop.prompt')}</span></CompanionTaskAttention>
       <button className="companion-menu" aria-label={t('menu')} title={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1"/><circle cx="10" cy="10" r="1"/><circle cx="16" cy="10" r="1"/></svg></button>
       <button className="companion-hide" aria-label={t('desktop.hide')} title={t('desktop.hide')} onClick={() => desktopPost({ action: 'hide' })}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6 8 8m0-8-8 8" /></svg></button>
     </div>}
@@ -1092,6 +1142,7 @@ export default function App() {
       <nav aria-label={t('chatControls')}>{desktop && <button className="quiet" onClick={() => setDesktopLog(false)}>{t('desktop.back')}</button>}{renderer && <><button className="quiet" onClick={returnToDefault}>{t('backToChat')}</button><button className="icon-button" aria-label={t('files.attach')} onClick={() => fileInput.current?.click()}><Icon name="files" /></button><button className="quiet" onClick={() => void stop()}>{t('stop')}</button><button className="icon-button" aria-label={t('reset')} onClick={() => void reset()}><Icon name="reset" /></button></>}{!preview && !auth && !account && !appearance && !files && !history && !menu && !surfaces && activityControl()}{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
     </header>}
     {desktop && !desktopLog ? <>
+      {renderer && <CompanionSurfaceControls back={returnToDefault} stop={() => void stop()} reset={() => void reset()} resetting={resetting} />}
       {!resetting && components.filter(item => placementOf(item) === 'overlay').map(item => <div className="scene-overlay" key={`${item.id}-${item.version}`} inert={desktopTransient}>{renderWidget(item)}</div>)}
       {renderer ? <section className="session-surface companion-result" data-desktop-hit aria-label={renderer.title}>{renderWidget(renderer)}</section> : desktopHasResult && <main className="companion-result scroll-area" hidden={!desktopResult} data-desktop-hit ref={conversationScroll.ref} {...conversationScroll.handlers}>
         <div className="companion-result-heading"><button className="quiet" onClick={() => { setDesktopReplyOpen(false); setInlinePreview(null); }}>{t('desktop.collapse')}</button></div>
@@ -1186,12 +1237,12 @@ export default function App() {
       {chooseFiles && <div className="activity"><button className="quiet" type="button" onClick={() => { setChooseFiles(false); fileInput.current?.click(); }}>{t('files.attach')}</button><button className="icon-button" type="button" aria-label={t('close')} onClick={() => setChooseFiles(false)}>×</button></div>}
       <input type="file" multiple hidden ref={fileInput} onChange={event => void upload(event.target.files)} />
       <form className={`composer${renderer ? ' surface-call-controls' : ''}`} data-task-active={busy || waiting || sending} onSubmit={event => { event.preventDefault(); void submit(); }}>
-        {!renderer && <><button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
-        <textarea dir="auto" ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+        {!renderer && <><button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={!resumeReady || uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
+        <textarea dir="auto" readOnly={!resumeReady} ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
         </>}<div className="send-actions" key="actions">
-          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || resetting || sending || uploading || pendingIntents.length > 0 || pendingStops.length > 0} hasPendingDelivery={value => Boolean(user && session && intents.current!.list(user.id, session).some(intent => !intent.draft && intent.text === value))} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
+          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || !resumeReady || resetting || sending || uploading || pendingIntents.length > 0 || pendingStops.length > 0} hasPendingDelivery={value => Boolean(user && session && intents.current!.list(user.id, session).some(intent => !intent.draft && intent.text === value))} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
           {!renderer && <ComposerActions busy={busy} sending={sending} questions={help?.questions.length || 0} text={text} attachmentCount={attached.length}
-            disabled={sending || uploading || !ready || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />}
+            disabled={sending || uploading || !ready || !resumeReady || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />}
         </div>
       </form>
     </div></footer>
@@ -1203,7 +1254,7 @@ export default function App() {
     {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" data-app-view="history" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
     {auth && <div className="overlay centered"><form className="dialog" data-app-view="authentication" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {
       event.preventDefault(); const ticket = ++authEpoch.current; invalidateActions(); setSending(true); setError('');
-      try { const result = await api<{ user: User; preferences: Preferences }>(`/auth/${auth}`, { username, password }); if (authEpoch.current === ticket) { acceptUser(result.user, result.preferences); setHasUsers(true); } }
+      try { const result = await api<{ user: User; preferences: Preferences }>(`/auth/${auth}`, { username, password }); if (authEpoch.current === ticket && await restoreUser(result.user, result.preferences, ticket)) { setHasUsers(true); } }
       catch (e) { if (authEpoch.current === ticket) setError((e as Error).message); } finally { if (authEpoch.current === ticket) setSending(false); }
     }}><div className="dialog-top"><h2>{auth === 'login' ? t('welcomeBack') : t('niceToMeet')}</h2><button className="icon-button" type="button" aria-label={t('close')} onClick={() => { setAuth(null); setPassword(''); }}>×</button></div><label htmlFor="username">{t('username')}</label><input id="username" autoComplete="username" autoFocus aria-describedby="username-hint" value={username} onChange={event => setUsername(event.target.value)} required minLength={2} maxLength={40} /><p id="username-hint" className="field-hint">{t('usernameHint')}</p><label htmlFor="password">{t('password')}</label><input id="password" type="password" autoComplete={auth === 'login' ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} required minLength={8} maxLength={128} placeholder={t('passwordHint')} />{error && <p className="notice">{error}</p>}<button className="primary wide" disabled={sending}>{sending ? t('wait') : auth === 'login' ? t('signIn') : t('createAccount')}</button><button type="button" className="quiet wide" onClick={() => { setAuth(auth === 'login' ? 'register' : 'login'); setError(''); }}>{auth === 'login' ? t('needAccount') : t('haveAccount')}</button></form></div>}
     {account && user && <div className="overlay centered"><section className="dialog" data-app-view="account" role="dialog" aria-modal="true" aria-label={t('account')}><div className="dialog-top"><h2>{user.display_name || user.username}</h2><button className="icon-button" aria-label={t('close')} onClick={closeAccount}>×</button></div><AccountProfile user={user} onChange={next => { if (uiScope.current.owner === next.id) setUser(next); }} passwordRequested={passwordRequested} onPasswordChanged={closeAccount} /><label className="toggle-row"><span>{t('developerMode')}</span><input type="checkbox" checked={Boolean(user.developer_mode)} onChange={event => void developer(event.target.checked)} /></label>{error && <p className="notice">{error}</p>}<button className="quiet wide logout" onClick={() => void signOut()}>{t('signOut')}</button></section></div>}

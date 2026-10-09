@@ -313,5 +313,6 @@
   "surface.desktop": "デスクトップ",
   "desktop.collapse": "閉じる",
   "desktop.reopen": "この会話を見る",
-  "desktop.continue": "この続きを話す"
+  "desktop.continue": "この続きを話す",
+  "desktop.saveFailed": "最新の下書きを保存できませんでした。Athena を開いたまま、もう一度お試しください。"
 }

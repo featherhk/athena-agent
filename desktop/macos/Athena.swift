@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var pendingOutput = Data()
     private var localURL: URL?
     private var terminating = false
+    private var quitRequest: UUID?
     private var startupGeneration = 0
     private var loadingLabel: NSTextField!
     private var updateTask: Task<Void, Never>?
@@ -425,14 +426,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminating || quitRequest != nil { return .terminateLater }
+        if child?.isRunning != true && !isLocal(webView?.url) { return .terminateNow }
+        let request = UUID()
+        quitRequest = request
+        guard let webView, isLocal(webView.url) else {
+            beginTermination()
+            return .terminateLater
+        }
+        // The WebView origin changes at every launch. Wait for its account-
+        // scoped SQLite draft/intent receipt before stopping the local service.
+        webView.callAsyncJavaScript("return window.__ATHENA_FLUSH_RESUME__ ? await window.__ATHENA_FLUSH_RESUME__() : true",
+            arguments: [:], in: nil, in: .page) { [weak self] result in
+            Task { @MainActor in
+                guard let self, self.quitRequest == request else { return }
+                if case .success(let value) = result, value as? Bool == true { self.beginTermination() }
+                else { self.cancelTermination(request) }
+            }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, self.quitRequest == request, !self.terminating else { return }
+            self.cancelTermination(request)
+        }
+        return .terminateLater
+    }
+
+    private func cancelTermination(_ request: UUID) {
+        guard quitRequest == request, !terminating else { return }
+        quitRequest = nil
+        NSApp.reply(toApplicationShouldTerminate: false)
+        showCompanion()
+        let alert = NSAlert()
+        alert.messageText = tr("save_failed")
+        alert.addButton(withTitle: tr("close"))
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
+    private func beginTermination() {
         terminating = true
+        quitRequest = nil
         updateTask?.cancel()
         shortcut?.unregister()
         DesktopHitRegions.shared.unregister(window)
         scene.closeAll()
         sendDesktopAction("hidden")
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('athena:background'))", completionHandler: nil)
-        guard let child, child.isRunning else { return .terminateNow }
+        guard let child, child.isRunning else { NSApp.reply(toApplicationShouldTerminate: true); return }
         child.terminate()
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(10))
@@ -441,7 +481,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
         }
-        return .terminateLater
     }
 
     private func isLocal(_ url: URL?) -> Bool {

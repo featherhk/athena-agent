@@ -7,7 +7,7 @@ export type DesktopState = {
   components: { id: string; version: number; view_revision: number; state: 'loading' | 'mounted' | 'hidden' | 'failed'; visible: boolean; rect: DesktopRect; screen_id: string; error_code?: string }[];
 };
 declare global {
-  interface Window { __ATHENA_DESKTOP__?: { readonly version: number }; webkit?: { messageHandlers?: { athenaDesktop?: { postMessage: (value: unknown) => void } } } }
+  interface Window { __ATHENA_FLUSH_RESUME__?: () => Promise<boolean>; __ATHENA_DESKTOP__?: { readonly version: number }; webkit?: { messageHandlers?: { athenaDesktop?: { postMessage: (value: unknown) => void } } } }
 }
 
 /** The URL chooses presentation only inside a native, main-frame host. */

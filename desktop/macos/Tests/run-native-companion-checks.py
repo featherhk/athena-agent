@@ -117,6 +117,11 @@ class IntegrationFixture(Fixture):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
         self.server.requests.append('POST ' + self.path)
+        if self.path == '/api/desktop/resume/claim':
+            return self.reply({'writer': body['writer'], 'sequence': 0,
+                               'entries': {'athena-session:fixture_owner': 'session_a'}})
+        if self.path == '/api/desktop/resume/save':
+            return self.reply({'writer': body['writer'], 'sequence': body['sequence']})
         if self.path == '/api/sessions/session_a/components/specimen/report':
             self.server.component_reports.append(body)
             return self.reply({'accepted': True})

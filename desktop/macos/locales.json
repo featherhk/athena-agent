@@ -37,7 +37,8 @@
     "stop_work": "Stop Current Work",
     "shortcut_unavailable": "Option–Space is in use. Open Athena from this menu.",
     "account_settings": "Account and Settings",
-    "new_chat": "New Conversation"
+    "new_chat": "New Conversation",
+    "save_failed": "Your latest draft could not be saved. Keep Athena open and try again."
   },
   "zh-Hans": {
     "starting": "Athena 正在醒来…",
@@ -77,7 +78,8 @@
     "stop_work": "停止当前任务",
     "shortcut_unavailable": "Option–空格已被占用。请从此菜单打开 Athena。",
     "account_settings": "账户与设置",
-    "new_chat": "新对话"
+    "new_chat": "新对话",
+    "save_failed": "最新草稿暂时无法保存。请保持 Athena 开启，稍后重试。"
   },
   "zh-Hant": {
     "starting": "Athena 正在醒來…",
@@ -117,7 +119,8 @@
     "stop_work": "停止目前任務",
     "shortcut_unavailable": "Option–空白鍵已被佔用。請從此選單開啟 Athena。",
     "account_settings": "帳戶與設定",
-    "new_chat": "新對話"
+    "new_chat": "新對話",
+    "save_failed": "最新草稿暫時無法儲存。請保持 Athena 開啟，稍後再試。"
   },
   "ja": {
     "starting": "Athena を起動しています…",
@@ -157,7 +160,8 @@
     "stop_work": "現在の作業を停止",
     "shortcut_unavailable": "Option–スペースは使用中です。このメニューから Athena を開いてください。",
     "account_settings": "アカウントと設定",
-    "new_chat": "新しい会話"
+    "new_chat": "新しい会話",
+    "save_failed": "最新の下書きを保存できませんでした。Athena を開いたまま、もう一度お試しください。"
   },
   "ar": {
     "starting": "جارٍ بدء Athena…",
@@ -197,7 +201,8 @@
     "stop_work": "إيقاف المهمة الحالية",
     "shortcut_unavailable": "الاختصار Option–Space قيد الاستخدام. افتح Athena من هذه القائمة.",
     "account_settings": "الحساب والإعدادات",
-    "new_chat": "محادثة جديدة"
+    "new_chat": "محادثة جديدة",
+    "save_failed": "تعذر حفظ آخر مسودة. أبقِ Athena مفتوحة وحاول مرة أخرى."
   },
   "es": {
     "starting": "Athena está despertando…",
@@ -237,7 +242,8 @@
     "stop_work": "Detener la tarea actual",
     "shortcut_unavailable": "Opción–Espacio está en uso. Abre Athena desde este menú.",
     "account_settings": "Cuenta y ajustes",
-    "new_chat": "Nueva conversación"
+    "new_chat": "Nueva conversación",
+    "save_failed": "No se pudo guardar el último borrador. Mantén Athena abierta e inténtalo de nuevo."
   },
   "fr": {
     "starting": "Athena se réveille…",
@@ -277,7 +283,8 @@
     "stop_work": "Arrêter la tâche en cours",
     "shortcut_unavailable": "Option–Espace est déjà utilisé. Ouvrez Athena depuis ce menu.",
     "account_settings": "Compte et réglages",
-    "new_chat": "Nouvelle conversation"
+    "new_chat": "Nouvelle conversation",
+    "save_failed": "Impossible d’enregistrer le dernier brouillon. Gardez Athena ouverte et réessayez."
   },
   "ko": {
     "starting": "Athena를 시작하고 있어요…",
@@ -317,7 +324,8 @@
     "stop_work": "현재 작업 중지",
     "shortcut_unavailable": "Option–Space가 사용 중이에요. 이 메뉴에서 Athena를 열어 주세요.",
     "account_settings": "계정 및 설정",
-    "new_chat": "새 대화"
+    "new_chat": "새 대화",
+    "save_failed": "최신 초안을 저장하지 못했어요. Athena를 열어 둔 채 다시 시도해 주세요."
   },
   "pt": {
     "starting": "Athena está a despertar…",
@@ -357,6 +365,7 @@
     "stop_work": "Parar a tarefa atual",
     "shortcut_unavailable": "Option–Espaço já está em uso. Abra Athena por este menu.",
     "account_settings": "Conta e definições",
-    "new_chat": "Nova conversa"
+    "new_chat": "Nova conversa",
+    "save_failed": "Não foi possível guardar o último rascunho. Mantenha a Athena aberta e tente novamente."
   }
 }

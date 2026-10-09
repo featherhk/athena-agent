@@ -92,6 +92,8 @@ class Store:
             initialize_activity(db)
             from .frontend_state import initialize as initialize_frontend_state
             initialize_frontend_state(db)
+            from .desktop_resume import initialize as initialize_desktop_resume
+            initialize_desktop_resume(db)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         await self.call(migrate)
         from .context_controls import initialize_context_controls

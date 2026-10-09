@@ -313,5 +313,6 @@
   "surface.desktop": "سطح المكتب",
   "desktop.collapse": "طيّ",
   "desktop.reopen": "عرض المحادثة",
-  "desktop.continue": "متابعة هذا الأمر"
+  "desktop.continue": "متابعة هذا الأمر",
+  "desktop.saveFailed": "تعذر حفظ آخر مسودة. أبقِ Athena مفتوحة وحاول مرة أخرى."
 }

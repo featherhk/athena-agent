@@ -313,5 +313,6 @@
   "surface.desktop": "데스크탑",
   "desktop.collapse": "접기",
   "desktop.reopen": "대화 보기",
-  "desktop.continue": "이어서 이야기하기"
+  "desktop.continue": "이어서 이야기하기",
+  "desktop.saveFailed": "최신 초안을 저장하지 못했어요. Athena를 열어 둔 채 다시 시도해 주세요."
 }

@@ -313,5 +313,6 @@
   "surface.desktop": "Bureau",
   "desktop.collapse": "Replier",
   "desktop.reopen": "Voir cette conversation",
-  "desktop.continue": "Continuer cette tâche"
+  "desktop.continue": "Continuer cette tâche",
+  "desktop.saveFailed": "Impossible d’enregistrer le dernier brouillon. Gardez Athena ouverte et réessayez."
 }

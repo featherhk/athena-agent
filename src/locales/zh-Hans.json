@@ -313,5 +313,6 @@
   "surface.desktop": "桌面",
   "desktop.collapse": "收起",
   "desktop.reopen": "查看这段对话",
-  "desktop.continue": "继续这件事"
+  "desktop.continue": "继续这件事",
+  "desktop.saveFailed": "最新草稿暂时无法保存。请保持 Athena 开启，稍后重试。"
 }

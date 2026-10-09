@@ -313,5 +313,6 @@
   "surface.desktop": "Escritorio",
   "desktop.collapse": "Ocultar",
   "desktop.reopen": "Ver esta conversación",
-  "desktop.continue": "Continuar esta tarea"
+  "desktop.continue": "Continuar esta tarea",
+  "desktop.saveFailed": "No se pudo guardar el último borrador. Mantén Athena abierta e inténtalo de nuevo."
 }
