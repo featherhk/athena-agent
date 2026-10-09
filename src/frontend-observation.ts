@@ -59,7 +59,25 @@ export function observeFrontend(document: Document, facts: FrontendFacts): Omit<
   const activeWorkspace = document.querySelector<HTMLElement>('.workspace-panel .widget[data-component-id]')?.dataset.componentId;
   const workspace = components.find(component => component.id === activeWorkspace);
   const inlinePreview = [...document.querySelectorAll<HTMLElement>('[data-inline-preview-id]')].some(node => node.dataset.inlinePreviewId === facts.preview?.file_id && node.getBoundingClientRect().width > 0);
-  const preview = (open.has('preview') || inlinePreview) && facts.preview ? { file_id: facts.preview.file_id, status: facts.preview.status,
+  // Native file surfaces live in their own WebKit document. A missing preview DOM
+  // node in the companion is expected; only an exact current native receipt may
+  // replace that DOM evidence, never a registration or an optimistic open state.
+  let nativePreview: PreviewObservation | null = null;
+  if (facts.preview && facts.desktop && foreground && presented) {
+    for (const component of facts.components.slice(0, 32)) {
+      const file = component.file;
+      if (component.file_id !== facts.preview.file_id || file?.id !== facts.preview.file_id
+        || !file.content_revision || component.view?.hidden || placementOf(component) !== 'desktop') continue;
+      const receipt = facts.desktop.components.find(item => item.id === component.id && item.version === component.version
+        && item.view_revision === (component.view_revision || 0) && item.file_id === file.id
+        && item.content_revision === file.content_revision && item.visible && item.state !== 'hidden');
+      if (!receipt) continue;
+      nativePreview = { file_id: file.id, status: receipt.state === 'mounted' ? 'ready' : receipt.state === 'failed' ? 'failed' : 'loading',
+        ...(receipt.state === 'failed' ? { error_code: 'preview_unavailable' as const } : {}) };
+      break;
+    }
+  }
+  const preview = facts.desktop ? nativePreview : (open.has('preview') || inlinePreview) && facts.preview ? { file_id: facts.preview.file_id, status: facts.preview.status,
     ...(facts.preview.status === 'failed' ? { error_code: 'preview_unavailable' as const } : {}) } : null;
   const waiting: FrontendObservation['waiting'] = facts.helpIds.slice(0, 5).map(id => ({ kind: 'user_help', id }));
   if (facts.choosingFiles) waiting.push({ kind: 'file_selection' });
@@ -138,7 +156,8 @@ export function observesAppAction(action: AppAction, observation: FrontendObserv
   if (action.action === 'open') return Boolean(target && observation.open_views.includes(target));
   if (action.action === 'close') return Boolean(target && !observation.open_views.includes(target)
     && (target !== 'preview' || observation.preview === null) && (target !== 'workspace' || observation.workspace === null));
-  if (action.action === 'preview') return observation.preview?.file_id === file_id;
+  if (action.action === 'preview') return Boolean(file_id && observation.preview?.file_id === file_id
+    && (!observation.desktop || observation.preview.status === 'ready'));
   if (action.action === 'attach') return file_id ? observation.attachment_ids.includes(file_id) : observation.waiting.some(item => item.kind === 'file_selection');
   if (action.action === 'detach') return Boolean(file_id && !observation.attachment_ids.includes(file_id));
   return action.action === 'download' || action.action === 'sign_out';

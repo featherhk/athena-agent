@@ -178,3 +178,62 @@ test('a native visibility event cannot publish contradictory foreground and scen
   assert.equal(shown.desktop.presented, true);
   assert.equal(shown.desktop.components[0].visible, false, 'Showing the companion alone cannot invent mounted component visibility');
 });
+
+const nativeFileFixture = () => ({
+  components: [component('file_surface', { file_id: 'sheet', file: { id: 'sheet', content_revision: 's1-current-bytes' }, placement: 'desktop', view_revision: 3 })],
+  desktop: { platform: 'macos', supported: true, presented: true, screens: [], components: [
+    { id: 'file_surface', version: 2, view_revision: 3, file_id: 'sheet', content_revision: 's1-current-bytes', state: 'mounted', visible: true, screen_id: '1', rect: rect() },
+  ] },
+  preview: { file_id: 'sheet', status: 'ready' },
+});
+
+test('a separate native file surface projects exact ready state without companion preview DOM', () => {
+  const state = observeFrontend(document(), facts(nativeFileFixture()));
+  assert.deepEqual(state.preview, { file_id: 'sheet', status: 'ready' });
+  assert.deepEqual(state.open_views, []);
+  assert.equal(observesAppAction({ action: 'preview', payload: { file_id: 'sheet' } }, state), true);
+});
+
+test('stale native identity or content cannot masquerade as the current file preview', () => {
+  for (const patch of [{ id: 'stale' }, { version: 1 }, { view_revision: 2 }, { file_id: 'another-file' },
+    { content_revision: 's1-old-bytes' }, { content_revision: null }]) {
+    const input = nativeFileFixture(); Object.assign(input.desktop.components[0], patch);
+    const state = observeFrontend(document({ inline: [node({ inlinePreviewId: 'sheet' })], views: [node({ appView: 'preview' })] }), facts(input));
+    assert.equal(state.preview, null, JSON.stringify(patch));
+    assert.equal(observesAppAction({ action: 'preview', payload: { file_id: 'sheet' } }, state), false);
+  }
+  for (const patch of [{ file_id: 'other' }, { file: null }, { file: { id: 'other', content_revision: 's1-current-bytes' } },
+    { file: { id: 'sheet', content_revision: null } }, { placement: 'inline' }]) {
+    const input = nativeFileFixture(); Object.assign(input.components[0], patch);
+    assert.equal(observeFrontend(document(), facts(input)).preview, null, JSON.stringify(patch));
+  }
+});
+
+test('native preview requires current visibility and respects immediate hide before React state', () => {
+  for (const patch of [{ visible: false }, { state: 'hidden' }]) {
+    const input = nativeFileFixture(); Object.assign(input.desktop.components[0], patch);
+    assert.equal(observeFrontend(document(), facts(input)).preview, null);
+  }
+  const hidden = nativeFileFixture(); hidden.components[0].view = { hidden: true };
+  assert.equal(observeFrontend(document(), facts(hidden)).preview, null);
+  const background = nativeFileFixture(); background.desktop.presented = false;
+  assert.equal(observeFrontend(document(), facts(background)).preview, null);
+  assert.equal(observeFrontend(document({ hidden: true }), facts(nativeFileFixture())).preview, null);
+  const doc = document(); doc.documentElement = { dataset: { desktopPresented: 'false' } };
+  assert.equal(observeFrontend(doc, facts(nativeFileFixture())).preview, null);
+});
+
+test('native loading and failed receipts override optimistic ready facts and cannot complete preview actions', () => {
+  const action = { action: 'preview', payload: { file_id: 'sheet' } };
+  for (const [nativeState, status] of [['loading', 'loading'], ['failed', 'failed'], ['mounted', 'ready']]) {
+    const input = nativeFileFixture(); input.desktop.components[0].state = nativeState;
+    const state = observeFrontend(document(), facts(input));
+    assert.equal(state.preview.status, status);
+    assert.equal(state.preview.error_code, status === 'failed' ? 'preview_unavailable' : undefined);
+    assert.equal(observesAppAction(action, state), status === 'ready');
+  }
+  const web = observeFrontend(document({ views: [node({ appView: 'preview' })] }), facts({ preview: { file_id: 'sheet', status: 'loading' } }));
+  assert.equal(observesAppAction(action, web), true, 'Web preview opening retains its existing loading receipt semantics');
+  const blank = observeFrontend(document(), facts({ desktop: nativeFileFixture().desktop }));
+  assert.equal(observesAppAction({ action: 'preview', payload: {} }, blank), false, 'An empty preview request has no completion evidence');
+});
