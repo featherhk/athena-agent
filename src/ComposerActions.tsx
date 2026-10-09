@@ -1,12 +1,12 @@
 import { useI18n } from './i18n';
 
 /** Stopping work is independent from preparing or submitting the next message. */
-export default function ComposerActions({ busy, sending, questions, text, attachmentCount, disabled, stop, interrupt }: {
-  busy: boolean; sending: boolean; questions: number; text: string; attachmentCount: number; disabled: boolean;
+export default function ComposerActions({ busy, sending, effectsActive = false, questions, text, attachmentCount, disabled, stop, interrupt }: {
+  busy: boolean; sending: boolean; effectsActive?: boolean; questions: number; text: string; attachmentCount: number; disabled: boolean;
   stop: () => void; interrupt: () => void;
 }) {
   const { t } = useI18n();
-  const active = busy || questions > 0, stoppable = active || sending, hasDraft = Boolean(text.trim() || attachmentCount);
+  const active = busy || questions > 0, stoppable = active || sending || effectsActive, hasDraft = Boolean(text.trim() || attachmentCount);
   return <>
     {active && hasDraft && <button className="interrupt" type="button" disabled={disabled} onClick={interrupt}>{t('interrupt')}</button>}
     {stoppable && <button className="send stop" aria-label={t('stop')} title={t('stop')} type="button" onClick={stop}>

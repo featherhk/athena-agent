@@ -101,3 +101,14 @@ test('Send keeps queue/help semantics and explicit interrupt remains a separate 
   interrupt.props.onClick();
   assert.equal(interrupted, 1); assert.equal(stopped, 0);
 });
+
+
+test('a transient effect keeps Stop after model completion without turning the next message into a queue', () => {
+  let stopped = 0;
+  const options = { effectsActive: true, text: 'Next task', stop() { stopped++; } };
+  assert.ok(stopButton(options));
+  stopButton(options).props.onClick();
+  assert.equal(stopped, 1);
+  assert.equal(sendButton(options).props['aria-label'], 'send');
+  assert.equal(buttons(options).some(button => button.props.className === 'interrupt'), false);
+});

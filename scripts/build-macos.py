@@ -130,6 +130,8 @@ def main():
         shutil.copy2(SOURCE / "launcher.py", resources / "launcher.py")
         (resources / "bundle-config.json").write_text(json.dumps({"version": 1, "cloud_url": cloud_url}, indent=2) + "\n")
         shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
+        shutil.copy2(ROOT / "NOTICE", resources / "NOTICE")
+        clean_copy(ROOT / "LICENSES", resources / "LICENSES")
         shutil.copy2(requirements, resources / "requirements.txt")
         with (SOURCE / "Info.plist").open("rb") as handle: info = plistlib.load(handle)
         info["CFBundleShortVersionString"] = version

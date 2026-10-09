@@ -1416,7 +1416,7 @@ export default function App() {
         <textarea dir="auto" readOnly={!resumeReady || desktopFrozen} ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
         </>}<div className="send-actions" key="actions">
           <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || !resumeReady || desktopFrozen || resetting || sending || uploading || pendingIntents.length > 0 || pendingStops.length > 0} hasPendingDelivery={value => Boolean(user && session && intents.current!.list(user.id, session).some(intent => !intent.draft && intent.text === value))} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
-          {!renderer && <ComposerActions busy={busy} sending={sending} questions={help?.questions.length || 0} text={text} attachmentCount={attached.length}
+          {!renderer && <ComposerActions busy={busy} sending={sending} effectsActive={snapshot.components.some(item => Boolean(item.expires_at) && !item.view?.hidden)} questions={help?.questions.length || 0} text={text} attachmentCount={attached.length}
             disabled={desktopFrozen || sending || uploading || !ready || !resumeReady || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />}
         </div>
       </form>

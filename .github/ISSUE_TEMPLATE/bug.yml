@@ -1,0 +1,28 @@
+name: Bug report
+description: A task or interaction that did not work as expected
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic examples. Do not attach keys, cookies, chat databases or private files.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected result and actual result
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: OS and Athena version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Could you stop, reset, or resume the task?
