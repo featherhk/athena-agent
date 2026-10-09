@@ -62,6 +62,24 @@ def copy_browser_runtime(resources, arch):
     (target / 'version.txt').write_text(expected + '\n')
 
 
+def prepare_web_bundle(skip_web_build):
+    if not skip_web_build:
+        run("npm", "run", "build")
+    elif not (ROOT / "dist" / "client-version.json").is_file():
+        raise RuntimeError("Build the web client first")
+    else:
+        notice = ROOT / "dist" / "THIRD_PARTY_NOTICES.txt"
+        expected = "Package-lock SHA-256: " + hashlib.sha256((ROOT / "package-lock.json").read_bytes()).hexdigest()
+        if not notice.is_file() or expected not in notice.read_text().splitlines()[:3]:
+            raise RuntimeError("Rebuild the web client: reused assets have no matching dependency notice provenance")
+        # Reused web assets must still carry fresh notices for the locked runtime.
+        run("node", ROOT / "scripts" / "generate-third-party-notices.mjs")
+    if not (ROOT / "dist" / "client-version.json").is_file():
+        raise RuntimeError("Build the web client first")
+    if not (ROOT / "dist" / "THIRD_PARTY_NOTICES.txt").is_file():
+        raise RuntimeError("Build is missing production dependency notices")
+
+
 def verify_payload(app):
     resources = app / "Contents" / "Resources"
     for path in resources.rglob("*"):
@@ -95,10 +113,10 @@ def main():
         parser.error(str(error))
     if sys.platform != "darwin":
         parser.error("Build on macOS with Xcode command line tools and uv installed")
-    if not args.skip_web_build:
-        run("npm", "run", "build")
-    if not (ROOT / "dist" / "client-version.json").is_file():
-        parser.error("Build the web client first")
+    try:
+        prepare_web_bundle(args.skip_web_build)
+    except RuntimeError as error:
+        parser.error(str(error))
     base_python = Path(output("uv", "python", "find", "--managed-python", "3.14t")).resolve()
     base = base_python.parent.parent
     version = json.loads((ROOT / "package.json").read_text())["version"]

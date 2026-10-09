@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "concurrently -k -n server,web \"uv run --directory backend python -m athena\" \"vite --host 127.0.0.1\"",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/generate-third-party-notices.mjs",
     "start": "uv run --directory backend python -m athena",
     "test": "uv run pytest && node --experimental-strip-types --test tests/*.test.mjs",
     "check:repo": "node scripts/check-repository.mjs",

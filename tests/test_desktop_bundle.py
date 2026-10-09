@@ -114,3 +114,50 @@ def test_native_update_strings_cover_every_supported_locale():
         for key, value in catalog.items():
             assert value.strip(), (locale, key)
             assert value.count('%@') == catalogs['en'][key].count('%@'), (locale, key)
+
+
+def notice_build_fixture(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import runpy
+    root = Path(__file__).resolve().parents[1]
+    prepare = runpy.run_path(str(root / 'scripts/build-macos.py'))['prepare_web_bundle']
+    monkeypatch.setitem(prepare.__globals__, 'ROOT', tmp_path)
+    (tmp_path / 'scripts').mkdir()
+    shutil.copy2(root / 'scripts/generate-third-party-notices.mjs', tmp_path / 'scripts')
+    (tmp_path / 'dist').mkdir()
+    (tmp_path / 'dist/client-version.json').write_text('{}')
+    package = tmp_path / 'node_modules/example'
+    package.mkdir(parents=True)
+    (package / 'package.json').write_text(json.dumps({'name': 'example', 'version': '1.0.0', 'license': 'MIT'}))
+    (package / 'LICENSE').write_text('Current upstream copyright and permission text.')
+    (tmp_path / 'package-lock.json').write_text(json.dumps({
+        'lockfileVersion': 3, 'packages': {'node_modules/example': {'version': '1.0.0'}},
+    }))
+    digest = hashlib.sha256((tmp_path / 'package-lock.json').read_bytes()).hexdigest()
+    (tmp_path / 'dist/THIRD_PARTY_NOTICES.txt').write_text(f'Package-lock SHA-256: {digest}\nobsolete notice')
+    return prepare
+
+
+def test_skipped_web_build_refreshes_dependency_notices(tmp_path, monkeypatch):
+    prepare = notice_build_fixture(tmp_path, monkeypatch)
+    prepare(True)
+    notice = (tmp_path / 'dist/THIRD_PARTY_NOTICES.txt').read_text()
+    assert 'Current upstream copyright and permission text.' in notice
+    assert 'obsolete notice' not in notice
+
+
+def test_skipped_web_build_cannot_package_missing_license_text(tmp_path, monkeypatch):
+    prepare = notice_build_fixture(tmp_path, monkeypatch)
+    (tmp_path / 'node_modules/example/LICENSE').unlink()
+    with pytest.raises(subprocess.CalledProcessError):
+        prepare(True)
+    assert not (tmp_path / 'dist/THIRD_PARTY_NOTICES.txt').exists()
+
+
+def test_skipped_web_build_cannot_relabel_assets_from_another_lock(tmp_path, monkeypatch):
+    prepare = notice_build_fixture(tmp_path, monkeypatch)
+    path = tmp_path / 'package-lock.json'
+    path.write_text(path.read_text() + '\n')
+    with pytest.raises(RuntimeError, match='Rebuild the web client'):
+        prepare(True)
