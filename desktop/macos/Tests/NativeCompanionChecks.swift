@@ -207,6 +207,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             await send(["action": "scene", "scope": "", "session_id": "", "items": []])
             try await wait { self.components().isEmpty }
             passed.append("signout-empty-scene-removes-old-account-panels")
+            try await checkFileSurface(origin)
             // A screen-sized visual is a distinct native surface, not clipped to the companion.
             item["width"] = 16384; item["height"] = 16384
             await send(["action": "scene", "scope": "owner:session_a", "session_id": "session_a", "items": [item]])
@@ -229,6 +230,78 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             passed.append("native-reset-closes-scene-and-loads-default-without-mutation")
             finish(nil)
         } catch { finish(error) }
+    }
+    private func checkFileSurface(_ origin: URL) async throws {
+        var item: [String: Any] = ["id": "file_surface", "version": 1, "view_revision": 1, "title": "Synthetic ledger.xlsx",
+            "file_id": "file_ledger", "content_revision": "sha256-v1", "x": 0.0, "y": 0.0, "width": 860, "height": 540]
+        let scene = host.fixtureScene
+        func reconcile() { scene.reconcile(["scope": "owner:session_a", "session_id": "session_a", "items": [item]], origin: origin) }
+        reconcile()
+        try await wait { self.components().first?["state"] as? String == "mounted" }
+        guard let child = scene.fixtureWebView(id: "file_surface"), let panel = child.window else { throw NSError(domain: "fixture", code: 8) }
+        try require(panel.title == "Synthetic ledger.xlsx" && !panel.styleMask.contains(.titled) && panel.level.rawValue < window.level.rawValue,
+                    "File work surface became a conversation window or covered the companion")
+        try require(child.url?.query?.contains("file=file_ledger") == true && components().first?["file_id"] as? String == "file_ledger"
+                    && components().first?["content_revision"] as? String == "sha256-v1", "File content identity missing from child and observation")
+        await send(["action": "surfaceDragRegions", "regions": [["x": 24, "y": 12, "width": 560, "height": 32]]], in: child)
+        try await wait { scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: 50, y: 24)) }
+        try require(!scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: 50, y: 200))
+                    && !scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: 800, y: 24))
+                    && scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: panel.frame.width - 5, y: panel.frame.height - 5)),
+                    "Native drag regions obstructed cells/header controls or omitted resize grip")
+        passed.append("file-work-surface-has-bound-identity-title-and-dedicated-native-gesture-regions")
+        await send(["action": "widgetHealth", "state": "failed", "file_id": "wrong", "content_revision": "sha256-v1", "error_code": "preview_unavailable"], in: child)
+        try require(components().first?["state"] as? String == "mounted", "Unbound file health changed mounted state")
+        await send(["action": "widgetHealth", "state": "failed", "file_id": "file_ledger", "content_revision": "sha256-v1", "error_code": "preview_unavailable"], in: child)
+        try await wait { self.components().first?["error_code"] as? String == "preview_unavailable" }
+        await send(["action": "widgetHealth", "state": "loading", "file_id": "file_ledger", "content_revision": "sha256-v1"], in: child)
+        try await wait { self.components().first?["state"] as? String == "loading" }
+        await send(["action": "widgetHealth", "state": "mounted", "file_id": "file_ledger", "content_revision": "sha256-v1"], in: child)
+        try await wait { self.components().first?["state"] as? String == "mounted" }
+        passed.append("file-health-requires-current-content-and-retry-can-return-to-loading")
+        let original = panel.frame
+        let moved = original.offsetBy(dx: 31, dy: -27)
+        scene.fixtureCommitFrame(id: "file_surface", frame: moved)
+        try await wait { await self.js("events.some(e=>e.action==='layout'&&e.component_id==='file_surface')") as? Bool == true }
+        guard var event = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as? [String: Any],
+              let values = event["layout"] as? [String: Any] else { throw NSError(domain: "fixture", code: 9) }
+        reconcile()
+        try require(panel.frame == moved, "Pending drag snapped back before persistence acknowledgement")
+        event["ok"] = true; event["view_revision"] = 2
+        scene.completeInteraction(event)
+        item.merge(values) { _, new in new }; item["view_revision"] = 2
+        reconcile()
+        try require(panel.frame == moved && components().first?["view_revision"] as? Int == 2, "Persisted drag did not retain canonical frame")
+        scene.fixtureCommitFrame(id: "file_surface", frame: moved.offsetBy(dx: 23, dy: -11))
+        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===2") as? Bool == true }
+        var rejected = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
+        rejected["ok"] = false; scene.completeInteraction(rejected)
+        try require(panel.frame == moved, "Failed layout persistence did not restore previous frame")
+        passed.append("native-layout-retains-pending-frame-acknowledges-persistence-and-rolls-back-failure")
+        await send(["action": "maximizeWidget"], in: child)
+        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===3") as? Bool == true }
+        var maximized = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
+        try require(panel.frame == panel.screen?.visibleFrame, "Maximize clipped a file surface to the conversation")
+        maximized["ok"] = true; maximized["view_revision"] = 3; scene.completeInteraction(maximized)
+        item.merge(maximized["layout"] as! [String: Any]) { _, new in new }; item["view_revision"] = 3
+        await send(["action": "downloadFile", "file_id": "forged", "content_revision": "forged"], in: child)
+        try await wait { await self.js("events.some(e=>e.action==='download'&&e.file_id==='file_ledger'&&e.content_revision==='sha256-v1')") as? Bool == true }
+        await send(["action": "closeWidget"], in: child)
+        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===4") as? Bool == true }
+        var closed = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
+        closed["ok"] = true; closed["view_revision"] = 4; scene.completeInteraction(closed)
+        item["hidden"] = true; item["view_revision"] = 4; reconcile()
+        try require(!panel.isVisible && components().first?["state"] as? String == "hidden", "Closed surface revived after scene reconciliation")
+        passed.append("file-maximize-download-and-close-route-identity-bound-actions-and-durable-view")
+        item["hidden"] = false; item["view_revision"] = 5; item["content_revision"] = "sha256-v2"
+        reconcile()
+        try await wait { self.components().first?["state"] as? String == "mounted" }
+        try require(scene.fixtureWebView(id: "file_surface") !== child, "Changed file bytes reused stale preview document")
+        await send(["action": "downloadFile"], in: child)
+        let downloads = await js("events.filter(e=>e.action==='download'&&e.file_id==='file_ledger').length") as? Int
+        try require(downloads == 1, "Old content document retained file download capability")
+        passed.append("file-content-revision-replaces-webview-and-revokes-old-document-actions")
+        scene.closeAll()
     }
     private func checkMainMenu() async throws {
         let menus = NSApp.mainMenu?.items.compactMap(\.submenu) ?? []

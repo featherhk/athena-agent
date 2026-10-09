@@ -49,7 +49,7 @@ class Fixture(BaseHTTPRequestHandler):
         addEventListener('athena:background', ()=>backgroundCount++);
         </script>'''
         if widget:
-            html += "<script>webkit.messageHandlers.athenaDesktop.postMessage({action:'widgetHealth',state:'mounted'});</script>"
+            html += """<script>const q=new URLSearchParams(location.search);webkit.messageHandlers.athenaDesktop.postMessage({action:'widgetHealth',state:'mounted',...(q.get('file')?{file_id:q.get('file'),content_revision:q.get('content_revision')}:{})});</script>"""
         data = html.encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
