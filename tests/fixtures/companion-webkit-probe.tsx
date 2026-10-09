@@ -27,6 +27,7 @@ let snapshot = emptySnapshot();
 const secondSnapshot = emptySnapshot();
 const observations = [], calls = [], unexpected = [], nativePosts = [], results = {};
 const receipts = new Map(), stops = new Map();
+const appActions = new Map(), actionReceipts = new Map(), previewRequests = [];
 let failNext = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '';
 window.addEventListener('athena:background', () => backgroundEvents++);
 const dispatch = detail => window.dispatchEvent(new CustomEvent('athena:desktop', { detail }));
@@ -60,6 +61,15 @@ window.fetch = async (path, init) => {
   else if (path === '/api/sessions/s2') value = structuredClone(secondSnapshot);
   else if (path.startsWith('/api/activity')) value = { owner_id: 'probe', items: [], has_more: false };
   else if (path === '/api/frontend/observation') { observations.push(body); value = { accepted: true }; }
+  else if (path.includes('/app-actions/') && path.endsWith('/claim')) {
+    const id = path.split('/').at(-2); value = { accepted: !actionReceipts.has(id), request: appActions.get(id) };
+  }
+  else if (path.includes('/app-actions/') && path.endsWith('/ack')) {
+    const id = path.split('/').at(-2); actionReceipts.set(id, body); value = { completed: true };
+  }
+  else if (path.startsWith('/api/files/report/preview')) {
+    previewRequests.push(path); value = { kind: 'markdown', content: path.includes('revision=revision-two') ? '# Updated notes\nCanonical file revision.' : '# Original notes\nInitial file revision.', truncated: false };
+  }
   else if (path.endsWith('/report')) value = { accepted: true };
   else if (path.endsWith('/messages')) {
     if (failNext) { failNext = false; status = 503; value = { error: 'Synthetic service unavailable', code: 'service_unavailable' }; }
@@ -91,6 +101,13 @@ window.fetch = async (path, init) => {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 };
 const emit = () => { snapshot.cursor++; for (const source of sources.filter(item => item.readyState === 1 && item.url.startsWith('/api/sessions/s1/events'))) source.onmessage?.({ data: JSON.stringify({ seq: snapshot.cursor, type: 'component', payload: {} }) }); };
+const applyAction = async (action, payload) => {
+  const request = { id: 'action-' + (appActions.size + 1), session_id: 's1', action, payload, status: 'pending' };
+  appActions.set(request.id, request); snapshot.app_actions = [request]; emit();
+  await until(() => actionReceipts.has(request.id), 'app action ' + action);
+  snapshot.app_actions = [];
+  return actionReceipts.get(request.id);
+};
 const until = async (read, name) => { const deadline = performance.now() + 6000; do { if (read()) return; await delay(); } while (performance.now() < deadline); throw new Error(`timeout:${name}`); };
 const check = (name, pass, detail = undefined) => { window.webkit.messageHandlers.probe.postMessage({ progress: name }); results[name] = { pass: Boolean(pass), detail }; if (!pass) throw new Error(name); };
 const capture = async name => {
@@ -200,6 +217,13 @@ async function run() {
     await nativeClick(document.querySelector('[data-app-view="menu"] .dialog-top button'));
     const back = document.querySelector('.topbar nav > button'); if (back) { back.click(); await until(() => !document.querySelector('.topbar'), 'back to companion'); }
     check('history_return_preserves_same_input', input() === field && input().value === 'Do not lose this next request.');
+    const activityReceipt = await applyAction('open', { target: 'activity' });
+    await until(() => document.querySelector('[data-app-view="activity"]'), 'agent opened activity');
+    check('agent_can_open_real_activity_view_in_companion', activityReceipt.status === 'applied' && inside(document.querySelector('[data-app-view="activity"]'))
+      && observations.at(-1).open_views.includes('activity') && getComputedStyle(document.querySelector('[data-app-view="activity"]')).visibility === 'visible');
+    escape(); await until(() => !document.querySelector('[data-app-view="activity"]'), 'close activity with escape');
+    check('closing_activity_restores_companion_and_draft', getComputedStyle(document.querySelector('.companion-presence')).visibility === 'visible'
+      && input() === field && input().value === 'Do not lose this next request.' && presented);
     await edit('How many notes should I review first?'); send(); await until(() => receipts.size === 2 && input().value === '', 'follow-up accepted'); emit();
     await until(() => visibleMessage('u2') && visibleMessage('a1'), 'follow-up context retained');
     check('followup_echoes_question_and_keeps_prior_answer', visibleMessage('u1')?.textContent === draft && visibleMessage('u2')?.textContent === 'How many notes should I review first?' && visibleMessage('a1')?.textContent.includes('Your files are ready.'));
@@ -228,9 +252,11 @@ async function run() {
     await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reopen inline component');
     const recalledNote = await inspectWidget(noteFrame);
     check('collapse_reopen_keeps_iframe_document_form_and_selection', document.querySelector('[data-component-id="note"] iframe') === noteFrame && recalledNote.identity === editedNote.identity && recalledNote.text === 'Keep my selected words' && recalledNote.start === 5 && recalledNote.end === 7, recalledNote);
-    snapshot.components.push({ id: 'ornament', title: 'Independent ornament', placement: 'overlay', version: 1, view_revision: 0, html: '<span>Independent ornament</span>' }); emit();
+    snapshot.components.push({ id: 'ornament', title: 'Independent ornament', placement: 'overlay', version: 1, view_revision: 0, html: '<span>Independent ornament</span><script>Athena.interact([{id:"ornament",label:"Use ornament",rect:{x:2,y:6,width:12,height:12}}],()=>{});</script>' }); emit();
     await until(() => document.querySelector('[data-component-id="ornament"]'), 'overlay registered');
     check('overlay_is_outside_the_default_reading_card', !document.querySelector('[data-component-id="ornament"]').closest('.companion-result'));
+    await until(() => document.querySelector('[data-component-id="ornament"] .canvas-action') && nativePosts.filter(item => item.action === 'hitRegions').at(-1)?.regions.some(region => region.x === 2 && region.y === 6 && region.width === 12 && region.height === 12), 'overlay native hit region');
+    check('overlay_interactive_rectangle_is_in_native_hit_regions', nativePosts.filter(item => item.action === 'hitRegions').at(-1).regions.some(region => region.x === 2 && region.y === 6 && region.width === 12 && region.height === 12));
     await nativeClick(document.querySelector('.companion-menu')); await until(() => document.querySelector('[data-app-view="menu"]'), 'avatar menu');
     check('companion_menu_exposes_history_and_account', document.querySelector('[data-app-view="menu"]').textContent.includes('Previous conversations') && document.querySelector('[data-app-view="menu"]').textContent.includes('Account'));
     escape(); await until(() => !document.querySelector('[data-app-view="menu"]'), 'escape closes menu');
@@ -249,6 +275,15 @@ async function run() {
     const scene = nativePosts.filter(item => item.action === 'scene' && item.items?.[0]?.id === 'collector').at(-1);
     check('desktop_scene_uses_native_bridge_not_conversation_widget', scene.scope === 'probe:s1' && scene.items[0].width === 80 && !('html' in scene.items[0]) && !document.querySelector('[data-component-id="collector"]'));
     check('native_receipt_appears_in_frontend_observation', observations.at(-1).desktop.components[0].state === 'mounted');
+    const file = { id: 'report', session_id: 's1', name: 'Notes summary.md', path: 'outputs/notes.md', size: 100, media_type: 'text/markdown', source: 'output', created_at: '2026-10-09T00:00:00Z', content_url: '/api/files/report/content', preview_url: '/api/files/report/preview', content_revision: 'revision-one' };
+    snapshot.files = [file]; snapshot.messages.find(message => message.id === 'a3').attachments = [structuredClone(file)]; emit();
+    const previewReceipt = await applyAction('preview', { file_id: file.id, file });
+    await until(() => result()?.textContent.includes('Original notes'), 'selected attached file preview');
+    check('attached_file_preview_is_displayed_once', previewReceipt.status === 'applied' && result().querySelectorAll('.file-preview[aria-label="Notes summary.md"]').length === 1 && result().querySelectorAll('[data-inline-preview-id="report"]').length === 1);
+    snapshot.files = [{ ...file, size: 101, content_revision: 'revision-two' }]; emit();
+    await until(() => result()?.textContent.includes('Canonical file revision.'), 'canonical attachment file update');
+    check('attached_preview_uses_current_canonical_file_revision', previewRequests.at(-1) === '/api/files/report/preview?revision=revision-two' && result().querySelectorAll('.file-preview[aria-label="Notes summary.md"]').length === 1
+      && !result().textContent.includes('Initial file revision.') && snapshot.messages.find(message => message.id === 'a3').attachments[0].content_revision === 'revision-one');
     await edit('Keep this failed message.'); failNext = true; send(); await until(() => document.querySelector('.composer-area .notice'), 'failed send');
     check('send_error_is_visible_and_draft_is_retained', input().value === 'Keep this failed message.' && inside(document.querySelector('.composer')) && Boolean(document.querySelector('.composer-area .notice')?.textContent));
     await capture('companion-error');

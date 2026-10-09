@@ -40,7 +40,7 @@ function fixture() {
     snapshot: { components: [{ id: 'collector', version: 2, placement: 'desktop', view_revision: 1 }] }, desktopState: undefined };
   const uiScope = { current: { owner: 'alice', session: 'trip', generation: 1, control: 0 } };
   const context = vm.createContext({ nativeActions: { current: () => {} }, uiScope, readDesktopState,
-    setDesktopState: value => { state.desktopState = value; },
+    setDesktopState: value => { state.desktopState = typeof value === 'function' ? value(state.desktopState) : value; },
     setDesktopPresented: value => { presentations.push(value); setDesktopPresented(value, doc); },
     interactionVisible: () => interactionVisible(doc),
     submit: text => { calls.push({ action: 'submit', text }); }, navigate: session => { calls.push({ action: 'navigate', session }); },
@@ -66,6 +66,9 @@ test('the current native scene is observed and its exact component relays submit
   const f = fixture(), dispatch = f.render();
   dispatch({ action: 'state', scope: 'alice:trip', desktop: native() });
   assert.equal(f.facts().desktop.components[0].version, 2);
+  const receipt = f.state.desktopState;
+  dispatch({ action: 'state', scope: 'alice:trip', desktop: native() });
+  assert.equal(f.state.desktopState, receipt, 'An identical native receipt must preserve state identity instead of rendering again');
   dispatch(action('submit')); dispatch(action('navigate'));
   assert.deepEqual(f.calls, [{ action: 'submit', text: 'Inspect the file' }, { action: 'navigate', session: 'notes' }]);
 });

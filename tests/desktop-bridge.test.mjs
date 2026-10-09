@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { desktopRole, desktopPost, readDesktopState, desktopScene, interactionVisible, setDesktopPresented } from '../src/desktop-bridge.ts';
+import { desktopRole, desktopPost, readDesktopState, desktopScene, interactionVisible, setDesktopPresented, companionHitRegions } from '../src/desktop-bridge.ts';
 
 const rect = (change = {}) => ({ x: -120, y: 37.5, width: 1728, height: 1117, ...change });
 const screen = (change = {}) => ({ id: 'display-1', frame: rect(), visible_frame: rect({ height: 1015.5 }), scale: 2, ...change });
@@ -11,6 +11,20 @@ const state = (change = {}) => ({ platform: 'macos', supported: true, presented:
   screens: [screen()], components: [component()], ...change });
 const nativeWindow = (search = '?desktop=companion') => ({ location: { search }, __ATHENA_DESKTOP__: { version: 1 },
   webkit: { messageHandlers: { athenaDesktop: { postMessage() {} } } } });
+
+test('native pointer regions include overlay actions without swallowing transparent desktop or blocked controls', () => {
+  const window = new Window(), doc = window.document;
+  doc.body.innerHTML = '<div class="scene-overlay"><button class="canvas-action">Move</button></div><div data-desktop-hit style="visibility:hidden">Behind login</div><div data-desktop-hit hidden>Put away</div>';
+  const nodes = [...doc.querySelectorAll('div,button')];
+  nodes.forEach((node, index) => {
+    node.getClientRects = () => [{ x: index * 20, y: 10, width: 10, height: 12 }];
+    node.getBoundingClientRect = () => ({ x: index * 20, y: 10, width: 10, height: 12 });
+  });
+  assert.deepEqual(companionHitRegions(doc), [{ x: 20, y: 10, width: 10, height: 12 }]);
+  doc.querySelector('.canvas-action').hidden = true;
+  assert.deepEqual(companionHitRegions(doc), []);
+  window.happyDOM.abort();
+});
 
 test('desktop presentation requires the native marker and handler, never just a query', () => {
   assert.equal(desktopRole({ location: { search: '?desktop=companion' } }), null);

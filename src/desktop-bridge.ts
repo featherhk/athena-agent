@@ -79,6 +79,6 @@ export function desktopScene(owner: string | null, session: string | null, compo
 
 /** Geometry only; no generated HTML, drafts, text or screenshots cross this path. */
 export function companionHitRegions(doc: Document = document): DesktopRect[] {
-  return [...doc.querySelectorAll<HTMLElement>('[data-desktop-hit],.overlay,.developer-panel,.voice-call,.voice-problem,.voice-recovery,.toast,dialog[open]' )].filter(node => !node.hidden && node.getClientRects().length)
+  return [...doc.querySelectorAll<HTMLElement>('[data-desktop-hit],.scene-overlay .canvas-action,.overlay,.developer-panel,.voice-call,.voice-problem,.voice-recovery,.toast,dialog[open]' )].filter(node => !node.hidden && node.getClientRects().length && doc.defaultView?.getComputedStyle(node).visibility !== 'hidden')
     .slice(0, 64).map(node => { const box = node.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; });
 }

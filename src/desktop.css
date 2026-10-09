@@ -80,5 +80,9 @@ html[data-reduce-motion='true'] .companion-portrait * { animation:none!important
 /* Generic toolbar SVG rules must not outline the sculpted portrait. */
 .companion-avatar .companion-portrait { stroke:none; stroke-width:0; }
 .desktop-companion .dialog:focus { outline:1px solid var(--tint); outline-offset:2px; }
+.desktop-companion .companion-activity { padding:18px; }
+.companion-activity .task-continuity { margin:0; }
+.companion-activity .continuity-trigger { display:none; }
+.companion-activity .continuity-panel { position:static; width:100%; max-height:calc(100dvh - 80px); border:0; box-shadow:none; }
 html[data-desktop],html[data-desktop] body,html[data-desktop] #root { overflow:clip; }
 .app.desktop-companion { overflow:clip; }
