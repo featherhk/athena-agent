@@ -29,7 +29,7 @@ import ComposerActions from './ComposerActions';
 import VoiceCall from './VoiceCall';
 import { VoiceSubmissionError, VoiceSubmissionReceipt } from './voice-recovery';
 import { RunTrace } from './RunTrace';
-import { taskOrigin, agentOrigin } from './message-origin';
+import { taskOrigin, agentOrigin, conversationSubject } from './message-origin';
 import { AgentActivity, AgentResults } from './AgentActivity';
 import { StyledText } from './StyledText';
 import type { TextStyleEffect } from './effects';
@@ -997,7 +997,7 @@ export default function App() {
   const latestFiles = snapshot.files.filter(file => file.source === 'output' && !attachedFileIds.has(file.id));
   const desktopHasResult = Boolean(desktopMessages.length || latestRun || latestFiles.length || lastError || inlinePreview || desktopWidgets.length);
   const desktopResult = desktopHasResult && (desktopReplyOpen || Boolean(inlinePreview));
-  const desktopQuestion = desktopMessages.findLast(message => message.role === 'user' && message.content)?.content;
+  const desktopQuestion = conversationSubject(desktopMessages);
   const desktopTransient = Boolean(auth || menu || history || account || files || preview || appearance || surfaces || activity);
   desktopEscape.current = () => {
     if (!desktop || desktopTransient) return false;

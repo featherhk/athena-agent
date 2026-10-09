@@ -23,3 +23,16 @@ export function agentOrigin(message: { role: string; origin?: unknown }): AgentT
       && value.agents.length >= 1 && value.agents.length <= 8
       && value.agents.every(job => job && typeof job === 'object' && strings(job, ['id', 'title', 'status', 'session_id', 'run_id']))) return value as AgentResultsOrigin;
 }
+
+/** Human-facing labels describe the request, not harness-injected instructions.
+ * Original content remains available in the durable conversation and trace. */
+export function conversationSubject(messages: { role: string; content: string; origin?: unknown }[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== 'user') continue;
+    const origin = taskOrigin(message) || agentOrigin(message);
+    if (origin?.kind === 'agent_results') continue;
+    const subject = (origin?.title || message.content).trim();
+    if (subject) return subject;
+  }
+}
