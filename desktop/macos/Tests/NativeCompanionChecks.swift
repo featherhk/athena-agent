@@ -217,6 +217,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             try await wait { self.components().isEmpty }
             passed.append("signout-empty-scene-removes-old-account-panels")
             try await checkFileSurface(origin)
+            try await checkFilePointerCancellation(origin)
             try await checkTransientSurfaces(origin)
             // A screen-sized visual is a distinct native surface, not clipped to the companion.
             item["width"] = 16384; item["height"] = 16384
@@ -334,19 +335,52 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         passed.append("file-health-requires-current-content-and-retry-can-return-to-loading")
         let original = panel.frame
         let moved = original.offsetBy(dx: 31, dy: -27)
-        scene.fixtureCommitFrame(id: "file_surface", frame: moved)
+        let pointer = NSPoint(x: original.minX + 50, y: original.maxY - 24)
+        for delta in [CGFloat(0), 2] {
+            try require(scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDown, screenPoint: pointer), "Header pointer did not enter the native gesture through its parent")
+            let end = NSPoint(x: pointer.x + delta, y: pointer.y)
+            scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDragged, screenPoint: end)
+            scene.fixturePointerEvent(id: "file_surface", type: .leftMouseUp, screenPoint: end)
+        }
+        let noOpEvents = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length") as? Int
+        try require(panel.frame == original && noOpEvents == 0, "Click or pointer jitter changed file geometry or committed a layout")
+        passed.append("file-title-click-and-subthreshold-jitter-do-not-persist-layout")
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDown, screenPoint: pointer)
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDragged, screenPoint: NSPoint(x: pointer.x + 15, y: pointer.y - 12))
+        reconcile()
+        try require(panel.frame == original.offsetBy(dx: 15, dy: -12), "An unchanged scene report snapped back the in-flight title drag")
+        let endpoint = NSPoint(x: pointer.x + 31, y: pointer.y - 27)
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseUp, screenPoint: endpoint)
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseUp, screenPoint: endpoint)
         try await wait { await self.js("events.some(e=>e.action==='layout'&&e.component_id==='file_surface')") as? Bool == true }
         guard var event = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as? [String: Any],
               let values = event["layout"] as? [String: Any] else { throw NSError(domain: "fixture", code: 9) }
         reconcile()
         try require(panel.frame == moved, "Pending drag snapped back before persistence acknowledgement")
+        let pendingPointer = NSPoint(x: moved.minX + 50, y: moved.maxY - 24)
+        try require(!scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDown, screenPoint: pendingPointer), "Pending persistence allowed a new drag")
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDragged, screenPoint: NSPoint(x: pendingPointer.x + 100, y: pendingPointer.y))
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseUp, screenPoint: pendingPointer)
+        let oneDragEvent = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length") as? Int
+        try require(panel.frame == moved && oneDragEvent == 1, "Pointer up duplicated the layout or pending persistence accepted a stale drag")
+        if let area = panel.screen?.visibleFrame {
+            let x = values["x"] as? Double ?? -1, y = values["y"] as? Double ?? -1
+            try require(abs(x - (moved.minX - area.minX) / (area.width - moved.width)) < 0.000001
+                        && abs(y - (area.maxY - moved.maxY) / (area.height - moved.height)) < 0.000001,
+                        "Delivered title events persisted an inverted or offset screen position")
+        }
+        passed.append("file-title-drag-uses-event-screen-coordinates-and-commits-once-after-final-up")
         event["ok"] = true; event["view_revision"] = 2; event["action"] = "sceneResult"
         await send(event)
         try await wait { self.components().first?["view_revision"] as? Int == 2 }
         item.merge(values) { _, new in new }; item["view_revision"] = 2
         reconcile()
         try require(panel.frame == moved && components().first?["view_revision"] as? Int == 2, "Persisted drag did not retain canonical frame")
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDown, screenPoint: pendingPointer)
         scene.fixtureCommitFrame(id: "file_surface", frame: moved.offsetBy(dx: 23, dy: -11))
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseDragged, screenPoint: NSPoint(x: pendingPointer.x + 100, y: pendingPointer.y))
+        scene.fixturePointerEvent(id: "file_surface", type: .leftMouseUp, screenPoint: pendingPointer)
+        try require(panel.frame == moved.offsetBy(dx: 23, dy: -11), "A layout proposal did not cancel an in-progress title gesture")
         try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===2") as? Bool == true }
         var rejected = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
         rejected["ok"] = false; rejected["action"] = "sceneResult"; await send(rejected)
@@ -390,6 +424,48 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         let downloads = await js("events.filter(e=>e.action==='download'&&e.file_id==='file_ledger').length") as? Int
         try require(downloads == 1, "Old content document retained file download capability")
         passed.append("file-content-revision-replaces-webview-and-revokes-old-document-actions")
+        scene.closeAll()
+    }
+    private func checkFilePointerCancellation(_ origin: URL) async throws {
+        let scene = host.fixtureScene, id = "pointer_surface"
+        var item: [String: Any] = ["id": id, "version": 1, "view_revision": 1, "title": "Synthetic pointer file",
+            "file_id": "file_pointer", "content_revision": "s1-pointer", "x": 0.2, "y": 0.2, "width": 500, "height": 320]
+        func reconcile() { scene.reconcile(["scope": "owner:session_a", "session_id": "session_a", "items": [item]], origin: origin) }
+        reconcile()
+        try await wait { self.components().first?["state"] as? String == "mounted" }
+        guard let child = scene.fixtureWebView(id: id), let panel = child.window, let area = panel.screen?.visibleFrame else {
+            throw NSError(domain: "fixture", code: 11)
+        }
+        await send(["action": "surfaceDragRegions", "regions": [["x": 24, "y": 12, "width": 300, "height": 32]]], in: child)
+        try await wait { scene.fixtureGestureHit(id: id, point: NSPoint(x: 50, y: 24)) }
+        let original = panel.frame, pointer = NSPoint(x: panel.frame.minX + 50, y: panel.frame.maxY - 24)
+        try require(!scene.fixturePointerEvent(id: id, type: .leftMouseDown, screenPoint: NSPoint(x: pointer.x, y: pointer.y - 180)),
+                    "Table text started a native window gesture")
+        try require(scene.fixturePointerEvent(id: id, type: .leftMouseDown, screenPoint: pointer), "Title did not accept pointer through parent routing")
+        scene.fixturePointerEvent(id: id, type: .leftMouseUp, screenPoint: NSPoint(x: pointer.x + 100000, y: pointer.y - 100000))
+        try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='pointer_surface').length===1") as? Bool == true }
+        try require(area.contains(panel.frame) && panel.frame.maxX == area.maxX && panel.frame.minY == area.minY,
+                    "Fast title drag did not clamp the entire work surface to the screen")
+        var rejected = await js("events.filter(e=>e.action==='layout'&&e.component_id==='pointer_surface').at(-1)") as! [String: Any]
+        rejected["ok"] = false; rejected["action"] = "sceneResult"; await send(rejected)
+        try await wait { panel.frame == original }
+        passed.append("file-fast-title-drag-clamps-to-visible-screen-and-cells-do-not-start-gestures")
+
+        scene.fixturePointerEvent(id: id, type: .leftMouseDown, screenPoint: pointer)
+        scene.fixturePointerEvent(id: id, type: .leftMouseDragged, screenPoint: NSPoint(x: pointer.x + 30, y: pointer.y - 20))
+        scene.setPresented(false)
+        scene.fixturePointerEvent(id: id, type: .leftMouseUp, screenPoint: NSPoint(x: pointer.x + 60, y: pointer.y - 40))
+        scene.setPresented(true)
+        try require(panel.frame == original, "Hiding did not cancel and restore an uncommitted title drag")
+        scene.fixturePointerEvent(id: id, type: .leftMouseDown, screenPoint: pointer)
+        scene.fixturePointerEvent(id: id, type: .leftMouseDragged, screenPoint: NSPoint(x: pointer.x + 30, y: pointer.y - 20))
+        item["expires_at"] = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-1))
+        reconcile()
+        scene.fixturePointerEvent(id: id, type: .leftMouseDragged, screenPoint: NSPoint(x: pointer.x + 90, y: pointer.y - 70))
+        scene.fixturePointerEvent(id: id, type: .leftMouseUp, screenPoint: NSPoint(x: pointer.x + 90, y: pointer.y - 70))
+        let layouts = await js("events.filter(e=>e.action==='layout'&&e.component_id==='pointer_surface').length") as? Int
+        try require(!panel.isVisible && panel.frame == original && layouts == 1, "Expired or hidden tracking persisted a stale gesture")
+        passed.append("file-hide-and-expiry-cancel-in-flight-gestures-without-stale-layout-commits")
         scene.closeAll()
     }
     private func checkTransientSurfaces(_ origin: URL) async throws {

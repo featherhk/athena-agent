@@ -6,9 +6,12 @@ import AppKit
 @MainActor
 private final class SurfaceGestureView: NSView {
     var dragRegions: [NSRect] = []
-    var enabled = true
+    var enabled = true { didSet { if !enabled { cancelTracking() } } }
     var completed: (() -> Void)?
-    private var resizeStart: (NSRect, NSPoint)?
+    private var start: (frame: NSRect, pointer: NSPoint, resizing: Bool)?
+    private var dragging = false
+    var isTracking: Bool { start != nil }
+    func cancelTracking() { start = nil; dragging = false }
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     private var resizeGrip: NSRect { NSRect(x: max(0, bounds.width - 20), y: max(0, bounds.height - 20), width: 20, height: 20) }
@@ -21,40 +24,39 @@ private final class SurfaceGestureView: NSView {
     }
     override func mouseDown(with event: NSEvent) {
         guard enabled, let window else { return }
-        if resizeGrip.contains(convert(event.locationInWindow, from: nil)) {
-            resizeStart = (window.frame, window.convertPoint(toScreen: event.locationInWindow))
-        } else {
-            window.performDrag(with: event)
-            completed?()
-        }
+        start = (window.frame, window.convertPoint(toScreen: event.locationInWindow),
+                 resizeGrip.contains(convert(event.locationInWindow, from: nil)))
+        dragging = false
     }
     override func mouseDragged(with event: NSEvent) {
-        guard let (start, pointer) = resizeStart, let window else { return }
-        let now = window.convertPoint(toScreen: event.locationInWindow), area = window.screen?.visibleFrame ?? start
-        let width = min(area.maxX - start.minX, max(min(320, area.width), start.width + now.x - pointer.x))
-        let height = min(start.maxY - area.minY, max(min(240, area.height), start.height - now.y + pointer.y))
-        window.setFrame(NSRect(x: start.minX, y: start.maxY - height, width: width, height: height), display: true)
+        guard enabled, let start, let window else { return }
+        // Consume the delivered event, not the latest global cursor position.
+        // This also works with queued/accessibility-dispatched pointer events.
+        let pointer = window.convertPoint(toScreen: event.locationInWindow)
+        let delta = NSPoint(x: pointer.x - start.pointer.x, y: pointer.y - start.pointer.y)
+        if start.resizing {
+            let area = window.screen?.visibleFrame ?? start.frame
+            let width = min(area.maxX - start.frame.minX, max(min(320, area.width), start.frame.width + delta.x))
+            let height = min(start.frame.maxY - area.minY, max(min(240, area.height), start.frame.height - delta.y))
+            window.setFrame(NSRect(x: start.frame.minX, y: start.frame.maxY - height, width: width, height: height), display: true)
+        } else {
+            guard dragging || hypot(delta.x, delta.y) >= 3 else { return }
+            dragging = true
+            let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? window.screen ?? NSScreen.main
+            guard let area = screen?.visibleFrame else { return }
+            let width = min(start.frame.width, area.width), height = min(start.frame.height, area.height)
+            let x = min(max(start.frame.minX + delta.x, area.minX), area.maxX - width)
+            let y = min(max(start.frame.minY + delta.y, area.minY), area.maxY - height)
+            window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        }
     }
     override func mouseUp(with event: NSEvent) {
-        guard resizeStart != nil else { return }
+        guard enabled, let start else { return }
         mouseDragged(with: event)
-        resizeStart = nil; completed?()
+        let changed = window?.frame != start.frame
+        cancelTracking()
+        if changed { completed?() }
     }
-    #if ATHENA_NATIVE_CHECKS
-    func fixtureResize(by delta: NSPoint) {
-        guard let window else { return }
-        let from = window.convertPoint(toScreen: convert(NSPoint(x: bounds.width - 5, y: bounds.height - 5), to: nil))
-        let to = NSPoint(x: from.x + delta.x, y: from.y + delta.y)
-        func event(_ type: NSEvent.EventType, _ point: NSPoint) -> NSEvent {
-            NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: point), modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
-        }
-        mouseDown(with: event(.leftMouseDown, from))
-        mouseDragged(with: event(.leftMouseDragged, to))
-        mouseUp(with: event(.leftMouseUp, to))
-    }
-    #endif
 }
 
 /// Agent-authored pages live in separate panels. Their main documents relay a small,
@@ -173,6 +175,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
                         for key in ["x", "y", "width", "height", "screen_id", "hidden"] { next[key] = item.spec[key] }
                         item.spec = next
                     } else {
+                        if revision > item.viewRevision { item.gestures?.cancelTracking() }
                         item.viewRevision = revision; item.spec = spec
                         item.pendingLayout = nil; item.gestures?.enabled = !item.expired
                     }
@@ -223,8 +226,10 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
 
     private func position(_ item: Item) {
         if !item.expired, let expiry = item.expiresAt, expiry <= Date() { expire(item); return }
+        let visible = presented && !item.expired && item.spec["hidden"] as? Bool != true
+        item.gestures?.enabled = visible && item.pendingLayout == nil
         var changed = false
-        if let screen = screen(item.spec) {
+        if item.gestures?.isTracking != true, let screen = screen(item.spec) {
             let target = frame(item.spec, screen: screen)
             if item.panel.frame != target {
                 item.panel.setFrame(target, display: false)
@@ -234,7 +239,6 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
                 #endif
             }
         }
-        let visible = presented && !item.expired && item.spec["hidden"] as? Bool != true
         if item.panel.isVisible != visible {
             if visible { item.panel.orderFront(nil) } else { item.panel.orderOut(nil) }
             changed = true
@@ -336,6 +340,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
     private func remove(_ id: String) {
         guard let item = items.removeValue(forKey: id) else { return }
+        item.gestures?.enabled = false
         item.expiryTask?.cancel(); item.expiryTask = nil
         item.web.configuration.userContentController.removeScriptMessageHandler(forName: "athenaDesktop")
         item.web.stopLoading(); item.web.navigationDelegate = nil; item.web.uiDelegate = nil
@@ -530,6 +535,28 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         guard let item = items[id] else { return }
         item.panel.setFrame(frame, display: true); commitFrame(item)
     }
-    func fixtureResize(id: String, by delta: NSPoint) { items[id]?.gestures?.fixtureResize(by: delta) }
+    @discardableResult func fixturePointerEvent(id: String, type: NSEvent.EventType, screenPoint: NSPoint) -> Bool {
+        guard let item = items[id], let gestures = item.gestures, let container = item.panel.contentView,
+              let event = NSEvent.mouseEvent(with: type, location: item.panel.convertPoint(fromScreen: screenPoint), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: item.panel.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) else { return false }
+        if type == .leftMouseDown {
+            // Start through the same parent hit route as a real window event.
+            let point = container.convert(event.locationInWindow, from: nil)
+            guard container.hitTest(container.convert(point, to: container.superview)) === gestures else { return false }
+            gestures.mouseDown(with: event)
+        } else if type == .leftMouseDragged { gestures.mouseDragged(with: event) }
+        else if type == .leftMouseUp { gestures.mouseUp(with: event) }
+        else { return false }
+        return true
+    }
+    func fixtureResize(id: String, by delta: NSPoint) {
+        guard let item = items[id], let gestures = item.gestures else { return }
+        let from = item.panel.convertPoint(toScreen: gestures.convert(NSPoint(x: gestures.bounds.width - 5, y: gestures.bounds.height - 5), to: nil))
+        let to = NSPoint(x: from.x + delta.x, y: from.y + delta.y)
+        guard fixturePointerEvent(id: id, type: .leftMouseDown, screenPoint: from) else { return }
+        fixturePointerEvent(id: id, type: .leftMouseDragged, screenPoint: to)
+        fixturePointerEvent(id: id, type: .leftMouseUp, screenPoint: to)
+    }
     #endif
 }
