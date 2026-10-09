@@ -39,7 +39,7 @@ function fixture() {
   const state = { user: { id: 'alice' }, session: 'trip', busy: false, waiting: false, recoveryMode: false, resetting: false,
     snapshot: { components: [{ id: 'collector', version: 2, placement: 'desktop', view_revision: 1 }] }, desktopState: undefined };
   const uiScope = { current: { owner: 'alice', session: 'trip', generation: 1, control: 0 } };
-  const context = vm.createContext({ nativeActions: { current: () => {} }, uiScope, readDesktopState,
+  const context = vm.createContext({ nativeActions: { current: () => {} }, uiScope, readDesktopState, desktopReceipt: { current: undefined },
     setDesktopState: value => { state.desktopState = typeof value === 'function' ? value(state.desktopState) : value; },
     setDesktopPresented: value => { presentations.push(value); setDesktopPresented(value, doc); },
     interactionVisible: () => interactionVisible(doc),

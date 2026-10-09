@@ -4,7 +4,7 @@ export type DesktopRect = { x: number; y: number; width: number; height: number 
 export type DesktopState = {
   platform: 'macos'; supported: true; presented: boolean;
   screens: { id: string; frame: DesktopRect; visible_frame: DesktopRect; scale: number }[];
-  components: { id: string; version: number; view_revision: number; state: 'loading' | 'mounted' | 'hidden' | 'failed'; visible: boolean; rect: DesktopRect; screen_id: string; error_code?: string }[];
+  components: { id: string; version: number; view_revision: number; state: 'loading' | 'mounted' | 'hidden' | 'failed'; visible: boolean; rect: DesktopRect; screen_id: string; error_code?: string; file_id?: string; content_revision?: string | null }[];
 };
 declare global {
   interface Window { __ATHENA_FLUSH_RESUME__?: () => Promise<boolean>; __ATHENA_DESKTOP__?: { readonly version: number }; webkit?: { messageHandlers?: { athenaDesktop?: { postMessage: (value: unknown) => void } } } }
@@ -37,7 +37,7 @@ const rect = (value: unknown): value is DesktopRect => record(value, ['x', 'y', 
   && number(value.x, -131072, 131072) && number(value.y, -131072, 131072)
   && number(value.width, 0, 32768) && number(value.height, 0, 32768);
 const desktopErrors = new Set(['native_unavailable', 'panel_failed', 'navigation_failed', 'script_error',
-  'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']);
+  'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout', 'preview_unavailable']);
 
 /** Reject malformed native observations before they can disrupt the UI or its authenticated reporter. */
 export function readDesktopState(value: unknown): DesktopState | null {
@@ -53,7 +53,7 @@ export function readDesktopState(value: unknown): DesktopState | null {
     screens.push({ id: screen.id, frame: { ...screen.frame }, visible_frame: { ...screen.visible_frame }, scale: screen.scale });
   }
   for (const component of value.components) {
-    if (!record(component, ['id', 'version', 'view_revision', 'state', 'visible', 'rect', 'screen_id', 'error_code'])
+    if (!record(component, ['id', 'version', 'view_revision', 'state', 'visible', 'rect', 'screen_id', 'error_code', 'file_id', 'content_revision'])
       || !identifier(component.id) || componentIds.has(component.id)
       || typeof component.version !== 'number' || !Number.isSafeInteger(component.version) || component.version < 1
       || typeof component.view_revision !== 'number' || !Number.isSafeInteger(component.view_revision) || component.view_revision < 0
@@ -61,19 +61,26 @@ export function readDesktopState(value: unknown): DesktopState | null {
       || typeof component.visible !== 'boolean' || !rect(component.rect)
       || !identifier(component.screen_id) || !screenIds.has(component.screen_id)
       || ((!value.presented || component.state === 'hidden') && component.visible)) return null;
+    if (component.file_id !== undefined && (!identifier(component.file_id) || (component.content_revision !== null && component.content_revision !== undefined
+      && (typeof component.content_revision !== 'string' || component.content_revision.length > 128)))) return null;
+    if (component.file_id === undefined && component.content_revision !== undefined) return null;
     const error = component.error_code;
     if (component.state === 'failed' ? typeof error !== 'string' || !desktopErrors.has(error) : error !== undefined && error !== null) return null;
     componentIds.add(component.id);
     components.push({ id: component.id, version: component.version, view_revision: component.view_revision,
       state: component.state as DesktopState['components'][number]['state'], visible: component.visible,
-      rect: { ...component.rect }, screen_id: component.screen_id, ...(typeof error === 'string' ? { error_code: error } : {}) });
+      rect: { ...component.rect }, screen_id: component.screen_id, ...(typeof error === 'string' ? { error_code: error } : {}),
+      ...(typeof component.file_id === 'string' ? { file_id: component.file_id, content_revision: typeof component.content_revision === 'string' ? component.content_revision : null } : {}) });
   }
   return { platform: 'macos', supported: true, presented: value.presented, screens, components };
 }
 export function desktopScene(owner: string | null, session: string | null, components: Component[], disabled = false) {
   return { action: 'scene', scope: owner && session ? `${owner}:${session}` : '', session_id: owner && session ? session : '',
-    items: disabled || !owner || !session ? [] : components.filter(item => (item.view?.placement || item.placement) === 'desktop').slice(0, 32)
+    items: disabled || !owner || !session ? [] : components.filter(item => (item.view?.placement || item.placement) === 'desktop'
+      && item.active !== false && item.active !== 0
+      && (!item.file_id || (item.file?.id === item.file_id && typeof item.file.content_revision === 'string' && item.file.content_revision.length > 0 && item.file.content_revision.length <= 128))).slice(0, 32)
       .map(item => ({ id: item.id, version: item.version, view_revision: item.view_revision || 0, title: item.title,
+        ...(item.file_id && item.file ? { file_id: item.file_id, content_revision: item.file.content_revision || null } : {}),
         ...Object.fromEntries(Object.entries(item.view || {}).filter(([key]) => ['hidden', 'x', 'y', 'width', 'height', 'screen_id'].includes(key))) })) };
 }
 

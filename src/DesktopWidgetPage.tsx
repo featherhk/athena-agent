@@ -68,6 +68,8 @@ export default function DesktopWidgetPage() {
       if (target && detail?.scope === `${target.owner}:${target.session}` && detail.component_id === target.component && detail.version === target.version) void load();
     };
     window.addEventListener('athena:widget-refresh', refresh);
+    const layoutResult = (event: Event) => { setLayoutFailed((event as CustomEvent).detail?.ok !== true); };
+    window.addEventListener('athena:surface-layout', layoutResult);
     void load();
     const resize = () => setBounds({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
     window.addEventListener('resize', resize);
@@ -75,6 +77,7 @@ export default function DesktopWidgetPage() {
       disposed = true; active?.abort();
       for (const operation of operations.current) operation.abort();
       operations.current.clear(); window.removeEventListener('resize', resize); window.removeEventListener('athena:widget-refresh', refresh);
+      window.removeEventListener('athena:surface-layout', layoutResult);
     };
   }, [target, applyPreferences, attempt]);
   useEffect(() => {
