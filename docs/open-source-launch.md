@@ -13,8 +13,11 @@ historical operational-record disclosure still require a final release decision.
 Organization setup/transfer and Discord server creation have not been completed;
 their setup pages were last reported as awaiting an authenticated operator.
 There is no verified organization repository URL or community invite to publish.
-Build 25 is a local macOS acceptance candidate. A local installation or a passing
-CI run does not promote the public download or update feed.
+Build 25 (`c4cc0fa`) passed installed-app acceptance and is now in the public
+macOS preview download/feed. The public DMG was downloaded again, hashed and
+mounted for verification; the prior Build 15 remains available. This preview
+still lacks Developer ID signing and notarization. It is the hosted-account
+distribution, not a public source release.
 
 The [context evolution research](context-evolution-research.md) is a proposal:
 single-entry task routing, source-wide retrieval, context manifests and expanded

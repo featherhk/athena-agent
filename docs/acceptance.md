@@ -62,7 +62,22 @@ Installed Build 23 exposed a gap in the native fixture: dragging a file work sur
 
 The regression now enters through the actual container's hit-test route. It checks the file title and bottom-right resize grip, passes table cells and header controls to WebKit, rejects vertically mirrored hit areas, and verifies that the owl does not capture the composer. The new parent-route test failed against the old code. After converting the incoming point from the superview, all 41 native companion checks passed, including resize coordinates, layout persistence acknowledgement/rollback and transient expiry.
 
-This fixture does not inject global pointer events or prove post-fix installed-app dragging; OS event-posting access was unavailable to the isolated test executable. The release still needs the real mouse/Computer Use drag check against the rebuilt installed app.
+This fixture does not inject global pointer events; OS event-posting access was unavailable to the isolated test executable. Installed-app acceptance subsequently found that the title was hit correctly, but `performDrag` did not move the window under delivered events. The final implementation explicitly tracks event screen coordinates, applies a three-point threshold, and commits only effective movement. Its 45 native checks enter through the parent hit-test route and cover no-op clicks, rollback, screen clamping, revision races and expiry.
+
+### Installed Build 25 and public preview
+
+The clean `c4cc0fa` macOS bundle was installed and exercised through Computer Use:
+
+- Dragging the file title changed normalized position from `(0.5, 0.5)` to `(0.573260, 0.562112)` and incremented the durable layout revision exactly once. It did not select text.
+- The resize grip changed the work surface from 420 × 300 to 820 × 510 points. Maximize and restore worked. Closing persisted `hidden=true`; restarting showed the companion without reopening that surface. Selecting the file in the current conversation reopened the same component at its saved size.
+- Known legacy fireworks were retired through versioned registry removal with sources retained. They did not replay after restart. New transient expiry/Stop behavior is covered by backend/native tests; this session did not record a fresh live timed-fireworks run.
+- All 312 pre-install message rows matched the backup hash before the follow-up synthetic acceptance request. Neither the installer nor duplicate-fixture cleanup removed chats or files.
+
+A real hosted-model task used explicitly fictional quotes: A quoted 8,000 + 3,000 + 2,000; B quoted 7,600 + 3,400 with installation missing. Athena created an XLSX and displayed it as an independent work surface. A follow-up added B's installation price of 2,500 and requested an update to the original file and panel. The UI showed the changed values; an independent workbook read verified B's installation = 2,500, B's cached total = 13,500, A's cached total = 13,000, and no remaining installation omission. File ID and component ID/version remained unchanged, with exactly one active file component. This verifies continuity within the current conversation, not automatic routing among concurrent tasks.
+
+The first real task exposed duplicate surfaces from agent registration plus automatic file delivery. Automatic presentation now transactionally reuses an existing surface for that session/file and preserves hidden/removed choices. Explicit registration can still intentionally create multiple views. Nine additional cases include independent SQLite-connection competition.
+
+Release checks: 1,114 Python tests passed / 7 skipped; 449 Node tests passed; Python dependency imports retained GIL-free operation. The packaged app passed relocation, startup, auth/origin, restart/shutdown and credential-exclusion smoke checks. The public DMG was fully downloaded, hashed, mounted and checked against the clean source, app metadata, dependency notices and ad-hoc signature integrity. The update checker reports Build 15 → 25 available and matching Build 25 current. Developer ID signing and notarization remain unavailable. QuickTime reported an error during a recording attempt; no reviewed demonstration video is delivered by this acceptance.
 
 
 ## Local source setup — 2026-10-10
