@@ -1,0 +1,114 @@
+{
+  "distribution": "python-build-standalone",
+  "build": "20261001",
+  "python_version": "3.14.8",
+  "target_triple": "aarch64-apple-darwin",
+  "build_options": "freethreaded+pgo+lto",
+  "archive_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261001/cpython-3.14.8%2B20261001-aarch64-apple-darwin-freethreaded%2Bpgo%2Blto-full.tar.zst",
+  "archive_sha256": "5bc1cdda159b49d6118767363dfb3feaebeaa23f28cc095fd3192d3dec4ab4ac",
+  "downloads_metadata_url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261001/pythonbuild/downloads.json",
+  "scope": "All license_paths referenced in full archive PYTHON.json, including alternative linked-library variants. Does not inventory separately installed Python wheels.",
+  "files": [
+    {
+      "file": "LICENSE.bzip2.txt",
+      "archive_path": "python/licenses/LICENSE.bzip2.txt",
+      "sha256": "1f38bbc7caacafd65169276d759c0d88c991b753b643ce35d0e45ea1971dd441"
+    },
+    {
+      "file": "LICENSE.cpython.txt",
+      "archive_path": "python/licenses/LICENSE.cpython.txt",
+      "sha256": "86e61415828a8b5b06ec8d024e6f086ce155a8b85fd0c419c0ba4dc004e74fdd"
+    },
+    {
+      "file": "LICENSE.expat.txt",
+      "archive_path": "python/licenses/LICENSE.expat.txt",
+      "sha256": "122f2c27000472a201d337b9b31f7eb2b52d091b02857061a8880371612d9534"
+    },
+    {
+      "file": "LICENSE.libedit.txt",
+      "archive_path": "python/licenses/LICENSE.libedit.txt",
+      "sha256": "29cea33c32bbc9785142386377915612a2fa786482c46843383384aded2e09b1"
+    },
+    {
+      "file": "LICENSE.libffi.txt",
+      "archive_path": "python/licenses/LICENSE.libffi.txt",
+      "sha256": "deaf3a42effb551a5b140fa9afefed183a27f1341c6d1bf430d106a5e6931fc0"
+    },
+    {
+      "file": "LICENSE.liblzma.txt",
+      "archive_path": "python/licenses/LICENSE.liblzma.txt",
+      "sha256": "9a4062de0a2c388a98cf35a35d348b62fa97c838a71c3c28ee1a2d7d0a565b02"
+    },
+    {
+      "file": "LICENSE.libuuid.txt",
+      "archive_path": "python/licenses/LICENSE.libuuid.txt",
+      "sha256": "122ee1f7e258f2c3c0e538a75c037684f420454bf3850ddc74ce750bbf5fe86b"
+    },
+    {
+      "file": "LICENSE.mpdecimal.txt",
+      "archive_path": "python/licenses/LICENSE.mpdecimal.txt",
+      "sha256": "669512af7219f58be03a398766d7c9da11a3b3df9d3f05cb74c5ceca25c8da3b"
+    },
+    {
+      "file": "LICENSE.ncurses.txt",
+      "archive_path": "python/licenses/LICENSE.ncurses.txt",
+      "sha256": "87a4c4442337b8968ef956031c406b74f9cb7149b7ba87311bdaba534816201c"
+    },
+    {
+      "file": "LICENSE.openssl-1.1.txt",
+      "archive_path": "python/licenses/LICENSE.openssl-1.1.txt",
+      "sha256": "9c04cce50c4989d5601dd8b07f6ab922c40388b66ac736c9007cb1ed9d9dd560"
+    },
+    {
+      "file": "LICENSE.openssl-3.txt",
+      "archive_path": "python/licenses/LICENSE.openssl-3.txt",
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+    },
+    {
+      "file": "LICENSE.sqlite.txt",
+      "archive_path": "python/licenses/LICENSE.sqlite.txt",
+      "sha256": "38bef3d28b24f145ea293bd3b6eb4b20396982abc8303128fb493986ea5bc719"
+    },
+    {
+      "file": "LICENSE.tcl.txt",
+      "archive_path": "python/licenses/LICENSE.tcl.txt",
+      "sha256": "c0a69a2bfd757361ec7e6143973b103c90409316b49e9c88db26ad6388e79f16"
+    },
+    {
+      "file": "LICENSE.zlib-ng.txt",
+      "dependency": "zlib-ng",
+      "version": "2.2.4",
+      "source_url": "https://github.com/python/cpython-source-deps/archive/refs/tags/zlib-ng-2.2.4.tar.gz",
+      "source_sha256": "00bbd88709bc416cb96160ab61d3e1c8f76e106799af7328d0fe434dc7dd5004",
+      "source_notice_files": [
+        "LICENSE.md"
+      ],
+      "sha256": "e72d2570acb6da474ce59faecb9e5120dcb1f4a6d258f20558389a1cf86034ad"
+    },
+    {
+      "file": "LICENSE.zlib.txt",
+      "archive_path": "python/licenses/LICENSE.zlib.txt",
+      "sha256": "818922b2620f12801a12bf78e399644a30990e66824abd8ca8ec24d451d6f92c"
+    },
+    {
+      "file": "LICENSE.zstd.txt",
+      "dependency": "zstd",
+      "version": "1.5.7",
+      "source_url": "https://github.com/python/cpython-source-deps/archive/refs/tags/zstd-1.5.7.tar.gz",
+      "source_sha256": "f24b52470d12f466e9fa4fcc94e6c530625ada51d7b36de7fdc6ed7e6f499c8e",
+      "source_notice_files": [
+        "COPYING",
+        "LICENSE"
+      ],
+      "sha256": "6dc942d7112f66f22a03ddf22fb33b2053cab5af186a31b685c1263b21c43989"
+    }
+  ],
+  "observed_managed_runtime": {
+    "python_version": "3.14.8",
+    "abi_flags": "t",
+    "gil_disabled_build": true,
+    "build_marker": "20261001",
+    "note": "Version and build-marker correspondence, not a bit-for-bit reproducibility assertion."
+  },
+  "collection_date": "2026-10-10"
+}
