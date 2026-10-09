@@ -149,6 +149,54 @@ const shellAnchors = () => Object.fromEntries(['.companion-avatar', '.composer']
   return [selector, { left: rect.left, bottom: innerHeight - rect.bottom, width: rect.width, height: rect.height }];
 }));
 const sameAnchors = (before, after) => Object.keys(before).every(selector => Object.keys(before[selector]).every(axis => Math.abs(before[selector][axis] - after[selector][axis]) <= 1));
+const settleShell = async () => {
+  let signature = '', stableSince = performance.now();
+  await until(() => {
+    const next = JSON.stringify({ height: innerHeight, anchors: shellAnchors() });
+    if (next !== signature) { signature = next; stableSince = performance.now(); }
+    return performance.now() - stableSince >= 240;
+  }, 'native shell settled before a separate interaction');
+};
+// The real host preserves the panel's screen bottom while resizing. Normalize
+// DOM bounds to that bottom so every rendered frame, not only the settled
+// layout, must keep the owl and input in the same place. The offline window's
+// own screen origin is deliberately irrelevant to this content-layout check.
+const clickWithoutShellJump = async (element, name) => {
+  const before = shellAnchors(), selectors = Object.keys(before);
+  const nodes = selectors.map(selector => document.querySelector(selector));
+  const start = performance.now(), firstPost = nativePosts.length, frames = [];
+  let sampling = true;
+  const sample = () => {
+    const anchors = shellAnchors();
+    frames.push({ ms: Math.round(performance.now() - start), viewportHeight: innerHeight, anchors,
+      sameNodes: selectors.every((selector, index) => document.querySelector(selector) === nodes[index]),
+      visible: nodes.every(node => getComputedStyle(node).visibility === 'visible' && inside(node)),
+      stable: sameAnchors(before, anchors) });
+    if (sampling) requestAnimationFrame(sample);
+  };
+  sample();
+  await nativeClick(element);
+  await delay(350);
+  sampling = false;
+  const resizeHeights = nativePosts.slice(firstPost).filter(post => post.action === 'resize').map(post => post.height);
+  const firstFailure = frames.find(frame => !frame.stable || !frame.sameNodes || !frame.visible);
+  const maximumDrift = Math.max(...frames.flatMap(frame => selectors.flatMap(selector =>
+    Object.keys(before[selector]).map(axis => Math.abs(before[selector][axis] - frame.anchors[selector][axis])))));
+  check(name, frames.length >= 3 && !firstFailure && resizeHeights.length <= 3,
+    { frames: frames.length, maximumDrift, resizeHeights, before, firstFailure });
+};
+const repeatOwlToggle = async name => {
+  const field = input(), draft = field.value;
+  const actions = () => calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop')).length;
+  const beforeActions = actions();
+  for (let cycle = 1; cycle <= 3; cycle++) {
+    await clickWithoutShellJump(document.querySelector('.companion-avatar'), `${name}_collapse_${cycle}_stays_anchored_every_frame`);
+    check(`${name}_collapse_${cycle}_actually_hides_result`, !result() && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'false');
+    await clickWithoutShellJump(document.querySelector('.companion-avatar'), `${name}_reopen_${cycle}_stays_anchored_every_frame`);
+    check(`${name}_reopen_${cycle}_retains_draft_and_does_not_execute`, Boolean(result()) && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true'
+      && input() === field && input().value === draft && actions() === beforeActions);
+  }
+};
 const widgetReplies = [];
 window.addEventListener('message', event => {
   if (event.source === document.querySelector('[data-component-id="note"] iframe')?.contentWindow && event.data?.probe === 'companion-note') widgetReplies.push(event.data);
@@ -201,7 +249,8 @@ async function run() {
     await until(() => document.querySelector('[data-task-active="true"]') && innerWidth === 560, 'active task');
     check('send_has_one_bound_durable_receipt', calls.filter(item => item.path.endsWith('/messages')).length === 1 && receipts.size === 1 && snapshot.messages[0].content === draft);
     await until(() => result(), 'running result open'); await delay(200);
-    await nativeClick(document.querySelector('.companion-avatar')); await until(() => !result() && innerHeight === 260, 'collapse running task'); await delay(180);
+    await clickWithoutShellJump(document.querySelector('.companion-avatar'), 'collapsing_result_keeps_shell_anchored_every_frame');
+    await until(() => !result() && innerHeight === 260, 'collapse running task'); await delay(180);
     await capture('companion-compact-running');
     check('compact_running_task_keeps_input_and_stop_inside_panel', inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input()),
       { viewport: [innerWidth, innerHeight], composer: document.querySelector('.composer').getBoundingClientRect().toJSON(), stop: document.querySelector('.send.stop').getBoundingClientRect().toJSON(), display: getComputedStyle(document.querySelector('.composer')).display });
@@ -210,7 +259,8 @@ async function run() {
     check('collapsed_running_task_fits_multiline_draft_and_all_actions', !result() && inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input())
       && [...document.querySelectorAll('.send-actions button')].every(inside), { viewport: [innerWidth, innerHeight], composer: document.querySelector('.composer').getBoundingClientRect().toJSON() });
     await edit(''); await delay(180);
-    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reopen running task');
+    await clickWithoutShellJump(document.querySelector('.companion-avatar'), 'opening_result_keeps_shell_anchored_every_frame');
+    await until(() => result(), 'reopen running task');
     await edit('Do not lose this next request.');
     await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden working');
     check('hidden_task_remains_running_once', snapshot.runs[0].status === 'running' && !calls.some(item => item.path.endsWith('/stop')));
@@ -223,6 +273,7 @@ async function run() {
     check('result_uses_markdown_and_keeps_input', result().querySelectorAll('td').length === 4 && input() === field && inside(document.querySelector('.composer')));
     check('short_result_fits_without_full_height_blank_card', innerHeight < 680 && inside(result()), { height: innerHeight });
     check('opening_result_keeps_avatar_and_composer_anchored', sameAnchors(compactAnchors, shellAnchors()), { before: compactAnchors, after: shellAnchors() });
+    await repeatOwlToggle('idle_short_result');
     await capture('companion-result');
     document.querySelector('.companion-result-heading button').click(); await until(() => !result() && innerWidth === 560, 'put result away');
     check('putting_result_away_returns_to_companion_without_erasing_it', snapshot.messages.some(item => item.id === 'a1') && input().value === 'Do not lose this next request.');
@@ -232,6 +283,9 @@ async function run() {
     nativeShow(); await until(() => observations.at(-1)?.foreground === true && visibleMessage('a1'), 'recall reading result');
     check('recall_restores_reading_without_activity_feed_item', visibleMessage('u1') && visibleMessage('a1') && input() === field && input().value === 'Do not lose this next request.');
     document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse before help');
+    // The next fixture-native click uses viewport coordinates; wait until the
+    // asynchronous native resize has applied before calculating those points.
+    await settleShell();
     await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden before help');
     snapshot.runs = [{ id: 'r1', status: 'waiting_user', phase: 'waiting' }];
     snapshot.help_requests = [{ id: 'h1', run_id: 'r1', session_id: 's1', status: 'pending', questions: [{ id: 'q1', question: 'Which month should I start with?', options: [{ label: 'October' }] }] }]; emit();
@@ -275,7 +329,8 @@ async function run() {
     snapshot.runs = snapshot.runs.map(run => ({ ...run, status: 'complete', phase: 'responding' }));
     snapshot.messages = snapshot.messages.map(message => ({ ...message, status: 'complete' }));
     snapshot.messages.push({ id: 'a3', role: 'assistant', content: 'Read one note, then decide what to keep.', status: 'complete', run_id: 'r3' }); emit();
-    await until(() => visibleMessage('a3'), 'queued task complete');
+    await until(() => visibleMessage('a3'), 'queued task complete'); await delay(180);
+    await repeatOwlToggle('idle_long_result');
     await edit('Keep this component draft too.');
     snapshot.components = [{ id: 'note', title: 'Working note', placement: 'inline', version: 1, view_revision: 0, html: noteHTML }]; emit();
     await until(() => document.querySelector('[data-component-id="note"] iframe') && widgetReplies.length > 0, 'inline working note');
@@ -338,6 +393,9 @@ async function run() {
     const previousSession = [...document.querySelectorAll('.session-list .session')].find(item => item.textContent.includes('Organize my documents'));
     previousSession.click(); await until(() => input().value === 'Keep this failed message.' && nativeScope === 'probe:s1', 'old task draft restored');
     check('returning_to_previous_task_restores_its_own_unsent_draft', input().value === 'Keep this failed message.' && snapshot.messages.length === oldMessages.length && secondSnapshot.messages.length === 1);
+    // Session restore and native resizing are separate acknowledgements. Start
+    // the background-status check after the restored error notice has settled.
+    await settleShell();
     const beforeAttention = shellAnchors(), requestsBeforeAttention = calls.filter(item => item.path.endsWith('/messages') || item.path.endsWith('/stop') || item.path === '/api/activity/ack').length;
     activityItems = [{ run_id: 'background-help', session_id: 's2', title: 'Choose the documents to organize', status: 'waiting_user', phase: 'waiting',
       needs_user: true, help_id: 'h2', attention_key: 'help-two', created_at: '2026-10-09', updated_at: '2026-10-09' }];

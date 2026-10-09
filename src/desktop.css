@@ -1,6 +1,8 @@
 /* The desktop is the canvas. Only things one can use have a material surface. */
 html[data-desktop],html[data-desktop] body,html[data-desktop] #root { background:transparent!important; }
-.app.desktop-companion { background:transparent; padding:8px 18px 14px; gap:0; overflow:hidden; height:100dvh; min-height:0; }
+/* Keep the owl/input anchored while a revealed result awaits native resizing.
+   Its minimum box must overflow upwards, never push the controls below the panel. */
+.app.desktop-companion { background:transparent; padding:8px 18px 14px; gap:0; justify-content:flex-end; overflow:hidden; height:100dvh; min-height:0; }
 .desktop-companion .companion-presence { position:relative; display:flex; flex-direction:column; align-items:center; align-self:center; flex-shrink:0; width:180px; height:162px; padding:6px 16px 10px; order:2; margin-top:auto; }
 .companion-avatar { display:block; padding:0; width:116px; height:128px; background:transparent; border:0; border-radius:45%; }
 .companion-avatar:focus-visible { outline:1px solid var(--accent); outline-offset:4px; }
