@@ -314,5 +314,7 @@
   "desktop.collapse": "閉じる",
   "desktop.reopen": "この会話を見る",
   "desktop.continue": "この続きを話す",
-  "desktop.saveFailed": "最新の下書きを保存できませんでした。Athena を開いたまま、もう一度お試しください。"
+  "desktop.saveFailed": "最新の下書きを保存できませんでした。Athena を開いたまま、もう一度お試しください。",
+  "desktop.maximize": "最大化",
+  "desktop.restoreSize": "元のサイズに戻す"
 }

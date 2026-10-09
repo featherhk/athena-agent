@@ -93,3 +93,36 @@ test('account or source changes before a user action prevent any layout write', 
     assert.ok(f.calls.every(item => item.body === undefined));
   }
 });
+
+const file = { id: 'budget', session_id: 'chat', name: 'Budget.xlsx', size: 1200, media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  content_url: '/api/files/budget/content', preview_url: '/api/files/budget/preview', content_revision: 's1-current' };
+const fileComponent = { ...original, html: '', file_id: 'budget', file };
+const fileSearch = `${search}&file=budget&content_revision=s1-current`;
+
+test('native file URL binds to exact registered bytes as well as component version', async () => {
+  const bound = desktopWidgetRequest(fileSearch, true);
+  assert.deepEqual(bound, { ...target, file: 'budget', contentRevision: 's1-current' });
+  assert.equal((await loadDesktopWidget(bound, service({ component: fileComponent }).request)).component.file, file);
+  for (const query of [fileSearch + '&file=another', fileSearch.replace('file=budget', 'file=../secret'),
+    fileSearch.replace('&content_revision=s1-current', ''), `${search}&content_revision=s1-current`,
+    fileSearch.replace('s1-current', 'x'.repeat(129))]) assert.equal(desktopWidgetRequest(query, true), null);
+  for (const changed of [{ ...fileComponent, file: { ...file, content_revision: 's1-next' } }, original,
+    { ...fileComponent, file_id: 'different', file: { ...file, id: 'different' } }]) {
+    await assert.rejects(loadDesktopWidget(bound, service({ component: changed }).request), /desktop_widget_unavailable/);
+  }
+});
+
+test('file rendering uses the authenticated registry projection with only canonical owned URLs', async () => {
+  for (const component of [{ ...fileComponent, file: null }, { ...fileComponent, file: { ...file, id: 'another' } },
+    { ...fileComponent, file: { ...file, content_url: 'https://remote.example/secret' } },
+    { ...fileComponent, file: { ...file, preview_url: '/api/files/another/preview' } },
+    { ...fileComponent, file: { ...file, size: -1 } }, { ...fileComponent, file: { ...file, session_id: '../escape' } }]) {
+    await assert.rejects(loadDesktopWidget(target, service({ component }).request), /desktop_widget_unavailable/);
+  }
+  for (const name of ['Budget.xlsx', 'Proposal.docx', 'Chart.html', 'Photo.png', 'Notes.md']) {
+    const source = { ...fileComponent, file: { ...file, name } };
+    const f = service({ component: source });
+    assert.equal((await loadDesktopWidget(target, f.request)).component.file.name, name);
+    assert.deepEqual(f.calls.map(call => call.path), ['/auth/me', '/sessions/chat']);
+  }
+});

@@ -1,6 +1,8 @@
 import type { Component, Preferences, Snapshot, User, ViewChange } from './api';
+import type { FileEntry } from './FilePreview';
 
-export type DesktopWidgetRequest = { owner: string; session: string; component: string; version: number };
+export type DesktopWidgetRequest = { owner: string; session: string; component: string; version: number; file?: string; contentRevision?: string | null };
+export type DesktopFileComponent = Component & { file_id?: string | null; file?: FileEntry | null };
 type Request = <T>(path: string, body?: unknown, signal?: AbortSignal) => Promise<T>;
 const identifier = (value: string | null): value is string => value !== null && /^[a-zA-Z0-9_-]{1,64}$/.test(value);
 
@@ -16,6 +18,12 @@ export function desktopWidgetRequest(search: string, nativeWidget: boolean): Des
       || scope[1] !== session || !versionText || !/^[1-9][0-9]{0,9}$/.test(versionText)) return null;
   const version = Number(versionText);
   if (!Number.isSafeInteger(version) || version > 2147483647) return null;
+  const file = query.get('file'), revision = query.get('content_revision');
+  if (query.has('file') || query.has('content_revision')) {
+    if (query.getAll('file').length !== 1 || query.getAll('content_revision').length !== 1 || !identifier(file)
+        || (revision !== '' && (revision === null || !/^[A-Za-z0-9._:-]{1,128}$/.test(revision)))) return null;
+    return { owner: scope[0], session, component, version, file, contentRevision: revision || null };
+  }
   return { owner: scope[0], session, component, version };
 }
 
@@ -28,9 +36,19 @@ export async function loadDesktopWidget(target: DesktopWidgetRequest, request: R
   const identity = await request<{ user: User | null; preferences?: Preferences }>('/auth/me', undefined, signal);
   if (signal?.aborted || identity.user?.id !== target.owner) throw new DesktopWidgetUnavailable();
   const snapshot = await request<Snapshot>(`/sessions/${target.session}`, undefined, signal);
-  const component = snapshot.components?.find(item => item.id === target.component && item.version === target.version);
-  if (signal?.aborted || !component || typeof component.html !== 'string'
+  const component: DesktopFileComponent | undefined = snapshot.components?.find(item => item.id === target.component && item.version === target.version);
+  if (signal?.aborted || !component
       || (component.view?.placement || component.placement) !== 'desktop') throw new DesktopWidgetUnavailable();
+  if (component.file_id) {
+    const file = component.file;
+    // Only the authenticated registry projection supplies file data. Never
+    // accept a URL or descriptor from generated HTML or a bridge message.
+    if (!identifier(component.file_id) || !file || file.id !== component.file_id || !identifier(file.session_id)
+        || typeof file.name !== 'string' || typeof file.size !== 'number' || !Number.isSafeInteger(file.size) || file.size < 0
+        || file.content_url !== `/api/files/${file.id}/content` || file.preview_url !== `/api/files/${file.id}/preview`
+        || (target.file !== undefined && (target.file !== file.id || target.contentRevision !== (file.content_revision || null))))
+      throw new DesktopWidgetUnavailable();
+  } else if (target.file !== undefined || typeof component.html !== 'string') throw new DesktopWidgetUnavailable();
   return { component, preferences: snapshot.preferences || identity.preferences };
 }
 

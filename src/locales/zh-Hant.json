@@ -314,5 +314,7 @@
   "desktop.collapse": "收起",
   "desktop.reopen": "查看這段對話",
   "desktop.continue": "繼續這件事",
-  "desktop.saveFailed": "最新草稿暫時無法儲存。請保持 Athena 開啟，稍後再試。"
+  "desktop.saveFailed": "最新草稿暫時無法儲存。請保持 Athena 開啟，稍後再試。",
+  "desktop.maximize": "最大化",
+  "desktop.restoreSize": "恢復大小"
 }

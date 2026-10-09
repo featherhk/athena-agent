@@ -314,5 +314,7 @@
   "desktop.collapse": "طيّ",
   "desktop.reopen": "عرض المحادثة",
   "desktop.continue": "متابعة هذا الأمر",
-  "desktop.saveFailed": "تعذر حفظ آخر مسودة. أبقِ Athena مفتوحة وحاول مرة أخرى."
+  "desktop.saveFailed": "تعذر حفظ آخر مسودة. أبقِ Athena مفتوحة وحاول مرة أخرى.",
+  "desktop.maximize": "تكبير",
+  "desktop.restoreSize": "استعادة الحجم"
 }

@@ -314,5 +314,7 @@
   "desktop.collapse": "Recolher",
   "desktop.reopen": "Ver esta conversa",
   "desktop.continue": "Continuar esta tarefa",
-  "desktop.saveFailed": "Não foi possível guardar o último rascunho. Mantenha a Athena aberta e tente novamente."
+  "desktop.saveFailed": "Não foi possível guardar o último rascunho. Mantenha a Athena aberta e tente novamente.",
+  "desktop.maximize": "Maximizar",
+  "desktop.restoreSize": "Restaurar tamanho"
 }

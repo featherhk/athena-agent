@@ -314,5 +314,7 @@
   "desktop.collapse": "Put away",
   "desktop.reopen": "View this conversation",
   "desktop.continue": "Continue this task",
-  "desktop.saveFailed": "Your latest draft could not be saved. Keep Athena open and try again."
+  "desktop.saveFailed": "Your latest draft could not be saved. Keep Athena open and try again.",
+  "desktop.maximize": "Maximize",
+  "desktop.restoreSize": "Restore size"
 }

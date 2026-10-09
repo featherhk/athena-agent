@@ -314,5 +314,7 @@
   "desktop.collapse": "Ocultar",
   "desktop.reopen": "Ver esta conversación",
   "desktop.continue": "Continuar esta tarea",
-  "desktop.saveFailed": "No se pudo guardar el último borrador. Mantén Athena abierta e inténtalo de nuevo."
+  "desktop.saveFailed": "No se pudo guardar el último borrador. Mantén Athena abierta e inténtalo de nuevo.",
+  "desktop.maximize": "Maximizar",
+  "desktop.restoreSize": "Restaurar tamaño"
 }
