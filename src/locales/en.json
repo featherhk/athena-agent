@@ -311,5 +311,7 @@
   "desktop.hide": "Hide Athena",
   "desktop.back": "Back to companion",
   "surface.desktop": "Desktop",
-  "desktop.collapse": "Put away"
+  "desktop.collapse": "Put away",
+  "desktop.reopen": "View this conversation",
+  "desktop.continue": "Continue this task"
 }

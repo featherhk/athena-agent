@@ -311,5 +311,7 @@
   "desktop.hide": "Athena を隠す",
   "desktop.back": "履歴を閉じる",
   "surface.desktop": "デスクトップ",
-  "desktop.collapse": "閉じる"
+  "desktop.collapse": "閉じる",
+  "desktop.reopen": "この会話を見る",
+  "desktop.continue": "この続きを話す"
 }

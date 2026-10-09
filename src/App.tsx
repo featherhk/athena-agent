@@ -66,6 +66,7 @@ export default function App() {
   const [desktop] = useState(() => desktopRole() === 'companion');
   const [desktopLog, setDesktopLog] = useState(false);
   const [desktopReplyOpen, setDesktopReplyOpen] = useState(false);
+  const desktopEscape = useRef<() => boolean>(() => false);
   const [desktopState, setDesktopState] = useState<{ scope: string; value: DesktopState } | undefined>();
   const appRoot = useRef<HTMLDivElement>(null);
   useEffect(() => appRoot.current ? manageModalFocus(appRoot.current) : undefined, []);
@@ -260,6 +261,7 @@ export default function App() {
     editDraft({ attached: change(drafts.current!.read(scope.owner, scope.session).attached) });
   }
   function navigate(next: string | null, migrate = false) {
+    if (desktop) { setDesktopLog(false); setDesktopReplyOpen(Boolean(next)); }
     pendingActivityView.current = null; setInlinePreview(null); setInlineObservation(null);
     conversationScroll.policy.resume();
     const scope = uiScope.current;
@@ -405,6 +407,7 @@ export default function App() {
     uiScope.current = { owner: next?.id || null, session: nextSession, generation: uiScope.current.generation + 1, control: uiScope.current.control + 1 };
     applyPreferences(saved || defaultPreferences); actionSeen.current = 0; dismissedAction.current = 0; setPasswordRequested(0); setPreview(null); setFiles(null); setSessions([]);
     pendingActivityView.current = null; conversationScroll.policy.resume(); setActivity(false); setUser(next); setAccount(false); setAuth(null); setPassword(''); setChooseFiles(false); setMenu(false); setHistory(false); setAppearance(false);
+    setDesktopLog(false); setDesktopReplyOpen(false);
     setSending(false); setUploading(false); setResetting(false); setSession(nextSession); showDraft(drafts.current!.read(next?.id || null, nextSession));
     setSnapshot(empty()); setError(''); setTextEffects({}); setInlinePreview(null); setInlineObservation(null);
   }
@@ -469,7 +472,9 @@ export default function App() {
   }, [toast]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !hasNativeModal(document)) { closeAccount(); setMenu(false); setAppearance(false); setAuth(null); setHistory(false); setFiles(null); setPreview(null); setSurfaces(false); setActivity(false); setPassword(''); }
+      if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229 || event.defaultPrevented || hasNativeModal(document)) return;
+      if (desktopEscape.current()) { event.preventDefault(); return; }
+      closeAccount(); setMenu(false); setAppearance(false); setAuth(null); setHistory(false); setFiles(null); setPreview(null); setSurfaces(false); setActivity(false); setPassword('');
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
@@ -983,10 +988,21 @@ export default function App() {
   const tracedRuns = new Set<string>();
   const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
   const lastAnswerByRun = new Map(snapshot.messages.filter(message => message.run_id && message.role === 'assistant' && (message.content || message.attachments?.length)).map(message => [message.run_id, message.id]));
-  const latestAnswer = snapshot.messages.filter(message => (!snapshot.runs[0] || message.run_id === snapshot.runs[0].id) && message.role === 'assistant' && (message.content || message.attachments?.length)).at(-1);
   const latestRun = snapshot.runs[0]?.id;
-  const latestFiles = snapshot.files.filter(file => file.source === 'output');
-  const desktopResult = Boolean((desktopReplyOpen && (latestAnswer || latestRun || latestFiles.length || lastError)) || inlinePreview || components.some(item => !['desktop', 'presence'].includes(placementOf(item))));
+  const desktopMessages = snapshot.messages.filter(message => ['user', 'assistant'].includes(message.role));
+  const desktopWidgets = components.filter(item => !['desktop', 'presence', 'surface', 'overlay'].includes(placementOf(item)));
+  const attachedFileIds = new Set(desktopMessages.flatMap(message => message.attachments?.map(file => file.id) || []));
+  const latestFiles = snapshot.files.filter(file => file.source === 'output' && !attachedFileIds.has(file.id));
+  const desktopHasResult = Boolean(desktopMessages.length || latestRun || latestFiles.length || lastError || inlinePreview || desktopWidgets.length);
+  const desktopResult = desktopHasResult && (desktopReplyOpen || Boolean(inlinePreview));
+  const desktopQuestion = desktopMessages.findLast(message => message.role === 'user' && message.content)?.content;
+  const desktopTransient = Boolean(auth || menu || history || account || files || preview || appearance || surfaces || activity);
+  desktopEscape.current = () => {
+    if (!desktop || desktopTransient) return false;
+    if (voiceActive) { window.dispatchEvent(new Event('athena:background')); return true; }
+    if (desktopLog || desktopResult) { setDesktopLog(false); setDesktopReplyOpen(false); setInlinePreview(null); return true; }
+    desktopPost({ action: 'hide' }); return true;
+  };
   useEffect(() => { if (desktop && (busy || waiting)) setDesktopReplyOpen(true); }, [desktop, busy, waiting]);
   const desktopExpanded = Boolean(error || serviceMessage || attached.length || uploading || chooseFiles || desktopLog || desktopResult || renderer || help || auth || history || account || files || preview || menu || appearance || surfaces || activity || voiceActive || pendingIntents.length || pendingStops.length);
   const nativeActions = useRef<(detail: Record<string, unknown>) => void>(() => {});
@@ -996,13 +1012,17 @@ export default function App() {
       const current = uiScope.current;
       const scope = current.owner && current.session ? `${current.owner}:${current.session}` : '';
       const state = readDesktopState(detail.desktop);
-      if (state && detail.scope === scope) { setDesktopState({ scope, value: state }); setDesktopPresented(state.presented); }
+      if (state && detail.scope === scope) {
+        setDesktopState(old => old?.scope === scope && JSON.stringify(old.value) === JSON.stringify(state) ? old : { scope, value: state });
+        setDesktopPresented(state.presented);
+      }
       return;
     }
-    if (action === 'hidden') { if (!busy && !waiting) setDesktopReplyOpen(false); setDesktopPresented(false); window.dispatchEvent(new Event('athena:background')); return; }
-    if (action === 'show') { if (continuity.state.items.some(item => item.session_id === session && !['running', 'queued'].includes(item.status))) setDesktopReplyOpen(true); setDesktopPresented(true); requestAnimationFrame(() => { if (!document.querySelector('[aria-modal="true"]')) input.current?.focus({ preventScroll: true }); }); return; }
+    if (action === 'hidden') { setDesktopPresented(false); window.dispatchEvent(new Event('athena:background')); return; }
+    if (action === 'show') { setDesktopPresented(true); requestAnimationFrame(() => { if (!document.querySelector('[aria-modal="true"]')) input.current?.focus({ preventScroll: true }); }); return; }
     if (action === 'menu') { setMenu(true); return; }
-    if (action === 'history') { setDesktopLog(true); setHistory(true); return; }
+    if (action === 'history') { setHistory(true); return; }
+    if (action === 'new') { setMenu(false); setHistory(false); navigate(null); requestAnimationFrame(() => input.current?.focus({ preventScroll: true })); return; }
     if (action === 'stop') { void stop(); return; }
     if (action === 'reset') { void reset(); return; }
     if (action === 'submit' || action === 'navigate') {
@@ -1025,41 +1045,44 @@ export default function App() {
   const desktopLayout = useRef({ expanded: false, modal: false });
   desktopLayout.current = { expanded: desktopExpanded, modal: Boolean(desktopLog || renderer || help || auth || history || account || files || preview || menu || appearance || surfaces || activity) };
   const scene = JSON.stringify(desktopScene(user?.id || null, session, snapshot.components, recoveryMode || resetting));
-  useEffect(() => { if (desktop) { desktopPost(JSON.parse(scene)); desktopPost({ action: 'observe' }); } }, [desktop, scene]);
+  useEffect(() => { if (desktop) desktopPost(JSON.parse(scene)); }, [desktop, scene]);
   useEffect(() => {
     if (!desktop || !appRoot.current) return;
-    let scheduled = 0, lastSize = '';
+    let scheduled = 0, lastSize = '', lastRegions = '';
     const watched = new Set<Element>();
-    const report = () => { if (!scheduled) scheduled = requestAnimationFrame(() => {
+    const report = () => { if (!scheduled) scheduled = window.setTimeout(() => {
       scheduled = 0;
       const app = appRoot.current;
       if (!app) return;
       // Autofocus may scroll the shell before its native panel has expanded.
       // Reading areas own their scroll; the transparent outer canvas does not.
       if (app.scrollTop || app.scrollLeft) app.scrollTo(0, 0);
-      const result = app.querySelector<HTMLElement>('.companion-result');
+      const result = app.querySelector<HTMLElement>('.companion-result:not([hidden])');
       const content = result ? Math.max(0, ...[...result.children].map(child => child.getBoundingClientRect().bottom))
         - result.getBoundingClientRect().top + result.scrollTop + 20 : 0;
+      const dialog = app.querySelector<HTMLElement>('[aria-modal="true"]');
       const size = { action: 'resize', mode: desktopLayout.current.expanded ? 'expanded' : 'compact',
-        height: desktopLayout.current.modal ? 680 : Math.min(680, Math.max(260, Math.ceil(content
+        height: desktopLayout.current.modal ? (dialog?.classList.contains('menu-dialog') ? Math.min(680, Math.max(400, dialog.scrollHeight + 48)) : 680) : Math.min(680, Math.max(260, Math.ceil(content
           + (app.querySelector<HTMLElement>('.companion-presence')?.offsetHeight || 0)
           + (app.querySelector<HTMLElement>('.composer-area')?.offsetHeight || 0) + 26))) };
       const signature = JSON.stringify(size);
       if (signature !== lastSize) { desktopPost(size); lastSize = signature; }
-      desktopPost({ action: 'hitRegions', regions: companionHitRegions() });
-      const next = new Set(app.querySelectorAll('.companion-result,.composer-area,.companion-presence'));
+      const regions = companionHitRegions(), regionSignature = JSON.stringify(regions);
+      if (regionSignature !== lastRegions) { desktopPost({ action: 'hitRegions', regions }); lastRegions = regionSignature; }
+      const next = new Set(app.querySelectorAll('.companion-result:not([hidden]),.composer-area,.companion-presence'));
       for (const node of watched) if (!next.has(node)) { observer.unobserve(node); watched.delete(node); }
       for (const node of next) if (!watched.has(node)) { watched.add(node); observer.observe(node); }
-    }); };
+    }, 80); };
     const observer = new ResizeObserver(report); observer.observe(appRoot.current);
     const mutations = new MutationObserver(report); mutations.observe(appRoot.current, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'open', 'data-desktop-expanded'] });
     window.addEventListener('resize', report); document.addEventListener('focusin', report); report();
-    return () => { observer.disconnect(); mutations.disconnect(); window.removeEventListener('resize', report); document.removeEventListener('focusin', report); cancelAnimationFrame(scheduled); };
+    return () => { observer.disconnect(); mutations.disconnect(); window.removeEventListener('resize', report); document.removeEventListener('focusin', report); clearTimeout(scheduled); };
   }, [desktop]);
-  return <div ref={appRoot} className={`app${desktop ? ' desktop-companion' : ''}`} data-desktop-expanded={desktopExpanded} data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
+  return <div ref={appRoot} className={`app${desktop ? ' desktop-companion' : ''}`} data-desktop-expanded={desktopExpanded} data-desktop-modal={desktop && desktopTransient} data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
     {desktop && <div className="companion-presence" data-desktop-hit>
-      {presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <button className="companion-avatar" type="button" aria-label={t('desktop.focus')} onClick={() => input.current?.focus()}><CompanionPortrait phase={orbPhase} listening={voiceActive} /></button>}
-      <span className="companion-status" role="status">{busy || waiting ? t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`) : t('desktop.prompt')}</span>
+      {presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <button className="companion-avatar" type="button" aria-expanded={desktopResult} aria-label={desktopHasResult ? t(desktopResult ? 'desktop.collapse' : 'desktop.reopen') : t('desktop.focus')} onClick={() => { if (desktopHasResult) { setDesktopReplyOpen(!desktopResult); setInlinePreview(null); } else input.current?.focus(); }}><CompanionPortrait phase={orbPhase} listening={voiceActive} /></button>}
+      <span className="companion-status" role="status" title={desktopQuestion}>{busy || waiting ? t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`) : desktopQuestion ? t('desktop.continue') : t('desktop.prompt')}</span>
+      <button className="companion-menu" aria-label={t('menu')} title={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1"/><circle cx="10" cy="10" r="1"/><circle cx="16" cy="10" r="1"/></svg></button>
       <button className="companion-hide" aria-label={t('desktop.hide')} title={t('desktop.hide')} onClick={() => desktopPost({ action: 'hide' })}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6 8 8m0-8-8 8" /></svg></button>
     </div>}
     {(!desktop || desktopLog) && <header className="topbar">
@@ -1067,13 +1090,27 @@ export default function App() {
       <nav aria-label={t('chatControls')}>{desktop && <button className="quiet" onClick={() => setDesktopLog(false)}>{t('desktop.back')}</button>}{renderer && <><button className="quiet" onClick={returnToDefault}>{t('backToChat')}</button><button className="icon-button" aria-label={t('files.attach')} onClick={() => fileInput.current?.click()}><Icon name="files" /></button><button className="quiet" onClick={() => void stop()}>{t('stop')}</button><button className="icon-button" aria-label={t('reset')} onClick={() => void reset()}><Icon name="reset" /></button></>}{!preview && !auth && !account && !appearance && !files && !history && !menu && !surfaces && activityControl()}{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
     </header>}
     {desktop && !desktopLog ? <>
-      {renderer ? <section className="session-surface companion-result" data-desktop-hit aria-label={renderer.title}>{renderWidget(renderer)}</section> : desktopResult && <main className="companion-result scroll-area" data-desktop-hit ref={conversationScroll.ref} {...conversationScroll.handlers}>
-        {!busy && !waiting && <div className="companion-result-heading"><button className="quiet" onClick={() => { setDesktopReplyOpen(false); setInlinePreview(null); }}>{t('desktop.collapse')}</button></div>}
-        {latestAnswer && <article className="message assistant" data-run-id={latestAnswer.run_id} data-activity-result={(latestAnswer.run_id ? runsById.get(latestAnswer.run_id)?.status : undefined) === 'complete' ? latestAnswer.run_id : undefined}><div dir="auto" data-message-id={latestAnswer.id} data-message-role="assistant"><MessageBody content={latestAnswer.content} effect={effectFor(latestAnswer.id)} /></div>{latestAnswer.attachments?.map(file => fileCard(file))}</article>}
-        {latestRun && session && <RunTrace sessionId={session} runId={latestRun} revision={snapshot.cursor} phase={snapshot.runs[0]?.phase} status={snapshot.runs[0]?.status} />}
+      {!resetting && components.filter(item => placementOf(item) === 'overlay').map(item => <div className="scene-overlay" key={`${item.id}-${item.version}`} inert={desktopTransient}>{renderWidget(item)}</div>)}
+      {renderer ? <section className="session-surface companion-result" data-desktop-hit aria-label={renderer.title}>{renderWidget(renderer)}</section> : desktopHasResult && <main className="companion-result scroll-area" hidden={!desktopResult} data-desktop-hit ref={conversationScroll.ref} {...conversationScroll.handlers}>
+        <div className="companion-result-heading"><button className="quiet" onClick={() => { setDesktopReplyOpen(false); setInlinePreview(null); }}>{t('desktop.collapse')}</button></div>
+        {desktopMessages.map(message => {
+          const run = message.run_id ? runsById.get(message.run_id) : undefined;
+          const trace = message.run_id && !tracedRuns.has(message.run_id);
+          if (trace) tracedRuns.add(message.run_id!);
+          const visible = Boolean(message.content || message.attachments?.length);
+          return <Fragment key={message.id}>
+            {message.help_reply ? <HelpReceipt reply={message.help_reply} /> : visible && <article className={`message ${message.role}`} data-run-id={message.run_id} data-activity-result={run?.status === 'complete' && lastAnswerByRun.get(message.run_id) === message.id ? message.run_id : undefined}>
+              <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}</div>
+              {message.attachments?.map(file => file.source === 'output' && canDisplayArtifact(file) ? <ArtifactResult key={file.id} file={file} selected={inlinePreview?.id === file.id} observe={inlinePreview?.id === file.id ? observeInline : undefined} /> : fileCard(file))}
+              {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
+            </article>}
+            {trace && session && <RunTrace sessionId={session} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} />}
+          </Fragment>;
+        })}
+        {snapshot.runs.filter(run => !tracedRuns.has(run.id)).map(run => session && <RunTrace key={run.id} sessionId={session} runId={run.id} revision={snapshot.cursor} phase={run.phase} status={run.status} />)}
         {latestFiles.length > 0 && <section className="output-files" aria-label={t('files.outputs')}>{latestFiles.map(file => canDisplayArtifact(file) ? <ArtifactResult key={file.id} file={file} selected={inlinePreview?.id === file.id} observe={inlinePreview?.id === file.id ? observeInline : undefined} /> : fileCard(file))}</section>}
         {inlinePreview && !latestFiles.some(file => file.id === inlinePreview.id) && <ArtifactResult file={inlinePreview} selected close={() => setInlinePreview(null)} observe={observeInline} />}
-        {!resetting && components.filter(item => !['desktop', 'presence', 'surface'].includes(placementOf(item))).map(item => renderWidget(item))}
+        {!resetting && desktopWidgets.map(item => renderWidget(item))}
         {lastError && <p className="notice" role="status">{lastError}</p>}
         <div ref={end} />
       </main>}
@@ -1159,7 +1196,7 @@ export default function App() {
     {surfaces && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setSurfaces(false); }}><section className="dialog surface-dialog" data-app-view="surfaces" role="dialog" aria-modal="true" aria-label={t('surface.all')}><div className="dialog-top"><h2>{t('surface.all')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setSurfaces(false)}>×</button></div><div className="surface-list">{snapshot.components.map(component => <div className="surface-row" key={component.id}><button className="surface-open" onClick={() => { adjustComponent(component, { hidden: false }); setSurfaces(false); }}><span>{component.title}</span><small>{t(component.view?.hidden ? 'surface.hidden' : 'surface.visible')}</small></button><ComponentControls component={component} change={view => adjustComponent(component, view)} /></div>)}</div></section></div>}
     {toast && <div className="toast" role="status">{toast}</div>}
     {Boolean(user?.developer_mode) && <ErrorBoundary panel close={() => void developer(false)}><DeveloperPanel session={session} close={() => void developer(false)} /></ErrorBoundary>}
-    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" data-app-view="menu" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items"><button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
+    {menu && <div className="overlay centered" onMouseDown={event => { if (event.target === event.currentTarget) setMenu(false); }}><section className="dialog menu-dialog" data-app-view="menu" role="dialog" aria-modal="true" aria-label={t('menu')}><div className="dialog-top"><h2>Athena</h2><button className="icon-button" aria-label={t('close')} onClick={() => setMenu(false)}>×</button></div><div className="menu-items">{desktop && <button onClick={() => { setMenu(false); navigate(null); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>{t('newChat')}</button>}<button onClick={() => { setMenu(false); user ? setHistory(true) : requestLogin(); }}><Icon name="history" />{t('history')}</button><button onClick={() => { setMenu(false); void openFiles(); }}><Icon name="files" />{t('files')}</button>{snapshot.components.length > 0 && <button onClick={() => { setMenu(false); setSurfaces(true); }}><span className="menu-glyph">◇</span>{t('surface.all')}</button>}<button onClick={() => { setMenu(false); setAppearance(true); }}><span className="menu-glyph">Aa</span>{t('appearance')}</button><button onClick={() => { setMenu(false); user ? setAccount(true) : requestLogin(); }}><Icon name="user" />{user ? t('account') : t('signIn')}</button><button disabled={resetting} onClick={() => { setMenu(false); void reset(); }}><Icon name="reset" />{t('reset')}</button></div></section></div>}
     {appearance && <div className="overlay centered"><section className="dialog" data-app-view="appearance" role="dialog" aria-modal="true" aria-label={t('appearance')}><div className="dialog-top"><h2>{t('appearance')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setAppearance(false)}>×</button></div><label htmlFor="language-choice">{t('language')}</label><select id="language-choice" value={choice} onChange={event => void changePreferences({ ui_language: event.target.value })}><option value="system">{t('systemLanguage')}</option>{languages.map(language => <option key={language.tag} value={language.tag} lang={language.tag}>{language.name}</option>)}</select>{(['ui_font', 'ui_palette'] as const).map(key => <label key={key}>{t(key === 'ui_font' ? 'appearance.font' : 'appearance.palette')}<select value={preferences[key]} onChange={event => void changePreferences({ [key]: event.target.value })}>{key === 'ui_palette' && preferences.ui_palette.startsWith('#') && <option value={preferences.ui_palette}>{preferences.ui_palette}</option>}{(key === 'ui_font' ? ['system', 'humanist', 'serif', 'mono'] as const : ['dream', 'rose', 'ocean', 'forest'] as const).map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></label>)}<label className="toggle-row"><span>{t('reduceMotion')}</span><input type="checkbox" checked={reduced} onChange={event => void changePreferences({ reduced_motion: event.target.checked ? 'reduce' : 'system' })} /></label></section></div>}
     {history && <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) setHistory(false); }}><aside className="drawer" data-app-view="history" role="dialog" aria-modal="true" aria-label={t('history')}><div className="dialog-top"><h2>{t('conversations')}</h2><button className="icon-button" aria-label={t('close')} onClick={() => setHistory(false)}>×</button></div><button className="primary wide" onClick={() => { navigate(null); setHistory(false); }}>{t('newChat')}</button><div className="session-list">{sessions.map(item => <button className={`session ${item.id === session ? 'selected' : ''}`} key={item.id} onClick={() => { navigate(item.id); setHistory(false); }}><span>{item.title === '新的事情' ? t('newChat') : item.title}</span>{item.pending > 0 && <small>•••</small>}</button>)}</div>{session && <button className="quiet wide" disabled={busy || waiting} onClick={() => void forkSession()}>{t('fork')}</button>}</aside></div>}
     {auth && <div className="overlay centered"><form className="dialog" data-app-view="authentication" role="dialog" aria-modal="true" aria-label={auth === 'login' ? t('signIn') : t('createAccount')} onSubmit={async event => {

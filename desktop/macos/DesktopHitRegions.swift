@@ -65,6 +65,7 @@ final class DesktopHitRegions {
             guard values[2] >= 0, values[3] >= 0 else { return false }
             regions.append(NSRect(x: values[0], y: values[1], width: values[2], height: values[3]))
         }
+        guard entry.regions != regions else { return true }
         entry.regions = regions; refresh(); return true
     }
     static func accepts(point: NSPoint, regions: [NSRect]?, bounds: NSRect) -> Bool {
@@ -76,10 +77,14 @@ final class DesktopHitRegions {
         for entry in entries.values {
             guard let window = entry.window, let view = window.contentView else { continue }
             // Native sheets must remain usable regardless of the document's last hit map.
-            guard window.isVisible, window.attachedSheet == nil else { window.ignoresMouseEvents = false; continue }
+            guard window.isVisible, window.attachedSheet == nil else {
+                if window.ignoresMouseEvents { window.ignoresMouseEvents = false }
+                continue
+            }
             let local = view.convert(window.convertPoint(fromScreen: pointer), from: nil)
             let point = NSPoint(x: local.x, y: view.isFlipped ? local.y : view.bounds.height - local.y)
-            window.ignoresMouseEvents = !Self.accepts(point: point, regions: entry.regions, bounds: view.bounds)
+            let ignores = !Self.accepts(point: point, regions: entry.regions, bounds: view.bounds)
+            if window.ignoresMouseEvents != ignores { window.ignoresMouseEvents = ignores }
         }
     }
 }

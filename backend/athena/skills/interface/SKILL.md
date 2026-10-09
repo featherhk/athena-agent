@@ -17,7 +17,7 @@ html 是独立页面的主体或完整 HTML，运行在隔离 iframe。内联 CS
 
 需要改变整个会话的表达方式、重新排布消息、让动画与文字共同运动或设计自己的输入区域时，用 `placement="surface"` 替换完整会话 renderer；独立停止、恢复与账户控制保留。它仍是普通版本化组件，不另造 registry 或修改核心代码。先读 `references/surface.md`，通过宿主的规范会话数据与动作桥接实现；不能用看起来像能发送的假输入框替代真实提交。
 
-Mac 桌面独立交互使用 `placement="desktop"`，先读 desktop skill 并检查实际宿主支持；它不是聊天内浮层，网页/iOS 不会把它降级成聊天卡片冒充显示。
+Mac 桌面独立交互使用 `placement="desktop"`，先读 desktop skill 并检查实际宿主支持；它不是聊天内浮层，网页/iOS 不会把它降级成聊天卡片冒充显示。Mac 上的满屏烟花、飘雪等应铺到实际桌面，不能放进聊天框、演示窗口或网页 `fullscreen`；透明范围、点击路由和性能约定见 desktop 的 surfaces 说明。
 
 界面变化服务于当前目标；普通查询不需要装饰性重排。组件默认继承当前主题变量、字体和基本按钮样式，优先使用 `var(--ink)`、`var(--surface)` 等，不叠加违和的黑盒或多层卡片。涉及自由画布、任意位置交互、文字定位标注、逐字样式、会话导航、标志或跨气泡动画时，先读 `references/bridge.md`。Athena.observe/track/interact/styleText/navigate 提供语义布局、状态和交互，不允许直接读写父页面。当前 CSP 仍不允许外部资源，不能宣称已支持外部视频或在线字体。
 

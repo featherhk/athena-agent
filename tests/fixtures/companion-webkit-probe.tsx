@@ -22,7 +22,9 @@ class Source {
   addEventListener() {} removeEventListener() {} close() { this.readyState = 2; }
 }
 window.EventSource = Source;
-let snapshot = { cursor: 1, submission_revision: 0, components: [], messages: [], runs: [], files: [], tasks: [], help_requests: [] };
+const emptySnapshot = () => ({ cursor: 1, submission_revision: 0, components: [], messages: [], runs: [], files: [], tasks: [], help_requests: [] });
+let snapshot = emptySnapshot();
+const secondSnapshot = emptySnapshot();
 const observations = [], calls = [], unexpected = [], nativePosts = [], results = {};
 const receipts = new Map(), stops = new Map();
 let failNext = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '';
@@ -34,7 +36,7 @@ const publishNative = () => dispatch({ action: 'state', scope: nativeScope, desk
 window.addEventListener('probe-native-message', event => {
   const body = event.detail; nativePosts.push(body);
   if (body.action === 'resize') window.webkit.messageHandlers.probe.postMessage({ resize: body.mode === 'expanded'
-    ? { width: 760, height: Math.min(680, Math.max(260, typeof body.height === 'number' ? body.height : 680)) }
+    ? { width: 560, height: Math.min(680, Math.max(260, typeof body.height === 'number' ? body.height : 680)) }
     : { width: 560, height: 260 } });
   if (body.action === 'observe') publishNative();
   if (body.action === 'hide') { presented = false; dispatch({ action: 'hidden' }); publishNative(); }
@@ -53,20 +55,23 @@ window.fetch = async (path, init) => {
   if (path === '/api/auth/me') value = { user: signedIn ? { id: 'probe', username: 'synthetic', developer_mode: false } : null, configured: true, has_users: true };
   else if (path === '/api/auth/login') { signedIn = true; value = { user: { id: 'probe', username: 'synthetic', developer_mode: false } }; }
   else if (path.startsWith('/api/service')) value = { configured: true };
-  else if (path === '/api/sessions') value = [{ id: 's1', title: 'Organize my documents', pending: 0 }];
+  else if (path === '/api/sessions') value = body ? { id: 's2' } : [{ id: 's1', title: 'Organize my documents', pending: 0 }, { id: 's2', title: 'Another task', pending: 0 }];
   else if (path === '/api/sessions/s1') value = structuredClone(snapshot);
+  else if (path === '/api/sessions/s2') value = structuredClone(secondSnapshot);
   else if (path.startsWith('/api/activity')) value = { owner_id: 'probe', items: [], has_more: false };
   else if (path === '/api/frontend/observation') { observations.push(body); value = { accepted: true }; }
   else if (path.endsWith('/report')) value = { accepted: true };
   else if (path.endsWith('/messages')) {
     if (failNext) { failNext = false; status = 503; value = { error: 'Synthetic service unavailable', code: 'service_unavailable' }; }
     else {
-      if (body.expected_submission_revision !== snapshot.submission_revision || !body.frontend_client_id) throw new Error('Unbound or stale submission');
-      value = { accepted: true, run_id: 'r1', status: 'queued', client_submission_id: body.client_submission_id,
-        submission_revision: snapshot.submission_revision, replayed: false };
+      const target = path.startsWith('/api/sessions/s2/') ? secondSnapshot : snapshot;
+      if (body.expected_submission_revision !== target.submission_revision || !body.frontend_client_id) throw new Error('Unbound or stale submission');
+      const run = 'r' + (receipts.size + 1), queued = target.runs.some(item => item.status === 'running');
+      value = { accepted: true, run_id: run, status: 'queued', client_submission_id: body.client_submission_id,
+        submission_revision: target.submission_revision, replayed: false };
       receipts.set(body.client_submission_id, value);
-      snapshot.messages.push({ id: 'u1', role: 'user', content: body.text, status: 'complete', run_id: 'r1' });
-      snapshot.runs = [{ id: 'r1', status: 'running', phase: 'executing' }];
+      target.messages.push({ id: 'u' + receipts.size, role: 'user', content: body.text, status: queued ? 'queued' : 'complete', run_id: run });
+      target.runs.unshift({ id: run, status: queued ? 'queued' : 'running', phase: 'executing' });
     }
   }
   else if (path.includes('/submissions/')) {
@@ -93,27 +98,54 @@ const capture = async name => {
   window.webkit.messageHandlers.probe.postMessage({ capture: name }); await captured;
 };
 const input = () => document.querySelector('.composer textarea');
+const result = () => document.querySelector('.companion-result:not([hidden])');
+const visibleMessage = id => result()?.querySelector(`[data-message-id="${id}"]`);
+const escape = (composing = false) => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true, isComposing: composing }));
 const edit = async text => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input(), text); input().dispatchEvent(new Event('input', { bubbles: true })); await delay(70); };
 const send = () => document.querySelector('.composer').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 const nativeClick = async element => { const bounds = element.getBoundingClientRect(); window.webkit.messageHandlers.probe.postMessage({ nativeClick: { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } }); await delay(100); };
 const nativeShow = () => { presented = true; dispatch({ action: 'show' }); publishNative(); };
 const inside = element => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight + 1; };
+const shellAnchors = () => Object.fromEntries(['.companion-avatar', '.composer'].map(selector => {
+  const rect = document.querySelector(selector).getBoundingClientRect();
+  return [selector, { left: rect.left, bottom: innerHeight - rect.bottom, width: rect.width, height: rect.height }];
+}));
+const sameAnchors = (before, after) => Object.keys(before).every(selector => Object.keys(before[selector]).every(axis => Math.abs(before[selector][axis] - after[selector][axis]) <= 1));
+const widgetReplies = [];
+window.addEventListener('message', event => {
+  if (event.source === document.querySelector('[data-component-id="note"] iframe')?.contentWindow && event.data?.probe === 'companion-note') widgetReplies.push(event.data);
+});
+const noteHTML = `<label>Working note<textarea aria-label="Working note">A note to retain</textarea></label><script>
+const identity = 'note-' + Math.random();
+const inspect = () => { const field=document.querySelector('textarea');parent.postMessage({probe:'companion-note',identity,text:field.value,start:field.selectionStart,end:field.selectionEnd},'*'); };
+window.addEventListener('message',event=>{if(event.data?.probeCommand==='edit'){const field=document.querySelector('textarea');field.value='Keep my selected words';field.focus();field.setSelectionRange(5,7);field.dispatchEvent(new Event('input',{bubbles:true}));inspect();}else if(event.data?.probeCommand==='inspect'){inspect();}});inspect();
+</script>`;
+const inspectWidget = async (frame, action = 'inspect') => {
+  const previous = widgetReplies.length;
+  frame.contentWindow.postMessage({ probeCommand: action }, '*');
+  await until(() => widgetReplies.length > previous, 'widget ' + action);
+  return widgetReplies.at(-1);
+};
 createRoot(document.getElementById('root'), { onUncaughtError: error => window.webkit.messageHandlers.probe.postMessage({ react_error: String(error), stack: error.stack }) }).render(<I18nProvider><App /></I18nProvider>);
 async function run() {
   try {
     await until(() => input() && innerWidth === 560, 'initial compact companion'); await delay(180);
-    check('default_has_no_header_or_chat_transcript', !document.querySelector('.topbar') && !document.querySelector('.conversation') && !document.querySelector('.companion-result') && document.querySelector('.companion-avatar'));
+    check('default_has_no_header_or_chat_transcript', !document.querySelector('.topbar') && !document.querySelector('.conversation') && !result() && document.querySelector('.companion-avatar'));
     check('compact_input_and_presence_fit', innerHeight === 260 && inside(document.querySelector('.composer')) && inside(document.querySelector('.companion-avatar')), { viewport: [innerWidth, innerHeight] });
     await capture('companion-idle');
     await edit('Keep this question through login.'); send();
-    await until(() => document.querySelector('[data-app-view="authentication"]') && innerWidth === 760 && innerHeight === 680, 'login form'); await delay(250);
+    await until(() => document.querySelector('[data-app-view="authentication"]') && innerWidth === 560, 'login form'); await delay(250);
     check('login_is_native_companion_content_and_draft_survives', inside(document.querySelector('[data-app-view="authentication"]')) && input().value === 'Keep this question through login.',
       { scroll: { window: scrollY, app: document.querySelector('.app').scrollTop, body: document.body.scrollTop, root: document.querySelector('#root').scrollTop },
         avatar: document.querySelector('.companion-avatar')?.getBoundingClientRect().toJSON(), dialog: document.querySelector('[data-app-view="authentication"]').getBoundingClientRect().toJSON() });
+    check('blocking_login_hides_background_controls_and_keeps_focus_in_dialog', getComputedStyle(document.querySelector('.companion-presence')).visibility === 'hidden'
+      && getComputedStyle(document.querySelector('.composer')).visibility === 'hidden' && document.querySelector('[data-app-view="authentication"]').contains(document.activeElement));
     await capture('companion-login');
     await nativeClick(document.querySelector('[data-app-view="authentication"] .dialog-top button'));
     await until(() => !document.querySelector('[data-app-view="authentication"]'), 'native login close');
     check('cancelling_login_preserves_unsent_question', !document.querySelector('[data-app-view="authentication"]') && input().value === 'Keep this question through login.');
+    check('cancelling_login_restores_companion_controls', getComputedStyle(document.querySelector('.companion-presence')).visibility === 'visible'
+      && getComputedStyle(document.querySelector('.composer')).visibility === 'visible' && inside(document.querySelector('.composer')));
     send(); await until(() => document.querySelector('#username'), 'login reopened');
     for (const [selector, text] of [['#username', 'synthetic'], ['#password', 'fixture-password']]) {
       const field = document.querySelector(selector); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, text); field.dispatchEvent(new Event('input', { bubbles: true }));
@@ -126,8 +158,9 @@ async function run() {
     check('hiding_keeps_draft_and_does_not_stop_or_send', input() === field && input().value === draft && !calls.some(item => item.path.endsWith('/messages') || item.path.endsWith('/stop')) && backgroundEvents > 0);
     nativeShow(); await until(() => observations.at(-1)?.foreground === true, 'shown observation'); await delay(80);
     check('recall_keeps_same_input_and_restores_focus', input() === field && input().value === draft && document.activeElement === field);
+    const compactAnchors = shellAnchors();
     send(); await until(() => receipts.size === 1 && input().value === '', 'accepted send'); emit();
-    await until(() => document.querySelector('[data-task-active="true"]') && innerWidth === 760, 'active task');
+    await until(() => document.querySelector('[data-task-active="true"]') && innerWidth === 560, 'active task');
     check('send_has_one_bound_durable_receipt', calls.filter(item => item.path.endsWith('/messages')).length === 1 && receipts.size === 1 && snapshot.messages[0].content === draft);
     await edit('Do not lose this next request.');
     await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden working');
@@ -137,16 +170,23 @@ async function run() {
     check('explicit_stop_is_distinct_and_preserves_draft', calls.filter(item => item.path.endsWith('/stop')).length === 1 && input().value === 'Do not lose this next request.');
     snapshot.runs = [{ id: 'r1', status: 'complete', phase: 'responding' }];
     snapshot.messages.push({ id: 'a1', role: 'assistant', content: 'Your files are ready.\n\n| Folder | Items |\n| --- | --- |\n| Invoices | 12 |\n| Notes | 4 |\n\nThe originals are unchanged.', status: 'complete', run_id: 'r1' }); emit();
-    await until(() => document.querySelector('.companion-result table'), 'readable result'); await delay(220);
-    check('result_uses_markdown_and_keeps_input', document.querySelectorAll('.companion-result td').length === 4 && input() === field && inside(document.querySelector('.composer')));
-    check('short_result_fits_without_full_height_blank_card', innerHeight < 680 && inside(document.querySelector('.companion-result')), { height: innerHeight });
+    await until(() => result()?.querySelector('table'), 'readable result'); await delay(220);
+    check('result_uses_markdown_and_keeps_input', result().querySelectorAll('td').length === 4 && input() === field && inside(document.querySelector('.composer')));
+    check('short_result_fits_without_full_height_blank_card', innerHeight < 680 && inside(result()), { height: innerHeight });
+    check('opening_result_keeps_avatar_and_composer_anchored', sameAnchors(compactAnchors, shellAnchors()), { before: compactAnchors, after: shellAnchors() });
     await capture('companion-result');
-    document.querySelector('.companion-result-heading button').click(); await until(() => !document.querySelector('.companion-result') && innerWidth === 560, 'put result away');
+    document.querySelector('.companion-result-heading button').click(); await until(() => !result() && innerWidth === 560, 'put result away');
     check('putting_result_away_returns_to_companion_without_erasing_it', snapshot.messages.some(item => item.id === 'a1') && input().value === 'Do not lose this next request.');
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => visibleMessage('a1'), 'avatar reopens result');
+    check('avatar_reopens_previous_result_without_new_request', document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true' && calls.filter(item => item.path.endsWith('/messages')).length === 1 && visibleMessage('u1')?.textContent === draft);
+    await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hide reading result');
+    nativeShow(); await until(() => observations.at(-1)?.foreground === true && visibleMessage('a1'), 'recall reading result');
+    check('recall_restores_reading_without_activity_feed_item', visibleMessage('u1') && visibleMessage('a1') && input() === field && input().value === 'Do not lose this next request.');
+    document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse before help');
     await nativeClick(document.querySelector('.companion-hide')); await until(() => observations.at(-1)?.foreground === false, 'hidden before help');
     snapshot.runs = [{ id: 'r1', status: 'waiting_user', phase: 'waiting' }];
     snapshot.help_requests = [{ id: 'h1', run_id: 'r1', session_id: 's1', status: 'pending', questions: [{ id: 'q1', question: 'Which month should I start with?', options: [{ label: 'October' }] }] }]; emit();
-    await delay(200); nativeShow(); await until(() => document.querySelector('.user-help') && innerWidth === 760, 'recalled pending help');
+    await delay(200); nativeShow(); await until(() => document.querySelector('.user-help') && innerWidth === 560, 'recalled pending help');
     check('hidden_question_is_visible_on_recall', document.querySelector('.user-help').textContent.includes('Which month should I start with?') && inside(document.querySelector('.composer')));
     await edit('October'); send(); await until(() => !document.querySelector('.user-help'), 'help answered');
     const answers = calls.filter(item => item.path === '/api/sessions/s1/help/h1/answer');
@@ -160,6 +200,50 @@ async function run() {
     await nativeClick(document.querySelector('[data-app-view="menu"] .dialog-top button'));
     const back = document.querySelector('.topbar nav > button'); if (back) { back.click(); await until(() => !document.querySelector('.topbar'), 'back to companion'); }
     check('history_return_preserves_same_input', input() === field && input().value === 'Do not lose this next request.');
+    await edit('How many notes should I review first?'); send(); await until(() => receipts.size === 2 && input().value === '', 'follow-up accepted'); emit();
+    await until(() => visibleMessage('u2') && visibleMessage('a1'), 'follow-up context retained');
+    check('followup_echoes_question_and_keeps_prior_answer', visibleMessage('u1')?.textContent === draft && visibleMessage('u2')?.textContent === 'How many notes should I review first?' && visibleMessage('a1')?.textContent.includes('Your files are ready.'));
+    snapshot.messages.push({ id: 'a2', role: 'assistant', content: 'Start with the four notes.', status: 'streaming', run_id: 'r2' });
+    snapshot.messages.push({ id: 'tool2', role: 'tool', content: 'INTERNAL_TOOL_RESULT_MUST_STAY_IN_ACTIVITY', status: 'complete', run_id: 'r2' }); emit();
+    await until(() => visibleMessage('a2'), 'running follow-up reply');
+    await edit('Then show the next step.'); send(); await until(() => receipts.size === 3 && input().value === '', 'next request queued'); emit();
+    await until(() => visibleMessage('u3') && snapshot.runs[0].status === 'queued', 'queued question visible');
+    check('queue_keeps_running_reply_and_ordered_conversation', [...result().querySelectorAll('[data-message-id]')].map(item => item.dataset.messageId).join(',') === 'u1,a1,u2,a2,u3' && visibleMessage('a2')?.textContent === 'Start with the four notes.' && !result().textContent.includes('INTERNAL_TOOL_RESULT_MUST_STAY_IN_ACTIVITY'));
+    check('activity_has_one_trace_per_run', result().querySelectorAll('.run-trace').length === 3);
+    const beforeStream = shellAnchors();
+    snapshot.messages.find(message => message.id === 'a2').content += '\n\n' + Array.from({ length: 12 }, (_, index) => `Note ${index + 1}: inspect the source before making a decision.`).join('\n\n'); emit();
+    await until(() => visibleMessage('a2')?.textContent.includes('Note 12:'), 'long stream reaches reading view'); await delay(180);
+    check('growing_stream_keeps_controls_fixed_and_scrolls_only_reading', sameAnchors(beforeStream, shellAnchors()) && result().scrollHeight > result().clientHeight && inside(document.querySelector('.composer')), { before: beforeStream, after: shellAnchors() });
+    snapshot.runs = snapshot.runs.map(run => ({ ...run, status: 'complete', phase: 'responding' }));
+    snapshot.messages = snapshot.messages.map(message => ({ ...message, status: 'complete' }));
+    snapshot.messages.push({ id: 'a3', role: 'assistant', content: 'Read one note, then decide what to keep.', status: 'complete', run_id: 'r3' }); emit();
+    await until(() => visibleMessage('a3'), 'queued task complete');
+    await edit('Keep this component draft too.');
+    snapshot.components = [{ id: 'note', title: 'Working note', placement: 'inline', version: 1, view_revision: 0, html: noteHTML }]; emit();
+    await until(() => document.querySelector('[data-component-id="note"] iframe') && widgetReplies.length > 0, 'inline working note');
+    const noteFrame = document.querySelector('[data-component-id="note"] iframe');
+    const editedNote = await inspectWidget(noteFrame, 'edit');
+    document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse with inline component');
+    check('collapse_hides_reading_surface_even_with_inline_component', document.querySelector('.companion-result')?.hidden && document.querySelector('[data-component-id="note"] iframe') === noteFrame && input().value === 'Keep this component draft too.');
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reopen inline component');
+    const recalledNote = await inspectWidget(noteFrame);
+    check('collapse_reopen_keeps_iframe_document_form_and_selection', document.querySelector('[data-component-id="note"] iframe') === noteFrame && recalledNote.identity === editedNote.identity && recalledNote.text === 'Keep my selected words' && recalledNote.start === 5 && recalledNote.end === 7, recalledNote);
+    snapshot.components.push({ id: 'ornament', title: 'Independent ornament', placement: 'overlay', version: 1, view_revision: 0, html: '<span>Independent ornament</span>' }); emit();
+    await until(() => document.querySelector('[data-component-id="ornament"]'), 'overlay registered');
+    check('overlay_is_outside_the_default_reading_card', !document.querySelector('[data-component-id="ornament"]').closest('.companion-result'));
+    await nativeClick(document.querySelector('.companion-menu')); await until(() => document.querySelector('[data-app-view="menu"]'), 'avatar menu');
+    check('companion_menu_exposes_history_and_account', document.querySelector('[data-app-view="menu"]').textContent.includes('Previous conversations') && document.querySelector('[data-app-view="menu"]').textContent.includes('Account'));
+    escape(); await until(() => !document.querySelector('[data-app-view="menu"]'), 'escape closes menu');
+    check('escape_closes_top_dialog_before_reading_or_native_panel', Boolean(result()) && presented);
+    input().focus(); escape(true); await delay(100);
+    check('composition_escape_does_not_dismiss_companion', Boolean(result()) && presented && input().value === 'Keep this component draft too.');
+    escape(); await until(() => !result(), 'escape closes reading');
+    check('escape_collapses_reading_before_hiding', presented && document.querySelector('[data-component-id="note"] iframe') === noteFrame);
+    escape(); await until(() => !presented, 'escape hides compact companion');
+    check('escape_hides_without_cancelling_or_losing_drafts', calls.filter(item => item.path.endsWith('/stop')).length === 1 && input().value === 'Keep this component draft too.');
+    nativeShow(); await until(() => observations.at(-1)?.foreground === true, 'recall compact companion');
+    check('recall_preserves_explicitly_collapsed_reading_state', !result() && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'false');
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => result(), 'reading restored after escape');
     snapshot.components = [{ id: 'collector', title: 'Desktop collector', placement: 'desktop', version: 1, view_revision: 0, html: '<button>Collect</button>', view: { width: 80, height: 64, x: .8, y: .2 } }]; emit();
     await until(() => nativePosts.some(item => item.action === 'scene' && item.items?.[0]?.id === 'collector') && observations.some(item => item.desktop?.components?.[0]?.id === 'collector'), 'desktop scene receipt');
     const scene = nativePosts.filter(item => item.action === 'scene' && item.items?.[0]?.id === 'collector').at(-1);
@@ -168,6 +252,15 @@ async function run() {
     await edit('Keep this failed message.'); failNext = true; send(); await until(() => document.querySelector('.composer-area .notice'), 'failed send');
     check('send_error_is_visible_and_draft_is_retained', input().value === 'Keep this failed message.' && inside(document.querySelector('.composer')) && Boolean(document.querySelector('.composer-area .notice')?.textContent));
     await capture('companion-error');
+    const oldMessages = structuredClone(snapshot.messages);
+    dispatch({ action: 'new' }); await until(() => !result() && !document.querySelector('.topbar') && !input().value && nativeScope === '', 'native new task');
+    check('new_task_clears_visible_context_without_deleting_previous_task', !document.querySelector('[data-message-id="a1"]') && !document.querySelector('.composer-area .notice') && JSON.stringify(snapshot.messages) === JSON.stringify(oldMessages) && !calls.some(item => /delete|reset/.test(item.path)));
+    await edit('Check my free disk space.'); send(); await until(() => receipts.size === 4 && input().value === '' && nativeScope === 'probe:s2', 'new task accepted');
+    check('new_task_creates_separate_session_and_keeps_old_draft', calls.filter(item => item.path === '/api/sessions').length === 1 && secondSnapshot.messages[0]?.content === 'Check my free disk space.' && snapshot.messages.length === oldMessages.length && !visibleMessage('a1'));
+    dispatch({ action: 'history' }); await until(() => document.querySelector('.session-list'), 'return old session history');
+    const previousSession = [...document.querySelectorAll('.session-list .session')].find(item => item.textContent.includes('Organize my documents'));
+    previousSession.click(); await until(() => input().value === 'Keep this failed message.' && nativeScope === 'probe:s1', 'old task draft restored');
+    check('returning_to_previous_task_restores_its_own_unsent_draft', input().value === 'Keep this failed message.' && snapshot.messages.length === oldMessages.length && secondSnapshot.messages.length === 1);
     check('no_unexpected_transport', unexpected.length === 0, unexpected);
     results.evidence = { real_backend: false, real_provider: false, native_scene_effects: 'synthetic', keyboard_mouse: 'dedicated WKWebView fixture', installed_application_touched: false };
     window.webkit.messageHandlers.probe.postMessage(results);

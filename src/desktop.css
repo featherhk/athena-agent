@@ -1,22 +1,21 @@
 /* The desktop is the canvas. Only things one can use have a material surface. */
 html[data-desktop],html[data-desktop] body,html[data-desktop] #root { background:transparent!important; }
 .app.desktop-companion { background:transparent; padding:8px 18px 14px; gap:0; overflow:hidden; height:100dvh; min-height:0; }
-.desktop-companion .companion-presence { position:relative; display:flex; flex-direction:column; align-items:center; align-self:center; flex-shrink:0; width:180px; height:162px; padding:6px 16px 10px; }
+.desktop-companion .companion-presence { position:relative; display:flex; flex-direction:column; align-items:center; align-self:center; flex-shrink:0; width:180px; height:162px; padding:6px 16px 10px; order:2; margin-top:auto; }
 .companion-avatar { display:block; padding:0; width:116px; height:128px; background:transparent; border:0; border-radius:45%; }
 .companion-avatar:focus-visible { outline:1px solid var(--accent); outline-offset:4px; }
 .companion-portrait { width:100%; height:100%; overflow:visible; }
 .companion-status { font-size:11px; line-height:20px; white-space:nowrap; letter-spacing:.025em; color:var(--ink); padding:0 8px; border-radius:12px; background:color-mix(in srgb,var(--surface) 90%,transparent); }
-.companion-hide { position:absolute; inset-inline-end:4px; top:36px; width:24px; height:24px; padding:3px; border-radius:50%; background:var(--surface); color:var(--muted); opacity:0; transition:opacity .15s; }
-.companion-presence:hover .companion-hide,.companion-presence:focus-within .companion-hide { opacity:1; }
+.companion-hide,.companion-menu { position:absolute; top:58px; width:24px; height:24px; padding:3px; border:0; border-radius:50%; background:var(--surface); color:var(--muted); opacity:.6; transition:opacity .15s; }
+.companion-hide { inset-inline-end:4px; }.companion-menu { inset-inline-start:4px; }
+.companion-menu svg { width:18px; height:18px; stroke:currentColor; fill:currentColor; }
+.companion-presence:hover .companion-hide,.companion-presence:focus-within .companion-hide,.companion-presence:hover .companion-menu,.companion-presence:focus-within .companion-menu { opacity:1; }
 .companion-hide svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; }
-.desktop-companion[data-desktop-expanded='true'] .companion-presence { height:102px; padding:0 12px 6px; }
-.desktop-companion[data-desktop-expanded='true'] .companion-avatar { width:72px; height:78px; }
 .desktop-companion .custom-presence { width:116px; height:128px; }
-.desktop-companion[data-desktop-expanded='true'] .custom-presence { width:72px; height:78px; }
 .desktop-companion .custom-presence .widget { padding:0; margin:0; border:0; background:transparent; height:100%; }
 .desktop-companion .custom-presence iframe { height:100%!important; }
 .desktop-companion .custom-presence .widget-toolbar { display:none; }
-.desktop-companion .composer-area { position:relative; padding:10px 0 0; margin-top:auto; width:100%; max-height:65%; overflow:visible; }
+.desktop-companion .composer-area { position:relative; padding:10px 0 0; margin-top:0; width:100%; max-height:65%; overflow:visible; order:3; flex-shrink:0; }
 .desktop-companion .composer-wrap { width:100%; max-width:none; }
 .desktop-companion .composer { gap:7px; padding:9px 10px 9px 13px; border-radius:23px; align-items:center; box-shadow:0 3px 14px #35293f0d; }
 .desktop-companion .composer textarea { font-size:15px; line-height:1.6; padding:7px 0; min-height:36px; max-height:96px; }
@@ -25,8 +24,11 @@ html[data-desktop],html[data-desktop] body,html[data-desktop] #root { background
 .desktop-companion .composer .attach-button { width:28px; height:34px; padding:5px; }
 .desktop-companion .composer .attach-button svg { width:16px; height:16px; }
 .desktop-companion .send-actions { gap:5px; }
-.desktop-companion .companion-result { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:var(--tint) transparent; background:var(--surface); border:1px solid var(--tint); border-radius:16px; padding:20px 24px; }
+.desktop-companion .companion-result { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:var(--tint) transparent; background:var(--surface); border:1px solid var(--tint); border-radius:12px; padding:16px 22px; order:1; margin-bottom:10px; }
+.desktop-companion .companion-result[hidden] { display:none!important; }
 .desktop-companion .companion-result .message { width:100%; max-width:none; margin:0 0 10px; font-size:16px; line-height:1.8; }
+.desktop-companion .companion-result .message.user { padding:12px 0 8px; background:none; border:0; border-bottom:1px solid var(--tint); border-radius:0; color:var(--muted); font-size:13px; }
+.desktop-companion .companion-result .message.assistant { padding:2px 0 10px; }
 .desktop-companion .companion-result .run-trace { margin-bottom:0; }
 .desktop-companion .companion-result .output-files { margin-top:10px; }
 .desktop-companion .companion-result.session-surface { padding:0; }
@@ -34,10 +36,16 @@ html[data-desktop],html[data-desktop] body,html[data-desktop] #root { background
 .desktop-companion .topbar .brand { display:none; }
 .desktop-companion .topbar nav { width:100%; justify-content:space-between; }
 .desktop-companion .workspace-layout { background:var(--surface); border:1px solid var(--tint); border-top:0; border-radius:0 0 12px 12px; overflow:hidden; }
+.desktop-companion .topbar,.desktop-companion .workspace-layout { order:1; }
+.desktop-companion .scene-overlay { inset:0; z-index:0; }
+.desktop-companion > .companion-presence,.desktop-companion > .composer-area,.desktop-companion > .companion-result { position:relative; z-index:1; }
 .desktop-companion .workspace-layout .agent-presence,.desktop-companion .greeting { display:none; }
 .desktop-companion .conversation { padding:18px 24px; }
 .desktop-companion .overlay { background:transparent; padding:10px; }
 .desktop-companion .dialog { max-height:calc(100dvh - 28px); box-shadow:0 4px 18px #251b3020; }
+.desktop-companion[data-desktop-modal='true'] > .companion-presence,
+.desktop-companion[data-desktop-modal='true'] > .companion-result,
+.desktop-companion[data-desktop-modal='true'] > .composer-area { visibility:hidden; }
 .desktop-companion .drawer { border-radius:14px; border:1px solid var(--tint); box-shadow:0 4px 18px #251b3020; }
 .desktop-companion .notice { margin:8px 0; }
 .desktop-companion .voice-control.active { bottom:calc(100% + 10px); }

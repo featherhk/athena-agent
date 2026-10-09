@@ -311,5 +311,7 @@
   "desktop.hide": "Athena 숨기기",
   "desktop.back": "기록 접기",
   "surface.desktop": "데스크탑",
-  "desktop.collapse": "접기"
+  "desktop.collapse": "접기",
+  "desktop.reopen": "대화 보기",
+  "desktop.continue": "이어서 이야기하기"
 }

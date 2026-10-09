@@ -311,5 +311,7 @@
   "desktop.hide": "Masquer Athena",
   "desktop.back": "Fermer l’historique",
   "surface.desktop": "Bureau",
-  "desktop.collapse": "Replier"
+  "desktop.collapse": "Replier",
+  "desktop.reopen": "Voir cette conversation",
+  "desktop.continue": "Continuer cette tâche"
 }

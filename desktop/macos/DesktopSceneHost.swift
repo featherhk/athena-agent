@@ -26,6 +26,8 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     private var sessionID: String?
     private var origin: URL?
     private var presented = false
+    private var publishedState: [String: Any]?
+    private var publishedScope: String?
     var onState: (([String: Any]) -> Void)?
     var onInteraction: (([String: Any]) -> Void)?
 
@@ -117,10 +119,26 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     private func position(_ item: Item) {
-        if let screen = screen(item.spec) { item.panel.setFrame(frame(item.spec, screen: screen), display: false) }
-        if presented && item.spec["hidden"] as? Bool != true { item.panel.orderFront(nil) }
-        else { item.panel.orderOut(nil) }
-        DesktopHitRegions.shared.visibilityChanged()
+        var changed = false
+        if let screen = screen(item.spec) {
+            let target = frame(item.spec, screen: screen)
+            if item.panel.frame != target {
+                item.panel.setFrame(target, display: false)
+                changed = true
+                #if ATHENA_NATIVE_CHECKS
+                fixtureFrameChanges += 1
+                #endif
+            }
+        }
+        let visible = presented && item.spec["hidden"] as? Bool != true
+        if item.panel.isVisible != visible {
+            if visible { item.panel.orderFront(nil) } else { item.panel.orderOut(nil) }
+            changed = true
+            #if ATHENA_NATIVE_CHECKS
+            fixtureOrderChanges += 1
+            #endif
+        }
+        if changed { DesktopHitRegions.shared.visibilityChanged() }
     }
 
     private func load(_ item: Item) {
@@ -141,6 +159,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     func setPresented(_ value: Bool) {
+        guard presented != value else { return }
         presented = value
         for item in items.values { position(item) }
         publish()
@@ -160,7 +179,18 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
     private func bound(_ web: WKWebView?) -> Item? { items.values.first { $0.web === web } }
     private func fail(_ item: Item, code: String) { item.state = "failed"; item.error = code; publish() }
-    private func publish() { onState?(observation()) }
+    private func publish() {
+        let state = observation()
+        // State reports can prompt frontend reconciliation; only actual native changes
+        // should cross the WebKit bridge, or the two renderers can keep waking each other.
+        if publishedScope == scope, let publishedState, NSDictionary(dictionary: publishedState).isEqual(to: state) { return }
+        publishedState = state
+        publishedScope = scope
+        #if ATHENA_NATIVE_CHECKS
+        fixtureStateReports += 1
+        #endif
+        onState?(state)
+    }
 
     func observation() -> [String: Any] {
         let top = NSScreen.screens.first?.frame.maxY ?? 0
@@ -232,6 +262,9 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
 
     #if ATHENA_NATIVE_CHECKS
+    private(set) var fixtureFrameChanges = 0
+    private(set) var fixtureOrderChanges = 0
+    private(set) var fixtureStateReports = 0
     func fixtureWebView(id: String) -> WKWebView? { items[id]?.web }
     #endif
 }

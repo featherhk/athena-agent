@@ -36,7 +36,8 @@
     "history": "Conversations",
     "stop_work": "Stop Current Work",
     "shortcut_unavailable": "Option–Space is in use. Open Athena from this menu.",
-    "account_settings": "Account and Settings"
+    "account_settings": "Account and Settings",
+    "new_chat": "New Conversation"
   },
   "zh-Hans": {
     "starting": "Athena 正在醒来…",
@@ -75,7 +76,8 @@
     "history": "对话记录",
     "stop_work": "停止当前任务",
     "shortcut_unavailable": "Option–空格已被占用。请从此菜单打开 Athena。",
-    "account_settings": "账户与设置"
+    "account_settings": "账户与设置",
+    "new_chat": "新对话"
   },
   "zh-Hant": {
     "starting": "Athena 正在醒來…",
@@ -114,7 +116,8 @@
     "history": "對話記錄",
     "stop_work": "停止目前任務",
     "shortcut_unavailable": "Option–空白鍵已被佔用。請從此選單開啟 Athena。",
-    "account_settings": "帳戶與設定"
+    "account_settings": "帳戶與設定",
+    "new_chat": "新對話"
   },
   "ja": {
     "starting": "Athena を起動しています…",
@@ -153,7 +156,8 @@
     "history": "会話履歴",
     "stop_work": "現在の作業を停止",
     "shortcut_unavailable": "Option–スペースは使用中です。このメニューから Athena を開いてください。",
-    "account_settings": "アカウントと設定"
+    "account_settings": "アカウントと設定",
+    "new_chat": "新しい会話"
   },
   "ar": {
     "starting": "جارٍ بدء Athena…",
@@ -192,7 +196,8 @@
     "history": "المحادثات",
     "stop_work": "إيقاف المهمة الحالية",
     "shortcut_unavailable": "الاختصار Option–Space قيد الاستخدام. افتح Athena من هذه القائمة.",
-    "account_settings": "الحساب والإعدادات"
+    "account_settings": "الحساب والإعدادات",
+    "new_chat": "محادثة جديدة"
   },
   "es": {
     "starting": "Athena está despertando…",
@@ -231,7 +236,8 @@
     "history": "Conversaciones",
     "stop_work": "Detener la tarea actual",
     "shortcut_unavailable": "Opción–Espacio está en uso. Abre Athena desde este menú.",
-    "account_settings": "Cuenta y ajustes"
+    "account_settings": "Cuenta y ajustes",
+    "new_chat": "Nueva conversación"
   },
   "fr": {
     "starting": "Athena se réveille…",
@@ -270,7 +276,8 @@
     "history": "Conversations",
     "stop_work": "Arrêter la tâche en cours",
     "shortcut_unavailable": "Option–Espace est déjà utilisé. Ouvrez Athena depuis ce menu.",
-    "account_settings": "Compte et réglages"
+    "account_settings": "Compte et réglages",
+    "new_chat": "Nouvelle conversation"
   },
   "ko": {
     "starting": "Athena를 시작하고 있어요…",
@@ -309,7 +316,8 @@
     "history": "대화 기록",
     "stop_work": "현재 작업 중지",
     "shortcut_unavailable": "Option–Space가 사용 중이에요. 이 메뉴에서 Athena를 열어 주세요.",
-    "account_settings": "계정 및 설정"
+    "account_settings": "계정 및 설정",
+    "new_chat": "새 대화"
   },
   "pt": {
     "starting": "Athena está a despertar…",
@@ -348,6 +356,7 @@
     "history": "Conversas",
     "stop_work": "Parar a tarefa atual",
     "shortcut_unavailable": "Option–Espaço já está em uso. Abra Athena por este menu.",
-    "account_settings": "Conta e definições"
+    "account_settings": "Conta e definições",
+    "new_chat": "Nova conversa"
   }
 }

@@ -14,7 +14,8 @@ enum DesktopCompanion {
     static func frame(mode: Mode, visibleFrame: NSRect, anchor: NSPoint? = nil, preferredHeight: CGFloat? = nil) -> NSRect {
         let margin: CGFloat = 12
         let area = visibleFrame.insetBy(dx: min(margin, visibleFrame.width / 4), dy: min(margin, visibleFrame.height / 4))
-        let desired = mode == .compact ? NSSize(width: 560, height: 260) : NSSize(width: 760, height: min(680, max(260, preferredHeight ?? 680)))
+        // Answers grow upwards. The input must not slide sideways when a reply arrives.
+        let desired = NSSize(width: 560, height: mode == .compact ? 260 : min(680, max(260, preferredHeight ?? 680)))
         let size = NSSize(width: min(desired.width, area.width), height: min(desired.height, area.height))
         let center = anchor?.x ?? area.midX
         let bottom = anchor?.y ?? min(area.minY + 72, area.maxY - size.height)
@@ -52,6 +53,25 @@ enum DesktopCompanion {
       value: Object.freeze({version: 1}), writable: false, configurable: false
     });
     """
+
+    /// Small, private native diagnostics; never include text, URLs or account details.
+    static func recordDiagnostic(_ event: String, fields: [String: Int]) {
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Athena Desktop")
+        let url = directory.appendingPathComponent("companion-native.log")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            if let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64, size > 256_000 {
+                try FileManager.default.removeItem(at: url)
+            }
+        } catch { /* A missing log is normal on first launch. */ }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        guard let bytes = try? JSONSerialization.data(withJSONObject: ["time": Date().timeIntervalSince1970, "event": event, "values": fields]),
+              let handle = try? FileHandle(forWritingTo: url) else { return }
+        defer { try? handle.close() }
+        do { try handle.seekToEnd(); try handle.write(contentsOf: bytes + Data([10])) } catch { }
+    }
 }
 
 /// Carbon hot keys do not need Accessibility permission or monitor ordinary keystrokes.
@@ -60,27 +80,43 @@ final class CompanionShortcut {
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private let action: @MainActor () -> Void
+    private let diagnostic: @MainActor (String, [String: Int]) -> Void
     private(set) var registrationStatus: OSStatus = OSStatus(eventNotHandledErr)
+    private(set) var deliveryCount = 0
 
-    init(action: @escaping @MainActor () -> Void) { self.action = action }
+    init(diagnostic: @escaping @MainActor (String, [String: Int]) -> Void = { _, _ in }, action: @escaping @MainActor () -> Void) {
+        self.diagnostic = diagnostic
+        self.action = action
+    }
 
-    @discardableResult
-    func register() -> Bool {
-        guard hotKey == nil else { return true }
+    private func installHandler() -> OSStatus {
+        guard handler == nil else { return noErr }
         var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let result = InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
+        return InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
             guard let event, let context else { return OSStatus(eventNotHandledErr) }
             var identifier = EventHotKeyID()
             guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                     nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier) == noErr,
                   identifier.signature == 0x4154484E, identifier.id == 1 else { return OSStatus(eventNotHandledErr) }
             let shortcut = Unmanaged<CompanionShortcut>.fromOpaque(context).takeUnretainedValue()
-            MainActor.assumeIsolated { shortcut.action() }
+            MainActor.assumeIsolated {
+                shortcut.deliveryCount += 1
+                shortcut.diagnostic("shortcut-delivered", ["count": shortcut.deliveryCount])
+                shortcut.action()
+            }
             return noErr
         }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), &handler)
+    }
+
+    @discardableResult
+    func register() -> Bool {
+        guard hotKey == nil else { return true }
+        let result = installHandler()
+        diagnostic("shortcut-handler-registration", ["status": Int(result)])
         guard result == noErr else { registrationStatus = result; return false }
         registrationStatus = RegisterEventHotKey(UInt32(kVK_Space), UInt32(optionKey),
             EventHotKeyID(signature: 0x4154484E, id: 1), GetApplicationEventTarget(), 0, &hotKey)
+        diagnostic("shortcut-registration", ["status": Int(registrationStatus), "key_code": Int(kVK_Space), "modifiers": Int(optionKey)])
         if registrationStatus != noErr { unregister() }
         return registrationStatus == noErr
     }
@@ -89,4 +125,9 @@ final class CompanionShortcut {
         if let hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
         if let handler { RemoveEventHandler(handler); self.handler = nil }
     }
+
+    #if ATHENA_NATIVE_CHECKS
+    // Test actual Carbon dispatch without synthesizing global keyboard input or taking a user's shortcut.
+    func fixtureInstallHandler() -> OSStatus { installHandler() }
+    #endif
 }

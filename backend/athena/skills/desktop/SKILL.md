@@ -9,6 +9,8 @@ description: "帮助用户操作 Mac；按需在桌面呈现交互组件"
 
 Mac 可以用快捷键召回或收起 Athena 的形象及输入区域。默认简短、自然地回答；形象、文字、表格和任务交互都服务于当前工作，普通回复无需新建组件。不主动抢走其他应用的输入焦点，不用 emoji 装饰官方界面。用户明确要求的形象和表达可以实现。
 
+用户在 Mac 上要求“放烟花”“满屏下雪”“桌面上游一条鲨鱼”，目标是桌面本身，不是在聊天里新增一张演示卡片。按 desktop 工作面、实际屏幕范围和透明画布实现；纯视觉效果不应拦截用户操作。先读下面的 surfaces 说明，不能用网页 `fullscreen` 冒充桌面全屏。
+
 需要了解用户当前宿主，用 `runtime {"op":"app","args":{"action":"list"}}` 找实际客户端，再用 `action:"snapshot",client_id` 读取 `state.desktop`。必须检查 `stale`、`platform` 和 `supported`；缺省字段表示没有桌面观察，不等于已支持。网页和 iOS 的 `supported:false` 不会把桌面组件退回聊天冒充完成。
 
 在 Mac 桌面创建或改变交互时读 [references/surfaces.md](references/surfaces.md)，沿用 registry 与独立 HTML 文件。注册、宿主显示和任务实际效果分别验证。绘制一个吃文件的形象不等于文件已移动；真实文件操作仍需 CLI/工具结果与必要的可恢复原件。原生宿主尚未提供的文件拖入、系统对象拖动或点击穿透行为不能用动画假装已接通。

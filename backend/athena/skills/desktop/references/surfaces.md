@@ -22,6 +22,16 @@ HTML 使用现有隔离组件约定，CSS/SVG/Canvas 可以定义形象和交互
 
 `hidden:true` 收起，`hidden:false` 展开；`null` 清除某项覆盖。变更源码保留布局和收起状态。`screen_id` 只适用于 desktop；改回网页位置时必须清除它，并清除或调整不满足网页尺寸范围的宽高。源码注册的位置也受现有布局覆盖影响，先检查有效 placement。布局有版本冲突时先重新读，不盲目重发。
 
+## 整片桌面上的效果
+
+烟花、飘雪等没有窗口边界的表达用 `placement:"desktop"`，不要用 `inline`、`workspace` 或网页 `fullscreen`。先读当前 Mac 的 `screens`，将组件布局的 `screen_id` 设为实际屏幕，`x:0,y:0,width:visible_frame.width,height:visible_frame.height`；每个屏幕需要独立组件时才分别注册。当前宿主约束到 `visible_frame`，不覆盖菜单栏和 Dock；不能声称覆盖了未观察到的屏幕或系统保留区域。
+
+页面是透明画布：`html,body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent }`，Canvas/SVG 铺满自己的视口。不加背景、标题栏、边框、卡片和说明面板。纯视觉效果调用 `Athena.interact([])` 声明没有交互区域；需要按钮或可抓取形象时只声明实际区域，不用整个屏幕的透明矩形抢走点击。该桥接名称是 `interact`；没有 `interactions` 方法。它请求宿主指针路由，不能把脚本执行成功当成已验证其他应用可点击。
+
+动画由组件本地执行，模型不逐帧更新。用单个 `requestAnimationFrame` 循环及经过的时间更新位置；限定持续时间、粒子数与绘制分辨率，预绘重复形状，避免每粒子每帧重复生成复杂路径或全屏滤镜。默认短暂播放后清空并停止调度；遵循 `prefers-reduced-motion`，页面隐藏时暂停并重置时间基准，切回不补跑后台积累的帧。普通动画不需要 `Athena.observe`、反复注册、轮询回执或后台模型任务。
+
+验收同时看请求的范围和效果：期望的 screen_id、尺寸与实际 `state.desktop.components[].rect` 对上，版本已 mounted 且 visible；还需实际观察画面是否透明、流畅，是否挡住输入与恢复。缺少这些证据时只说已保存或已加载，不把小框内的动画说成“桌面全屏烟花”。
+
 ## 验证与恢复
 
 `registry read/list` 的 `render.scope:"document_load_only"` 只说明 HTML 文档的加载观察；它不证明原生桌面窗口已显示。`app snapshot` 中的 `desktop_registration` 是期望的组件和布局；`state.desktop.components` 才是实际宿主报告：

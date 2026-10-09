@@ -311,5 +311,7 @@
   "desktop.hide": "إخفاء Athena",
   "desktop.back": "إغلاق السجل",
   "surface.desktop": "سطح المكتب",
-  "desktop.collapse": "طيّ"
+  "desktop.collapse": "طيّ",
+  "desktop.reopen": "عرض المحادثة",
+  "desktop.continue": "متابعة هذا الأمر"
 }

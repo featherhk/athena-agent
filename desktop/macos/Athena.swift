@@ -32,17 +32,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         makeMenu()
         makeWindow()
         makeStatusItem()
-        shortcut = CompanionShortcut { [weak self] in self?.toggleCompanion() }
+        shortcut = CompanionShortcut(diagnostic: DesktopCompanion.recordDiagnostic) { [weak self] in self?.toggleCompanion() }
         if shortcut?.register() == false {
             let unavailable = NSMenuItem(title: tr("shortcut_unavailable"), action: nil, keyEquivalent: "")
             unavailable.isEnabled = false
             statusItem?.menu?.insertItem(unavailable, at: 1)
         }
-        if !UserDefaults.standard.bool(forKey: "AthenaCompanionHasLaunched") {
-            showCompanion()
-            UserDefaults.standard.set(true, forKey: "AthenaCompanionHasLaunched")
-        }
+        presentOnLaunch()
         startBackend()
+    }
+
+    private func presentOnLaunch() {
+        // An explicit launch must have a visible result, including after Quit.
+        // Recalling Athena never opens the microphone.
+        showCompanion()
     }
 
     private func makeWindow() {
@@ -111,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let menu = NSMenu()
         let toggle = menu.addItem(withTitle: tr("toggle_companion"), action: #selector(toggleCompanion), keyEquivalent: "")
         toggle.target = self
+        menu.addItem(withTitle: tr("new_chat"), action: #selector(newConversation), keyEquivalent: "n").target = self
         menu.addItem(withTitle: tr("history"), action: #selector(showHistory), keyEquivalent: "").target = self
         menu.addItem(withTitle: tr("account_settings"), action: #selector(showSettings), keyEquivalent: "").target = self
         menu.addItem(withTitle: tr("stop_work"), action: #selector(stopWork), keyEquivalent: "").target = self
@@ -128,7 +132,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let screen = window.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         let anchor = NSPoint(x: window.frame.midX, y: window.frame.minY)
-        window.setFrame(DesktopCompanion.frame(mode: mode, visibleFrame: visible, anchor: anchor, preferredHeight: companionHeight), display: true)
+        let frame = DesktopCompanion.frame(mode: mode, visibleFrame: visible, anchor: anchor, preferredHeight: companionHeight)
+        guard window.frame != frame else { return }
+        window.setFrame(frame, display: true)
+        #if ATHENA_NATIVE_CHECKS
+        fixtureFrameChanges += 1
+        #endif
     }
 
     @objc private func toggleCompanion() {
@@ -163,12 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         scene.setPresented(false)
     }
 
-    @objc private func showHistory() { resizeCompanion(.expanded); showCompanion(action: "history") }
-    @objc private func showSettings() { resizeCompanion(.expanded); showCompanion(action: "menu") }
+    @objc private func showHistory() { showCompanion(action: "history") }
+    @objc private func showSettings() { showCompanion(action: "menu") }
+    @objc private func newConversation() { showCompanion(action: "new") }
     @objc private func stopWork() { sendDesktopAction("stop") }
 
     private func sendDesktopAction(_ action: String) {
-        guard ["show", "history", "menu", "stop", "reset", "hidden"].contains(action), isLocal(webView.url) else { return }
+        guard ["show", "new", "history", "menu", "stop", "reset", "hidden"].contains(action), isLocal(webView.url) else { return }
         sendDesktopDetail(["action": action])
     }
 
@@ -221,6 +231,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editItem.submenu = edit; bar.addItem(editItem)
         let viewItem = NSMenuItem(title: tr("view"), action: nil, keyEquivalent: "")
         let view = NSMenu(title: tr("view"))
+        view.addItem(withTitle: tr("toggle_companion"), action: #selector(toggleCompanion), keyEquivalent: "").target = self
+        view.addItem(withTitle: tr("new_chat"), action: #selector(newConversation), keyEquivalent: "n").target = self
+        view.addItem(withTitle: tr("history"), action: #selector(showHistory), keyEquivalent: "").target = self
+        view.addItem(withTitle: tr("account_settings"), action: #selector(showSettings), keyEquivalent: ",").target = self
+        view.addItem(withTitle: tr("stop_work"), action: #selector(stopWork), keyEquivalent: ".").target = self
+        view.addItem(.separator())
         view.addItem(withTitle: tr("reload"), action: #selector(reload), keyEquivalent: "r").target = self
         let recover = view.addItem(withTitle: tr("recover_window"), action: #selector(offerRecovery), keyEquivalent: "r")
         recover.keyEquivalentModifierMask = [.command, .shift]
@@ -511,6 +527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     #if ATHENA_NATIVE_CHECKS
+    private(set) var fixtureFrameChanges = 0
     var fixtureScene: DesktopSceneHost { scene }
     var fixtureStatusMenu: NSMenu? { statusItem?.menu }
     /// Separate test executable only; it never starts a backend or opens an account.
@@ -519,7 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         makeMenu()
         makeWindow()
         makeStatusItem()
-        showCompanion()
+        presentOnLaunch()
         localURL = home
         reload()
         return (window, webView)

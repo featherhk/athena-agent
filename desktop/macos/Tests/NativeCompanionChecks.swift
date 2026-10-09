@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 @preconcurrency import WebKit
 
 @MainActor
@@ -21,6 +22,8 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--fixture-origin"), index + 1 < arguments.count,
               let url = URL(string: arguments[index + 1]) else { exit(2) }
+        // An existing preference from a previous launch must not make an explicit launch invisible.
+        UserDefaults.standard.set(true, forKey: "AthenaCompanionHasLaunched")
         host = AppDelegate(); (window, web) = host.configureNativeFixture(url)
         if let index = arguments.firstIndex(of: "--download-destination"), index + 1 < arguments.count {
             host.fixtureDownloadDestination = URL(fileURLWithPath: arguments[index + 1])
@@ -60,6 +63,8 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             let marker = await js("window.__ATHENA_DESKTOP__.version") as? Int
             try require(marker == 1 && window is NSPanel && !window.isOpaque && !window.styleMask.contains(.titled), "Companion was not a trusted transparent panel")
             passed.append("transparent-panel-native-marker-no-titlebar")
+            try require(window.isVisible, "Explicit launch hid the companion after a previous launch")
+            passed.append("explicit-launch-is-visible-after-a-previous-launch")
             let constrained = DesktopCompanion.frame(mode: .expanded, visibleFrame: NSRect(x: -400, y: -300, width: 320, height: 240))
             try require(NSRect(x: -400, y: -300, width: 320, height: 240).contains(constrained), "Panel exceeded small secondary screen")
             try require(!DesktopCompanion.trusts(frameIsMain: false, frameURL: origin, origin: origin, currentURL: origin), "Subframe trusted")
@@ -72,13 +77,21 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
                 collision.unregister(); shortcut.unregister(); hotkeyStatus = "registered-conflict-detected-released"
             } else { hotkeyStatus = "existing-system-conflict-detected-\(shortcut.registrationStatus)"; shortcut.unregister() }
             passed.append("global-hotkey-registration-or-explicit-conflict")
+            try checkHotkeyDelivery()
+            let compactFrame = window.frame
             await send(["action": "resize", "mode": "expanded"])
-            try await wait { self.window.frame.width > 560 }
+            try await wait { self.window.frame.height > compactFrame.height }
+            try require(window.frame.width == compactFrame.width && window.frame.minX == compactFrame.minX
+                && window.frame.minY == compactFrame.minY, "Expanding moved or widened the input's native surface")
             await send(["action": "resize", "mode": "expanded", "height": 360])
-            try await wait { self.window.frame.width == 760 && self.window.frame.height == 360 }
+            try await wait { self.window.frame.width == 560 && self.window.frame.height == 360 }
+            let resized = host.fixtureFrameChanges
+            _ = await js("for(let i=0;i<30;i++)webkit.messageHandlers.athenaDesktop.postMessage({action:'resize',mode:'expanded',height:360})")
+            try await Task.sleep(for: .milliseconds(150))
+            try require(host.fixtureFrameChanges == resized, "Unchanged frontend measurements repeatedly resized the native window")
             await send(["action": "resize", "mode": "compact"])
-            try await wait { self.window.frame.width == 560 }
-            passed.append("trusted-mainframe-resize")
+            try await wait { self.window.frame == compactFrame }
+            passed.append("expand-collapse-preserves-input-width-bottom-anchor-and-skips-unchanged-frames")
             _ = await js("window.frameMarker=null;addEventListener('message',e=>{if(e.data && 'marker' in e.data)frameMarker=e.data.marker});let f=document.createElement('iframe');f.sandbox='allow-scripts';f.srcdoc=\"<script>parent.postMessage({marker:!!window.__ATHENA_DESKTOP__},'*');webkit.messageHandlers.athenaDesktop.postMessage({action:'hide'});<\\/script>\";document.body.append(f)")
             try await wait { await self.js("window.frameMarker === false") as? Bool == true }
             try require(window.isVisible, "Sandbox iframe hid native panel")
@@ -113,12 +126,25 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             try invoke("showSettings")
             try await wait { await self.js("events.some(e=>e.action==='menu')") as? Bool == true }
             passed.append("native-stop-history-settings-route-to-main-document")
+            try await checkMainMenu()
             var item: [String: Any] = ["id": "specimen", "version": 1, "view_revision": 1, "title": "Offline widget", "x": 1.0, "y": 1.0, "width": 320, "height": 240]
             await send(["action": "scene", "scope": "owner:session_a", "session_id": "session_a", "items": [item]])
             try await wait { self.components().first?["state"] as? String == "mounted" }
             guard let child = host.fixtureScene.fixtureWebView(id: "specimen") else { throw NSError(domain: "fixture", code: 4) }
             let rect = components().first?["rect"] as? [String: CGFloat]
             try require(rect?["width"] == 320 && rect?["height"] == 240, "Wrong native component dimensions")
+            let frameChanges = host.fixtureScene.fixtureFrameChanges
+            let orderChanges = host.fixtureScene.fixtureOrderChanges
+            let stateReports = host.fixtureScene.fixtureStateReports
+            for _ in 0..<30 {
+                host.fixtureScene.reconcile(["scope": "owner:session_a", "session_id": "session_a", "items": [item]], origin: origin)
+                host.fixtureScene.setPresented(true)
+            }
+            try require(host.fixtureScene.fixtureFrameChanges == frameChanges
+                && host.fixtureScene.fixtureOrderChanges == orderChanges
+                && host.fixtureScene.fixtureStateReports == stateReports,
+                "Unchanged scene repeatedly resized, raised or reported its panels")
+            passed.append("unchanged-scene-keeps-window-order-frame-and-bridge-quiet")
             _ = await js("window.proof=83", in: child)
             item["view_revision"] = 2; item["x"] = 0.0
             await send(["action": "scene", "scope": "owner:session_a", "session_id": "session_a", "items": [item]])
@@ -167,8 +193,21 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             await send(["action": "scene", "scope": "", "session_id": "", "items": []])
             try await wait { self.components().isEmpty }
             passed.append("signout-empty-scene-removes-old-account-panels")
+            // A screen-sized visual is a distinct native surface, not clipped to the companion.
+            item["width"] = 16384; item["height"] = 16384
             await send(["action": "scene", "scope": "owner:session_a", "session_id": "session_a", "items": [item]])
-            try await wait { self.components().count == 1 }
+            try await wait { self.components().first?["state"] as? String == "mounted" }
+            guard let full = components().first, let screenID = full["screen_id"] as? String,
+                  let screens = host.fixtureScene.observation()["screens"] as? [[String: Any]],
+                  let area = screens.first(where: { $0["id"] as? String == screenID })?["visible_frame"] as? [String: CGFloat],
+                  let actual = full["rect"] as? [String: CGFloat], let canvas = host.fixtureScene.fixtureWebView(id: "specimen") else {
+                throw NSError(domain: "macOS companion acceptance", code: 7, userInfo: [NSLocalizedDescriptionKey: "Missing full-screen native surface"])
+            }
+            try require(actual["width"] == area["width"] && actual["height"] == area["height"] && actual["x"] == 0 && actual["y"] == 0,
+                        "Screen-sized component was clipped to the conversation panel")
+            await send(["action": "hitRegions", "regions": []], in: canvas)
+            try await wait { canvas.window?.ignoresMouseEvents == true }
+            passed.append("screen-sized-surface-covers-desktop-work-area-and-empty-hit-map-passes-input")
             try invoke("offerRecovery")
             try await wait { self.window.attachedSheet != nil }
             window.endSheet(window.attachedSheet!, returnCode: .alertFirstButtonReturn)
@@ -176,6 +215,47 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             passed.append("native-reset-closes-scene-and-loads-default-without-mutation")
             finish(nil)
         } catch { finish(error) }
+    }
+    private func checkMainMenu() async throws {
+        let menus = NSApp.mainMenu?.items.compactMap(\.submenu) ?? []
+        guard let view = menus.first(where: { $0.items.contains(where: { $0.action.map(NSStringFromSelector) == "reload" }) }) else {
+            throw NSError(domain: "macOS companion acceptance", code: 5, userInfo: [NSLocalizedDescriptionKey: "Missing native View menu"])
+        }
+        for action in ["toggleCompanion", "showHistory", "showSettings", "stopWork", "offerRecovery"] {
+            try require(view.items.contains(where: { $0.action.map(NSStringFromSelector) == action }), "View menu cannot perform " + action)
+        }
+        guard let new = view.items.first(where: { $0.action.map(NSStringFromSelector) == "newConversation" }) else {
+            throw NSError(domain: "macOS companion acceptance", code: 6, userInfo: [NSLocalizedDescriptionKey: "Missing new-conversation action"])
+        }
+        try require(new.keyEquivalent == "n" && new.keyEquivalentModifierMask == .command, "New conversation is not available through Command-N")
+        NSApp.sendAction(new.action!, to: new.target, from: new)
+        try await wait { await self.js("events.filter(e=>e.action==='new').length === 1") as? Bool == true }
+        let draft = await js("document.getElementById('draft').value") as? String
+        try require(draft == "Keep my draft", "Native new conversation mutated the draft before the frontend accepted it")
+        passed.append("view-menu-controls-and-command-n-deliver-one-new-conversation-event")
+    }
+    private func checkHotkeyDelivery() throws {
+        var actions = 0
+        var diagnostics: [(String, [String: Int])] = []
+        let shortcut = CompanionShortcut(diagnostic: { diagnostics.append(($0, $1)) }) { actions += 1 }
+        try require(shortcut.fixtureInstallHandler() == noErr, "Could not install isolated shortcut event handler")
+        defer { shortcut.unregister() }
+        func dispatch(_ id: UInt32) throws -> OSStatus {
+            var event: EventRef?
+            try require(CreateEvent(nil, OSType(kEventClassKeyboard), UInt32(kEventHotKeyPressed), 0, 0, &event) == noErr && event != nil,
+                        "Could not create isolated Carbon event")
+            defer { ReleaseEvent(event!) }
+            var identifier = EventHotKeyID(signature: 0x4154484E, id: id)
+            try require(SetEventParameter(event!, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                MemoryLayout<EventHotKeyID>.size, &identifier) == noErr, "Could not set isolated shortcut identity")
+            return SendEventToEventTarget(event!, GetApplicationEventTarget())
+        }
+        _ = try dispatch(999)
+        try require(actions == 0 && shortcut.deliveryCount == 0 && diagnostics.isEmpty, "Unrelated shortcut event triggered Athena")
+        let delivered = try dispatch(1)
+        try require(delivered == noErr && actions == 1 && shortcut.deliveryCount == 1
+            && diagnostics.last?.0 == "shortcut-delivered" && diagnostics.last?.1["count"] == 1, "Shortcut event did not reach its action or local diagnostics")
+        passed.append("carbon-handler-delivers-matching-event-once-with-local-diagnostics")
     }
     private func closeAndReopen() async throws {
         // Guard the old invalid-window crash during Close followed by Reopen.

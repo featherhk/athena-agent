@@ -311,5 +311,7 @@
   "desktop.hide": "隱藏 Athena",
   "desktop.back": "收起紀錄",
   "surface.desktop": "桌面",
-  "desktop.collapse": "收起"
+  "desktop.collapse": "收起",
+  "desktop.reopen": "查看這段對話",
+  "desktop.continue": "繼續這件事"
 }

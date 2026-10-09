@@ -311,5 +311,7 @@
   "desktop.hide": "Ocultar Athena",
   "desktop.back": "Cerrar el historial",
   "surface.desktop": "Escritorio",
-  "desktop.collapse": "Ocultar"
+  "desktop.collapse": "Ocultar",
+  "desktop.reopen": "Ver esta conversación",
+  "desktop.continue": "Continuar esta tarea"
 }
