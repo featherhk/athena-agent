@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { DraftStore } from '../src/draft-store.ts';
+import { DesktopTransitionFence } from '../src/desktop-transition.ts';
 import { HelpDraftStore } from '../src/help-drafts.ts';
 import { SubmissionBarrier } from '../src/submission-barrier.ts';
 import { SubmissionIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected } from '../src/submission-intents.ts';
@@ -26,9 +27,9 @@ const declares = (node, names) => ts.isVariableStatement(node) && node.declarati
 const lifecycle = app.body.statements.slice(app.body.statements.findIndex(node => declares(node, ['rendererIdentity'])),
   app.body.statements.findIndex(node => declares(node, ['actualSurface'])) + 1)
   .filter(node => !declares(node, ['rendererIdentity', 'rendererActivation', 'rendererRevision'])).map(node => node.getText(source)).join('\n');
-const compiled = ts.transpileModule(`function bind({user,session,renderer,rendererKey,snapshot,orbPhase,locale,reduced,sending,uploading,resetting,text,attached,help,activeRendererActivation}) {
+const compiled = ts.transpileModule(`function bind({user,session,renderer,rendererKey,snapshot,orbPhase,locale,reduced,sending,uploading,resetting,text,attached,help,activeRendererActivation,ready=true,resumeReady=true}) {
   ${variable('helpDraftScope')}
-  ${['currentGuard', 'submissionScope', 'showDraft', 'editDraft', 'acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'invalidateActions', 'stop', 'openFiles', 'returnToDefault'].map(fn).join('\n')}
+  ${['currentGuard', 'submissionGuard', 'submissionScope', 'showDraft', 'editDraft', 'acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'invalidateActions', 'stop', 'openFiles', 'returnToDefault'].map(fn).join('\n')}
   ${variable('surfaceScope')}
   ${variable('surfaceHost')}
   return surfaceHost;
@@ -74,7 +75,8 @@ function fixture() {
   let layoutTransport = async () => {};
   let fileTransport = async () => new Response(JSON.stringify({ kind: 'text', content: 'File content', truncated: false }));
   const surfaceFileSnapshot = { current: state.snapshot };
-  const env = { drafts, helpDrafts, uiScope, rendererIdentity, rendererRevision, rendererActivation, submissions, VoiceSubmissionError, VoiceSubmissionReceipt, SubmissionSourceError,
+  const desktopTransition = { current: new DesktopTransitionFence() };
+  const env = { desktopTransition, desktopResume: { current: null }, drafts, helpDrafts, uiScope, rendererIdentity, rendererRevision, rendererActivation, submissions, VoiceSubmissionError, VoiceSubmissionReceipt, SubmissionSourceError,
     intents, reconcilingIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected, frontendRequest,
     AbortController, crypto: globalThis.crypto, refreshIntents() {},
     SurfaceError, messagePage, scopeGuard, selectedSurface, dismissSurfaces, surfacesDismissed, surfaceFailed, findSurfaceFile, surfaceFileSnapshot,
@@ -96,7 +98,7 @@ function fixture() {
     requestLogin() { errors.push('login'); }, t: value => value, errorMessage: value => value,
   };
   const context = vm.createContext(env); vm.runInContext(compiled, context);
-  return { state, uiScope, rendererIdentity, rendererRevision, rendererActivation, drafts, calls, views, errors,
+  return { state, desktopTransition, uiScope, rendererIdentity, rendererRevision, rendererActivation, drafts, calls, views, errors,
     receipt: (runId, index = 0) => receipt(calls.filter(call => call.path.endsWith('/messages'))[index].body, runId),
     render: () => { surfaceFileSnapshot.current = state.snapshot; return context.bind({ ...state, attached: [...state.attached], activeRendererActivation: rendererActivation.current }); },
     selected: () => context.selection(state),
@@ -389,4 +391,13 @@ test('an ordinary layout update does not create a new iframe activation or disca
   assert.equal(f.observation().state, 'mounted'); assert.equal(f.rendererActivation.current, activation);
   f.health(key, 1, 'failed'); assert.equal(f.selected(), undefined);
   assert.equal(f.state.rendererHealth[key].view_revision, 1);
+});
+
+test('generated surface cannot replace a draft or send new work during final desktop persistence', async () => {
+  const f = fixture(), draft = f.draft({ text: 'Final saved words', attached: [file('kept')] }), host = f.render();
+  f.desktopTransition.current.begin('logout');
+  await rejects(host.call('writeDraft', { text: 'Too late', expected_revision: draft.revision }), 'surface_closed');
+  await rejects(host.call('request', { action: 'send', expected_revision: draft.revision }), 'not_sent');
+  assert.deepEqual(f.drafts.current.read('alice', 'travel'), draft);
+  assert.equal(f.calls.length, 0);
 });

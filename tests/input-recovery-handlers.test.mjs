@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { HelpDraftStore } from '../src/help-drafts.ts';
 import { DraftStore } from '../src/draft-store.ts';
+import { DesktopTransitionFence } from '../src/desktop-transition.ts';
 import { SubmissionBarrier } from '../src/submission-barrier.ts';
 import { SubmissionIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected } from '../src/submission-intents.ts';
 import { frontendRequest } from '../src/frontend-request.ts';
@@ -19,9 +20,9 @@ const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../src/App.t
 const app = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'App');
 const functionSource = name => app.body.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(source);
 const variableSource = name => app.body.statements.find(node => ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => declaration.name.getText(source) === name)).getText(source);
-const compiled = ts.transpileModule(`function bind({ user, session, help, sending, uploading, attached, text, resetting }) {
+const compiled = ts.transpileModule(`function bind({ user, session, help, sending, uploading, attached, text, resetting, ready = true, resumeReady = true }) {
   ${['helpDraftScope', 'helpAnswers', 'voiceQuestion'].map(variableSource).join('\n')}
-  ${['acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'submitVoice', 'answerHelp', 'upload', 'invalidateActions', 'stop'].map(functionSource).join('\n')}
+  ${['submissionGuard', 'acceptSubmission', 'reconcileSubmission', 'submissionRevision', 'reconcileStop', 'stopSession', 'submit', 'submitVoice', 'answerHelp', 'upload', 'invalidateActions', 'stop'].map(functionSource).join('\n')}
   return { submit, submitVoice, answerHelp, upload, stop, voiceQuestion, helpAnswers };
 }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 
@@ -49,7 +50,9 @@ function fixture() {
   let prepare = async (_, client) => client;
   let uploadTransport = async (_, init) => ({ ok: true, json: async () => file(init.body.name) });
   const fileInput = { current: { value: '' } }, authEpoch = { current: 1 };
+  const desktopTransition = { current: new DesktopTransitionFence() }, uploadPending = { current: 0 };
   const environment = {
+    desktopTransition, uploadPending, desktopResume: { current: null },
     helpDrafts, drafts, submissions, uiScope, fileInput, authEpoch, VoiceSubmissionError, VoiceSubmissionReceipt, SubmissionSourceError,
     intents, reconcilingIntents, submissionBody, readSubmissionReceipt, readSubmissionLookup, readStopReceipt, submissionRejected, frontendRequest,
     AbortController, crypto: globalThis.crypto, refreshIntents() {},
@@ -67,7 +70,7 @@ function fixture() {
     requestLogin() { errors.push('login'); }, t: key => key, errorMessage: code => code,
   };
   const context = vm.createContext(environment); vm.runInContext(compiled, context);
-  return { state, calls, ordinary, errors, uploads, fileInput, uiScope, drafts, navigations,
+  return { state, calls, ordinary, errors, uploads, fileInput, uiScope, drafts, navigations, desktopTransition, uploadPending,
     receipt: (runId, index = 0) => receipt(ordinary[index], runId),
     render: () => context.bind({ ...state, attached: [...state.attached] }),
     draft: value => { const saved = drafts.current.write(state.user.id, state.session, value); environment.showDraft(saved); return saved; },
@@ -348,3 +351,17 @@ for (const entry of ['single-question composer', 'help form', 'completed spoken 
     assert.equal(f.state.sending, false);
   });
 }
+
+test('desktop finalization fence blocks new typed spoken and upload entry points while fixed Stop remains available', async () => {
+  const f = fixture(); f.switch('alice', 'travel', null);
+  const original = f.draft({ text: 'Keep this during Quit', attached: [file('kept')] });
+  const ticket = f.desktopTransition.current.begin('quit');
+  await f.render().submit();
+  await assert.rejects(f.render().submitVoice('Late speech'), error => error.delivery === 'not_sent');
+  await f.render().upload([{ name: 'late.md', size: 1 }]);
+  assert.equal(f.calls.length, 0); assert.equal(f.uploads.length, 0); assert.equal(f.uploadPending.current, 0);
+  assert.deepEqual(f.drafts.current.read('alice', 'travel'), original);
+  await f.render().stop();
+  assert.equal(f.calls.length, 1); assert.ok(f.calls[0].path.endsWith('/stop'));
+  f.desktopTransition.current.release(ticket);
+});
