@@ -75,10 +75,13 @@ export function FilePreview(props: FilePreviewProps) {
   // A fresh load owns its state and receipts. Stable snapshots keep this same
   // child; changed bytes cannot inherit an old iframe/image's late load event.
   const identity = JSON.stringify([file.id, file.preview_url, file.content_revision ?? file.size ?? null]);
-  return <FilePreviewContent key={identity} {...props} />;
+  const [retry, setRetry] = useState({ identity, attempt: 0 });
+  const attempt = retry.identity === identity ? retry.attempt : 0;
+  return <FilePreviewContent key={`${identity}:${attempt}`} {...props} attempt={attempt}
+    retry={() => setRetry(previous => ({ identity, attempt: previous.identity === identity ? previous.attempt + 1 : 1 }))} />;
 }
 
-function FilePreviewContent({ file, onClose, onObservation }: FilePreviewProps) {
+function FilePreviewContent({ file, onClose, onObservation, attempt, retry }: FilePreviewProps & { attempt: number; retry: () => void }) {
   const { t } = useI18n();
   const [preview, setPreview] = useState<Preview | null>(null);
   const [failed, setFailed] = useState(false);
@@ -87,7 +90,10 @@ function FilePreviewContent({ file, onClose, onObservation }: FilePreviewProps) 
   const currentFile = useRef(file.id); currentFile.current = file.id;
   const loadedFile = useRef<string | null>(null);
   const [mediaReady, setMediaReady] = useState(false);
-  const revisionQuery = file.content_revision ? `?revision=${encodeURIComponent(file.content_revision)}` : '';
+  const query = new URLSearchParams();
+  if (file.content_revision) query.set('revision', file.content_revision);
+  if (attempt) query.set('retry', String(attempt));
+  const revisionQuery = query.size ? `?${query}` : '';
   function mediaLoaded(id: string, success: boolean) {
     if (currentFile.current !== id || loadedFile.current !== id) return;
     if (success) setMediaReady(true); else setFailed(true);
@@ -116,7 +122,9 @@ function FilePreviewContent({ file, onClose, onObservation }: FilePreviewProps) 
       {onClose && <button className="icon-button" type="button" onClick={onClose} aria-label={t('files.close')}>×</button>}
     </div></header>
     {!preview && !failed && <p role="status" className="empty-note">{t('files.loading')}</p>}
-    {(failed || preview?.kind === 'unsupported') && <p className="empty-note">{t('files.unavailable')}</p>}
+    {(failed || preview?.kind === 'unsupported') && <p className="empty-note" role="status">{t('files.unavailable')}
+      {failed && <button className="quiet" type="button" onClick={retry}>{t('retry')}</button>}
+    </p>}
     {preview?.kind === 'markdown' && <MarkdownContent content={preview.content} />}
     {preview?.kind === 'text' && <pre className="file-text-preview">{preview.content}</pre>}
     {preview?.kind === 'html' && <iframe className="file-html-preview" sandbox="" referrerPolicy="no-referrer" title={file.name} onLoad={() => mediaLoaded(file.id, true)} onError={() => mediaLoaded(file.id, false)}

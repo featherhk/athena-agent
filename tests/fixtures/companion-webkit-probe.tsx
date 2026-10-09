@@ -28,7 +28,9 @@ const secondSnapshot = emptySnapshot();
 const observations = [], calls = [], unexpected = [], nativePosts = [], results = {};
 const receipts = new Map(), stops = new Map();
 const appActions = new Map(), actionReceipts = new Map(), previewRequests = [];
-let failNext = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '';
+const resumeEntries = { 'athena-session:probe': 's1' };
+let resumeSequence = 0;
+let failNext = false, failNextPreview = false, presented = true, nativeComponents = [], backgroundEvents = 0, signedIn = false, nativeScope = '';
 window.addEventListener('athena:background', () => backgroundEvents++);
 const dispatch = detail => window.dispatchEvent(new CustomEvent('athena:desktop', { detail }));
 const nativeState = () => ({ platform: 'macos', supported: true, presented,
@@ -55,6 +57,11 @@ window.fetch = async (path, init) => {
   let value, status = 200;
   if (path === '/api/auth/me') value = { user: signedIn ? { id: 'probe', username: 'synthetic', developer_mode: false } : null, configured: true, has_users: true };
   else if (path === '/api/auth/login') { signedIn = true; value = { user: { id: 'probe', username: 'synthetic', developer_mode: false } }; }
+  else if (path === '/api/desktop/resume/claim') { resumeSequence = 0; value = { writer: body.writer, sequence: 0, entries: { ...resumeEntries } }; }
+  else if (path === '/api/desktop/resume/save') {
+    for (const [key, entry] of Object.entries(body.changes)) { if (entry === null) delete resumeEntries[key]; else resumeEntries[key] = entry; }
+    resumeSequence = body.sequence; value = { writer: body.writer, sequence: resumeSequence };
+  }
   else if (path.startsWith('/api/service')) value = { configured: true };
   else if (path === '/api/sessions') value = body ? { id: 's2' } : [{ id: 's1', title: 'Organize my documents', pending: 0 }, { id: 's2', title: 'Another task', pending: 0 }];
   else if (path === '/api/sessions/s1') value = structuredClone(snapshot);
@@ -68,8 +75,16 @@ window.fetch = async (path, init) => {
     const id = path.split('/').at(-2); actionReceipts.set(id, body); value = { completed: true };
   }
   else if (path.startsWith('/api/files/report/preview')) {
-    previewRequests.push(path); value = { kind: 'markdown', content: path.includes('revision=revision-two') ? '# Updated notes\nCanonical file revision.' : '# Original notes\nInitial file revision.', truncated: false };
+    previewRequests.push(path);
+    if (failNextPreview) { failNextPreview = false; status = 503; value = { error: 'Synthetic preview unavailable' }; }
+    else value = { kind: 'markdown', content: path.includes('revision=revision-three') ? '# Recovered notes\nPreview recovered in place.' : path.includes('revision=revision-two') ? '# Updated notes\nCanonical file revision.' : '# Original notes\nInitial file revision.', truncated: false };
   }
+  else if (path === '/api/sessions/s1/components/reader/view') {
+    const component = snapshot.components.find(item => item.id === 'reader');
+    component.view = { ...component.view, ...body.view }; component.view_revision++;
+    value = { version: component.version, view: component.view, view_revision: component.view_revision }; setTimeout(emit, 0);
+  }
+  else if (path === '/api/reset') { snapshot.components = []; value = { ok: true }; setTimeout(emit, 0); }
   else if (path.endsWith('/report')) value = { accepted: true };
   else if (path.endsWith('/messages')) {
     if (failNext) { failNext = false; status = 503; value = { error: 'Synthetic service unavailable', code: 'service_unavailable' }; }
@@ -222,7 +237,9 @@ async function run() {
     await edit('Do not lose this next request.');
     dispatch({ action: 'history' }); await until(() => document.querySelector('[data-app-view="history"]'), 'history');
     check('history_is_reachable_without_replacing_input', document.querySelector('.session-list')?.textContent.includes('Organize my documents') && input() === field);
-    await nativeClick(document.querySelector('[data-app-view="history"] .dialog-top button'));
+    await nativeClick(document.querySelector('.session-list .session.selected')); await delay(250);
+    check('selecting_current_history_keeps_completed_reply_and_unsent_draft', !document.querySelector('[data-app-view="history"]') && visibleMessage('a1')?.textContent.includes('Your files are ready.')
+      && input() === field && input().value === 'Do not lose this next request.');
     dispatch({ action: 'menu' }); await until(() => document.querySelector('[data-app-view="menu"]'), 'menu');
     check('menu_retains_account_and_recovery', document.querySelector('[data-app-view="menu"]')?.textContent.includes('Account') && document.querySelector('[data-app-view="menu"]')?.textContent.includes('Reset'));
     await nativeClick(document.querySelector('[data-app-view="menu"] .dialog-top button'));
@@ -295,6 +312,14 @@ async function run() {
     await until(() => result()?.textContent.includes('Canonical file revision.'), 'canonical attachment file update');
     check('attached_preview_uses_current_canonical_file_revision', previewRequests.at(-1) === '/api/files/report/preview?revision=revision-two' && result().querySelectorAll('.file-preview[aria-label="Notes summary.md"]').length === 1
       && !result().textContent.includes('Initial file revision.') && snapshot.messages.find(message => message.id === 'a3').attachments[0].content_revision === 'revision-one');
+    failNextPreview = true; snapshot.files = [{ ...file, content_revision: 'revision-three' }]; emit();
+    await until(() => result()?.querySelector('.file-preview .empty-note button'), 'failed file preview retry');
+    const previewContainer = result().querySelector('.artifact-result'), beforeRetry = previewRequests.length;
+    await delay(100); await nativeClick(result().querySelector('.file-preview .empty-note button'));
+    await until(() => result()?.textContent.includes('Preview recovered in place.'), 'retried inline preview');
+    check('file_preview_retry_recovers_in_place_without_reopening_chat', result().querySelector('.artifact-result') === previewContainer
+      && previewRequests.length === beforeRetry + 1 && previewRequests.at(-1) === '/api/files/report/preview?revision=revision-three&retry=1'
+      && result().querySelectorAll('.file-preview').length === 1 && input().value === 'Keep this component draft too.');
     await edit('Keep this failed message.'); failNext = true; send(); await until(() => document.querySelector('.composer-area .notice'), 'failed send');
     check('send_error_is_visible_and_draft_is_retained', input().value === 'Keep this failed message.' && inside(document.querySelector('.composer')) && Boolean(document.querySelector('.composer-area .notice')?.textContent));
     await capture('companion-error');
@@ -307,6 +332,24 @@ async function run() {
     const previousSession = [...document.querySelectorAll('.session-list .session')].find(item => item.textContent.includes('Organize my documents'));
     previousSession.click(); await until(() => input().value === 'Keep this failed message.' && nativeScope === 'probe:s1', 'old task draft restored');
     check('returning_to_previous_task_restores_its_own_unsent_draft', input().value === 'Keep this failed message.' && snapshot.messages.length === oldMessages.length && secondSnapshot.messages.length === 1);
+    snapshot.components = [{ id: 'reader', title: 'Custom reader without recovery controls', placement: 'surface', version: 1, view_revision: 0,
+      html: '<main><h1>Read my document</h1><p>This generated surface has no stop, reset or navigation controls.</p></main>' }];
+    snapshot.runs.unshift({ id: 'surface-run', status: 'running', phase: 'executing' }); emit();
+    await until(() => document.querySelector('.companion-surface-controls') && document.querySelector('[data-component-id="reader"] iframe'), 'custom surface recovery controls'); await delay(180);
+    const controls = document.querySelector('.companion-surface-controls'), controlButtons = [...controls.querySelectorAll('button')];
+    check('custom_surface_keeps_visible_trusted_recovery_outside_generated_frame', controlButtons.length === 3 && controlButtons.every(inside)
+      && controls.parentElement.classList.contains('desktop-companion') && !document.querySelector('.topbar') && nativePosts.filter(item => item.action === 'hitRegions').at(-1).regions.some(region => Math.abs(region.y - controls.getBoundingClientRect().y) < 1 && region.width > 500));
+    const stopsBeforeSurface = stops.size;
+    await nativeClick(controlButtons[1]); await until(() => stops.size === stopsBeforeSurface + 1, 'trusted surface Stop');
+    check('custom_surface_stop_reaches_backend_without_frame_cooperation', snapshot.runs.every(run => run.status === 'interrupted') && Boolean(document.querySelector('[data-component-id="reader"] iframe')));
+    await nativeClick(controlButtons[0]); await until(() => input() && !document.querySelector('.companion-surface-controls'), 'return from generated surface');
+    check('trusted_return_restores_chat_and_unsent_draft', input().value === 'Keep this failed message.' && visibleMessage('a1') && snapshot.components[0].view.hidden);
+    snapshot.components[0] = { ...snapshot.components[0], version: 2, view: { hidden: false } }; emit();
+    await until(() => document.querySelector('.companion-surface-controls'), 'replacement custom surface');
+    const messagesBeforeReset = JSON.stringify(snapshot.messages), filesBeforeReset = JSON.stringify(snapshot.files);
+    await nativeClick(document.querySelector('.companion-surface-controls button:last-child')); await until(() => !document.querySelector('.companion-surface-controls') && input(), 'trusted reset');
+    check('trusted_surface_reset_preserves_chat_files_and_draft', calls.filter(item => item.path === '/api/reset').length === 1 && snapshot.components.length === 0
+      && JSON.stringify(snapshot.messages) === messagesBeforeReset && JSON.stringify(snapshot.files) === filesBeforeReset && input().value === 'Keep this failed message.');
     check('no_unexpected_transport', unexpected.length === 0, unexpected);
     results.evidence = { real_backend: false, real_provider: false, native_scene_effects: 'synthetic', keyboard_mouse: 'dedicated WKWebView fixture', installed_application_touched: false };
     window.webkit.messageHandlers.probe.postMessage(results);

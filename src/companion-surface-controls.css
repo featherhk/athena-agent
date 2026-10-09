@@ -1,0 +1,8 @@
+.desktop-companion > .companion-surface-controls {
+  display:flex; align-items:center; gap:4px; flex-shrink:0; order:1;
+  position:relative; z-index:2; padding:5px 8px; background:var(--surface);
+  border:1px solid var(--tint); border-radius:12px; margin-bottom:6px;
+}
+.companion-surface-controls .quiet { min-height:32px; font-size:12px; }
+.companion-surface-controls .quiet:first-child { margin-inline-end:auto; }
+.desktop-companion[data-desktop-modal='true'] > .companion-surface-controls { visibility:hidden; }

@@ -132,3 +132,90 @@ test('an image artifact forwards revision changes without replacing its containi
     assert.equal(page.host.querySelector('dialog'), null);
   } finally { await page.close(); }
 });
+
+test('a failed inline document can be retried in place without reopening the conversation', async () => {
+  const page = await fixture(), requests = [], receipts = [];
+  globalThis.fetch = async url => {
+    requests.push(url);
+    return requests.length === 1 ? { ok: false, status: 503 } : result('# Available again');
+  };
+  const observe = value => receipts.push(value);
+  try {
+    await page.render(h(ArtifactResult, { file: file(), selected: true, observe }));
+    const artifact = page.host.querySelector('.artifact-result');
+    assert.equal(receipts.at(-1).status, 'failed');
+    for (let index = 0; index < 3; index++) await page.render(h(ArtifactResult, { file: file(), selected: true, observe }));
+    assert.equal(requests.length, 1, 'chat updates never automatically repeat the failed request');
+    await fire([...artifact.querySelectorAll('button')].find(button => button.textContent === 'retry'), 'click');
+    assert.equal(page.host.querySelector('.artifact-result'), artifact);
+    assert.equal(artifact.querySelector('article').textContent, '# Available again');
+    assert.deepEqual(requests, ['/api/files/result/preview?revision=s1-first', '/api/files/result/preview?revision=s1-first&retry=1']);
+    assert.deepEqual(receipts.map(value => value.status), ['loading', 'failed', 'loading', 'ready']);
+    assert.equal(artifact.querySelector('a[download]').getAttribute('href'), '/api/files/result/content?download=1');
+    assert.equal(page.host.querySelector('dialog'), null);
+  } finally { await page.close(); }
+});
+
+test('retrying failed image ignores late media events from the previous attempt', async () => {
+  const page = await fixture(), receipts = [], signals = [];
+  globalThis.fetch = async (_url, options) => {
+    signals.push(options.signal);
+    return { ok: true, json: async () => ({ kind: 'image', url: '/api/files/result/content' }) };
+  };
+  try {
+    await page.render(h(FilePreview, { file: file(), onObservation: value => receipts.push(value) }));
+    const oldMedia = page.host.querySelector('img');
+    await fire(oldMedia, 'error');
+    assert.equal(receipts.at(-1).status, 'failed');
+    await fire([...page.host.querySelectorAll('button')].find(button => button.textContent === 'retry'), 'click');
+    const current = page.host.querySelector('img');
+    assert.notEqual(current, oldMedia);
+    assert.equal(signals[0].aborted, true);
+    assert.equal(signals[1].aborted, false);
+    assert.equal(current.getAttribute('src'), '/api/files/result/content?revision=s1-first&retry=1');
+    await fire(oldMedia, 'load'); await fire(oldMedia, 'error');
+    assert.equal(receipts.at(-1).status, 'loading');
+    await fire(current, 'load');
+    assert.equal(receipts.at(-1).status, 'ready');
+  } finally { await page.close(); }
+});
+
+test('a pending retry cannot overwrite a changed revision or report after unmount', async () => {
+  const page = await fixture(), requests = [], receipts = [], pending = [];
+  globalThis.fetch = (url, options) => {
+    requests.push({ url, signal: options.signal });
+    if (requests.length === 1) return Promise.resolve({ ok: false, status: 503 });
+    return new Promise(resolve => pending.push(resolve));
+  };
+  try {
+    await page.render(h(FilePreview, { file: file(), onObservation: value => receipts.push(value) }));
+    await fire([...page.host.querySelectorAll('button')].find(button => button.textContent === 'retry'), 'click');
+    await page.render(h(FilePreview, { file: file({ content_revision: 's1-second' }), onObservation: value => receipts.push(value) }));
+    assert.equal(requests[1].signal.aborted, true);
+    assert.equal(requests[2].url, '/api/files/result/preview?revision=s1-second', 'another revision starts a fresh attempt');
+    await act(async () => pending[1](result('# Current revision')));
+    const count = receipts.length;
+    await act(async () => pending[0](result('# Stale retried revision')));
+    assert.equal(page.host.querySelector('article').textContent, '# Current revision');
+    assert.equal(receipts.length, count);
+    await page.render(h(FilePreview, { file: file({ content_revision: 's1-third' }), onObservation: value => receipts.push(value) }));
+    await page.render(null);
+    assert.equal(requests[3].signal.aborted, true);
+    const afterUnmount = receipts.length;
+    await act(async () => pending[2](result('# Unmounted')));
+    assert.equal(receipts.length, afterUnmount);
+    assert.equal(page.host.textContent, '');
+  } finally { await page.close(); }
+});
+
+test('an unsupported format keeps its original download without offering a futile retry', async () => {
+  const page = await fixture(); let requests = 0;
+  globalThis.fetch = async () => { requests++; return { ok: true, json: async () => ({ kind: 'unsupported' }) }; };
+  try {
+    await page.render(h(FilePreview, { file: file() }));
+    assert.match(page.host.textContent, /files.unavailable/);
+    assert.ok(page.host.querySelector('a[download]'));
+    assert.equal(page.host.querySelector('button'), null);
+    assert.equal(requests, 1);
+  } finally { await page.close(); }
+});
