@@ -79,6 +79,7 @@ window.fetch = async (path, init) => {
     if (failNextPreview) { failNextPreview = false; status = 503; value = { error: 'Synthetic preview unavailable' }; }
     else value = { kind: 'markdown', content: path.includes('revision=revision-three') ? '# Recovered notes\nPreview recovered in place.' : path.includes('revision=revision-two') ? '# Updated notes\nCanonical file revision.' : '# Original notes\nInitial file revision.', truncated: false };
   }
+  else if (path.startsWith('/api/files/provided-invoice/preview')) value = { kind: 'markdown', content: '# Selected invoice\nKeep this attachment accessible.', truncated: false };
   else if (path === '/api/sessions/s1/components/reader/view') {
     const component = snapshot.components.find(item => item.id === 'reader');
     component.view = { ...component.view, ...body.view }; component.view_revision++;
@@ -110,6 +111,11 @@ window.fetch = async (path, init) => {
   }
   else if (path === '/api/sessions/s1/help/h1/answer') { value = { id: 'h1', status: 'answered' }; snapshot.help_requests = []; snapshot.runs = [{ id: 'r1', status: 'complete', phase: 'responding' }]; setTimeout(emit, 0); }
   else if (path.includes('/stops/')) { const id = path.split('/').at(-1); value = stops.has(id) ? { ...stops.get(id), found: true } : { found: false, client_stop_id: id }; }
+  else if (path === '/api/sessions/s1/runs/reminder-run/trace?after=0&limit=50') {
+    const trigger = snapshot.messages.find(item => item.id === 'reminder-trigger');
+    value = { run: { status: 'complete' }, entries: [{ ...trigger, seq: 1, created_at: '2026-10-09', content_chars: trigger.content.length,
+      reasoning: '', reasoning_chars: 0, tool_calls: '', tool_calls_chars: 0 }], total: 1, next_after: 1, has_more: false };
+  }
   else if (path.includes('/trace')) value = { run: snapshot.runs[0] || { status: 'complete' }, entries: [], total: 0, next_after: 0, has_more: false };
   else if (path === '/api/voice/status') value = { asr: false, tts: false };
   else { unexpected.push(path); value = {}; }
@@ -366,6 +372,31 @@ async function run() {
     await nativeClick(document.querySelector('.companion-surface-controls button:last-child')); await until(() => !document.querySelector('.companion-surface-controls') && input(), 'trusted reset');
     check('trusted_surface_reset_preserves_chat_files_and_draft', calls.filter(item => item.path === '/api/reset').length === 1 && snapshot.components.length === 0
       && JSON.stringify(snapshot.messages) === messagesBeforeReset && JSON.stringify(snapshot.files) === filesBeforeReset && input().value === 'Keep this failed message.');
+    const reminderTrigger = '[已登记任务到期：Water the plants；任务 ID private-timer-id，第 2 次。请按之前登记的要求执行。]';
+    snapshot.runs.unshift({ id: 'reminder-run', status: 'complete', phase: 'responding' });
+    snapshot.messages.push({ id: 'reminder-trigger', role: 'user', content: reminderTrigger, status: 'complete', run_id: 'reminder-run',
+      origin: { kind: 'task', trigger: 'time', task_id: 'private-timer-id', title: 'Water the plants', occurrence: 2 } },
+      { id: 'reminder-answer', role: 'assistant', content: 'It is time to water the plants.', status: 'complete', run_id: 'reminder-run' }); emit();
+    await until(() => visibleMessage('reminder-answer'), 'scheduled reminder displayed');
+    const reminderTrace = [...result().querySelectorAll('.run-trace')].find(trace => trace.querySelector('summary').textContent.includes('Water the plants'));
+    check('reminder_uses_human_title_without_injected_instruction_in_default_view', reminderTrace && !reminderTrace.open
+      && !visibleMessage('reminder-trigger') && !result().textContent.includes('private-timer-id') && !result().textContent.includes('请按之前登记')
+      && document.querySelector('.companion-status').title === 'Water the plants' && snapshot.messages.find(item => item.id === 'reminder-trigger').content === reminderTrigger);
+    reminderTrace.querySelector('summary').click(); await until(() => reminderTrace.textContent.includes('private-timer-id'), 'original reminder trace');
+    check('original_reminder_trigger_remains_inspectable_in_explicit_activity', reminderTrace.open && reminderTrace.textContent.includes(reminderTrigger));
+    reminderTrace.querySelector('summary').click();
+    snapshot.messages.push({ id: 'delegated-result', role: 'user', content: 'INTERNAL_DELEGATED_RESULT_INSTRUCTIONS', status: 'complete',
+      origin: { kind: 'agent_results', wait_id: 'wait-one', agents: [{ id: 'child-one', title: 'Review the quote', status: 'complete', session_id: 'child-session', run_id: 'child-run' }] } },
+      { id: 'help-reply', role: 'user', content: 'Use this invoice.', status: 'complete',
+        help_reply: { id: 'answered-help', reason: 'Choose an invoice', items: [{ id: 'invoice-choice', question: 'Which invoice?', answer: 'This one' }] },
+        attachments: [{ ...file, id: 'provided-invoice', source: 'output', name: 'Invoice.md', content_url: '/api/files/provided-invoice/content', preview_url: '/api/files/provided-invoice/preview' }] }); emit();
+    await until(() => result()?.querySelector('.agent-receipt') && result()?.querySelector('.help-response-files'), 'delegation and help receipts');
+    check('delegation_and_help_use_receipts_without_losing_provided_files', !visibleMessage('delegated-result') && !result().textContent.includes('INTERNAL_DELEGATED_RESULT_INSTRUCTIONS')
+      && result().querySelector('.agent-receipt').textContent.includes('Review the quote') && result().querySelector('.help-response-files').textContent.includes('Invoice.md')
+      && result().querySelector('.help-receipt').textContent.includes('This one') && !result().textContent.includes('private-timer-id'));
+    result().querySelector('.help-response-files .attachment-open').click(); await until(() => result()?.textContent.includes('Keep this attachment accessible.'), 'help attachment preview');
+    check('help_provided_output_file_can_still_open_its_inline_preview', result().querySelectorAll('.file-preview[aria-label="Invoice.md"]').length === 1
+      && result().querySelector('.help-response-files').textContent.includes('Invoice.md'));
     check('no_unexpected_transport', unexpected.length === 0, unexpected);
     results.evidence = { real_backend: false, real_provider: false, native_scene_effects: 'synthetic', keyboard_mouse: 'dedicated WKWebView fixture', installed_application_touched: false };
     window.webkit.messageHandlers.probe.postMessage(results);

@@ -1043,7 +1043,7 @@ export default function App() {
   const desktopWidgets = components.filter(item => !['desktop', 'presence', 'surface', 'overlay'].includes(placementOf(item)));
   const attachedFileIds = new Set(desktopMessages.flatMap(message => message.attachments?.map(file => file.id) || []));
   const canonicalFile = (file: FileEntry) => snapshot.files.find(item => item.id === file.id) || file;
-  const attachedPreviewIds = new Set(desktopMessages.flatMap(message => message.attachments?.map(canonicalFile).filter(file => file.source === 'output' && canDisplayArtifact(file)).map(file => file.id) || []));
+  const attachedPreviewIds = new Set(desktopMessages.filter(message => !message.help_reply && !taskOrigin(message) && !agentOrigin(message)).flatMap(message => message.attachments?.map(canonicalFile).filter(file => file.source === 'output' && canDisplayArtifact(file)).map(file => file.id) || []));
   const latestFiles = snapshot.files.filter(file => file.source === 'output' && !attachedFileIds.has(file.id));
   const desktopHasResult = Boolean(desktopMessages.length || latestRun || latestFiles.length || lastError || inlinePreview || desktopWidgets.length);
   const desktopResult = desktopHasResult && (desktopReplyOpen || Boolean(inlinePreview));
@@ -1150,14 +1150,18 @@ export default function App() {
           const run = message.run_id ? runsById.get(message.run_id) : undefined;
           const trace = message.run_id && !tracedRuns.has(message.run_id);
           if (trace) tracedRuns.add(message.run_id!);
+          const origin = taskOrigin(message) || agentOrigin(message);
           const visible = Boolean(message.content || message.attachments?.length);
           return <Fragment key={message.id}>
-            {message.help_reply ? <HelpReceipt reply={message.help_reply} /> : visible && <article className={`message ${message.role}`} data-run-id={message.run_id} data-activity-result={run?.status === 'complete' && lastAnswerByRun.get(message.run_id) === message.id ? message.run_id : undefined}>
+            {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(canonicalFile).map(file => fileCard(file))}</div>}</>}
+            {origin?.kind === 'agent_results' && <AgentResults origin={origin} />}
+            {visible && !message.help_reply && !origin && <article className={`message ${message.role}`} data-run-id={message.run_id} tabIndex={-1} data-activity-result={run?.status === 'complete' && lastAnswerByRun.get(message.run_id) === message.id ? message.run_id : undefined}>
               <div dir="auto" data-message-id={message.id} data-message-role={message.role}>{message.role === 'assistant' ? <MessageBody content={message.content} effect={effectFor(message.id)} /> : <span className="user-text"><StyledText text={message.content} effect={effectFor(message.id)} /></span>}</div>
               {message.attachments?.map(canonicalFile).map(file => file.source === 'output' && canDisplayArtifact(file) ? <ArtifactResult key={file.id} file={file} selected={inlinePreview?.id === file.id} observe={inlinePreview?.id === file.id ? observeInline : undefined} /> : fileCard(file))}
               {message.status === 'queued' && <span className="message-note">{t('queued')}</span>}
             </article>}
-            {trace && session && <RunTrace sessionId={session} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} />}
+            {trace && session && <div data-run-id={message.run_id} tabIndex={-1} data-activity-result={run && ['failed', 'interrupted', 'cancelled'].includes(run.status) ? message.run_id : undefined}><RunTrace sessionId={session} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} origin={origin} /></div>}
+            {trace && Boolean(snapshot.agents?.some(job => job.root_run_id === message.run_id)) && <AgentActivity sessionId={session!} revision={snapshot.cursor} jobs={snapshot.agents!.filter(job => job.root_run_id === message.run_id)} />}
           </Fragment>;
         })}
         {snapshot.runs.filter(run => !tracedRuns.has(run.id)).map(run => session && <RunTrace key={run.id} sessionId={session} runId={run.id} revision={snapshot.cursor} phase={run.phase} status={run.status} />)}
