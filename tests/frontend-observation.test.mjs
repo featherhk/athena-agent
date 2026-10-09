@@ -161,3 +161,20 @@ test('removed, hidden or different inline files cannot confirm the requested pre
     assert.equal(state.preview, null);
   }
 });
+
+test('a native visibility event cannot publish contradictory foreground and scene state before React commits', () => {
+  const source = { platform: 'macos', supported: true, presented: true, screens: [], components: [
+    { id: 'widget', version: 1, view_revision: 0, state: 'mounted', visible: true, screen_id: '1', rect: rect() },
+  ] };
+  const doc = document(); doc.documentElement = { dataset: { desktopPresented: 'false' } };
+  const hidden = observeFrontend(doc, facts({ desktop: source }));
+  assert.equal(hidden.foreground, false);
+  assert.equal(hidden.desktop.presented, false);
+  assert.equal(hidden.desktop.components[0].visible, false);
+  assert.equal(source.components[0].visible, true, 'Projection must not mutate the receipt');
+  doc.documentElement.dataset.desktopPresented = 'true';
+  const shown = observeFrontend(doc, facts({ desktop: hidden.desktop }));
+  assert.equal(shown.foreground, true);
+  assert.equal(shown.desktop.presented, true);
+  assert.equal(shown.desktop.components[0].visible, false, 'Showing the companion alone cannot invent mounted component visibility');
+});

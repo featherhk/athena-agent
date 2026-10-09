@@ -305,5 +305,11 @@
   "recharge.storageError": "브라우저에 결제 요청을 저장할 수 없습니다. 로컬 저장소를 허용한 후 계속하세요.",
   "recharge.amountChanged": "충전 가능한 금액이 변경되었습니다. 금액을 다시 선택해 주세요.",
   "surface.surface": "전체 작업 화면",
-  "surface.recovery": "복구 모드입니다. 사용자 지정 화면은 비활성화되며 대화와 파일은 보존됩니다."
+  "surface.recovery": "복구 모드입니다. 사용자 지정 화면은 비활성화되며 대화와 파일은 보존됩니다.",
+  "desktop.focus": "Athena에게 말하기",
+  "desktop.prompt": "무엇을 도와드릴까요?",
+  "desktop.hide": "Athena 숨기기",
+  "desktop.back": "기록 접기",
+  "surface.desktop": "데스크탑",
+  "desktop.collapse": "접기"
 }

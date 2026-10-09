@@ -305,5 +305,11 @@
   "recharge.storageError": "تعذّر على المتصفح حفظ طلب الدفع. فعّل التخزين المحلي قبل المتابعة.",
   "recharge.amountChanged": "تغيّرت المبالغ المتاحة. اختر مبلغًا متاحًا للمتابعة.",
   "surface.surface": "مساحة العمل الكاملة",
-  "surface.recovery": "وضع الاسترداد مفعّل. الواجهات المخصصة معطّلة، ومحادثاتك وملفاتك محفوظة."
+  "surface.recovery": "وضع الاسترداد مفعّل. الواجهات المخصصة معطّلة، ومحادثاتك وملفاتك محفوظة.",
+  "desktop.focus": "تحدث إلى Athena",
+  "desktop.prompt": "كيف يمكنني مساعدتك؟",
+  "desktop.hide": "إخفاء Athena",
+  "desktop.back": "إغلاق السجل",
+  "surface.desktop": "سطح المكتب",
+  "desktop.collapse": "طيّ"
 }

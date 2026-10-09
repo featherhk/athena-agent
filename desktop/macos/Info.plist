@@ -10,6 +10,7 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleIconFile</key><string>Athena</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Athena uses your microphone during a voice conversation.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>

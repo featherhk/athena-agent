@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import plistlib
 import runpy
+import secrets
 import subprocess
 import tempfile
 import threading
@@ -28,7 +29,7 @@ def main():
     source = ROOT / 'desktop/macos'
     subprocess.run(['xcrun', 'swiftc', '-parse-as-library', '-target', 'arm64-apple-macos13.0', '-g',
                     '-D', 'ATHENA_NATIVE_CHECKS', '-framework', 'AppKit', '-framework', 'WebKit',
-                    str(source / 'Athena.swift'), str(source / 'UpdateCheck.swift'), str(source / 'WindowRecovery.swift'),
+                    str(source / 'Athena.swift'), str(source / 'UpdateCheck.swift'), str(source / 'WindowRecovery.swift'), str(source / 'DesktopCompanion.swift'), str(source / 'DesktopSceneHost.swift'), str(source / 'DesktopHitRegions.swift'),
                     str(source / 'Tests/NativeRecoveryChecks.swift'), '-o', str(executable)], env=env, check=True, timeout=180)
     info = {'CFBundleExecutable': executable.name, 'CFBundleIdentifier': 'com.featherhk.athena.macos-nativechecks',
             'CFBundleName': 'Athena Native Recovery Checks', 'CFBundlePackageType': 'APPL',
@@ -41,6 +42,7 @@ def main():
     BUILD['capture'](['codesign', '--force', '--sign', '-', str(bundle)], env=env)
     with ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server:
         server.receipts = []
+        server.fixture_cookie = secrets.token_hex(16)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             result = subprocess.run([str(executable), '--fixture-origin', f'http://127.0.0.1:{server.server_port}/'],

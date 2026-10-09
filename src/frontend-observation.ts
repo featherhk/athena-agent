@@ -1,9 +1,11 @@
 import type { AppAction, Component } from './api';
 import type { SurfaceState } from './surface-runtime';
 import { placementOf } from './component-layout.ts';
+import { interactionVisible, type DesktopState } from './desktop-bridge.ts';
 
 export type PreviewObservation = { file_id: string; status: 'loading' | 'ready' | 'failed'; error_code?: 'preview_unavailable' };
 export type FrontendObservation = {
+  desktop?: DesktopState;
   surface?: SurfaceState;
   client_id: string; revision: number; session_id: string | null; foreground: boolean;
   viewport: { width: number; height: number }; open_views: string[];
@@ -16,6 +18,7 @@ export type FrontendObservation = {
   has_unsent_changes: boolean; attachment_ids: string[];
 };
 export type FrontendFacts = {
+  desktop?: DesktopState;
   surface?: SurfaceState;
   sessionId: string | null; components: Component[]; preview: PreviewObservation | null;
   helpIds: string[]; choosingFiles: boolean; uploading: boolean; reconnecting: boolean;
@@ -37,7 +40,11 @@ export function observeFrontend(document: Document, facts: FrontendFacts): Omit<
   if (document.querySelector('.developer-panel')) open.add('developer');
   if (open.has('account') && document.querySelector('.account-profile input[type="password"]')) open.add('password');
   const nodes = new Map([...document.querySelectorAll<HTMLElement>('.widget[data-component-id]')].map(node => [node.dataset.componentId, node]));
-  const foreground = !document.hidden;
+  // The marker is updated synchronously by the native event, ahead of React's
+  // scene state. Before the first marker, the last native receipt is the fallback.
+  const presentation = document.documentElement?.dataset?.desktopPresented;
+  const presented = presentation === 'true' ? true : presentation === 'false' ? false : facts.desktop?.presented;
+  const foreground = interactionVisible(document) && presented !== false;
   const covered = [...open].some(name => !['developer', 'workspace'].includes(name));
   const components = facts.components.slice(0, 32).map(component => {
     const node = nodes.get(component.id), box = node?.getBoundingClientRect();
@@ -63,7 +70,12 @@ export function observeFrontend(document: Document, facts: FrontendFacts): Omit<
   if (facts.hasError || document.querySelector('.recovery-panel')) errors.push({ source: 'ui', code: 'ui_error' });
   if (preview?.status === 'failed') errors.push({ source: 'preview', code: 'preview_unavailable' });
   for (const component of components) if (component.error_code && errors.length < 8) errors.push({ source: 'component', code: component.error_code });
-  return { ...(facts.surface ? { surface: facts.surface } : {}), session_id: facts.sessionId, foreground, viewport, open_views: [...open].sort(), preview,
+  // Native show/hide fires before React may commit the accompanying scene. The
+  // document marker is from that same native event, so foreground and desktop
+  // visibility must use one value even during this short render boundary.
+  const desktop = facts.desktop ? { ...facts.desktop, presented: Boolean(presented),
+    components: facts.desktop.components.map(item => presented ? item : { ...item, visible: false }) } : undefined;
+  return { ...(desktop ? { desktop } : {}), ...(facts.surface ? { surface: facts.surface } : {}), session_id: facts.sessionId, foreground, viewport, open_views: [...open].sort(), preview,
     workspace: workspace ? { id: workspace.id, version: workspace.version } : null, components, waiting: waiting.slice(0, 8), errors,
     has_unsent_changes: facts.hasUnsentChanges, attachment_ids: facts.attachmentIds.slice(0, 10) };
 }

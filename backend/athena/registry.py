@@ -24,7 +24,7 @@ POLICY_CONSUMERS = (
 )
 NAME = re.compile(r"user_[a-z][a-z0-9_]{0,47}\Z")
 COMPONENT_ID = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
-COMPONENT_PLACEMENTS = ("inline", "workspace", "banner", "top-start", "top-end", "bottom-start", "bottom-end", "overlay", "fullscreen", "presence", "sidebar-start", "sidebar-end", "surface")
+COMPONENT_PLACEMENTS = ("inline", "workspace", "banner", "top-start", "top-end", "bottom-start", "bottom-end", "overlay", "fullscreen", "presence", "sidebar-start", "sidebar-end", "surface", "desktop")
 COMPONENT_ERRORS = ("script_error", "unhandled_rejection", "blocked_resource", "empty_document", "load_timeout")
 MAX_FILES, MAX_PACKAGE_BYTES = 64, 4 * 1024 * 1024
 
@@ -160,7 +160,8 @@ class Registry:
         report = db.execute("SELECT state,has_content,in_view,error_code,created_at FROM component_reports "
                             "WHERE session_id=? AND component_id=? AND version=? ORDER BY seq DESC LIMIT 1",
                             (session_id, component_id, version)).fetchone()
-        result = {"state": "unobserved", "functional_verification": "not_performed"}
+        result = {"state": "unobserved", "functional_verification": "not_performed",
+                  "scope": "document_load_only"}
         if report:
             result.update(state=report["state"], has_content=bool(report["has_content"]),
                           in_view=bool(report["in_view"]), error_code=report["error_code"],
@@ -443,6 +444,10 @@ class Registry:
         record["file_path"] = str(path.relative_to(self.config.data_dir))
         def register(db):
             table, column, key = KINDS[kind]
+            if kind == "component":
+                from .component_views import read_view, validate_view
+                view = read_view(db, owner, name)['view']
+                validate_view(view, placement=view.get('placement', record['placement']))
             if kind == "tool":
                 names = {row[0] for row in db.execute("SELECT e.name FROM extensions e WHERE user_id=? AND active=1 AND version=(SELECT MAX(version) FROM extensions n WHERE n.user_id=e.user_id AND n.name=e.name)", (owner,))}
                 if len(names) >= 20 and name not in names:

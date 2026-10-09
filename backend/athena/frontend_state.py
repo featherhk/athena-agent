@@ -19,7 +19,7 @@ TTL_SECONDS = 75
 MAX_CLIENTS = 24
 Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')]
 View = Literal['menu', 'history', 'files', 'account', 'appearance', 'developer', 'password', 'workspace', 'preview', 'surfaces', 'activity', 'authentication']
-Placement = Literal['inline', 'workspace', 'banner', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'overlay', 'fullscreen', 'presence', 'sidebar-start', 'sidebar-end', 'surface']
+Placement = Literal['inline', 'workspace', 'banner', 'top-start', 'top-end', 'bottom-start', 'bottom-end', 'overlay', 'fullscreen', 'presence', 'sidebar-start', 'sidebar-end', 'surface', 'desktop']
 ComponentError = Literal['script_error', 'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']
 
 
@@ -88,6 +88,65 @@ class Error(Strict):
     code: Literal['ui_error', 'connection_lost', 'preview_unavailable', 'script_error', 'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout']
 
 
+class DesktopRect(Strict):
+    """Logical points, not device pixels; fractional display positions are valid."""
+    x: float = Field(ge=-131072, le=131072)
+    y: float = Field(ge=-131072, le=131072)
+    width: float = Field(ge=0, le=32768)
+    height: float = Field(ge=0, le=32768)
+
+
+class DesktopScreen(Strict):
+    id: Identifier
+    frame: DesktopRect
+    visible_frame: DesktopRect
+    scale: float = Field(ge=0.5, le=8)
+
+
+class DesktopComponent(Workspace):
+    view_revision: int = Field(ge=0)
+    state: Literal['loading', 'mounted', 'hidden', 'failed']
+    visible: bool
+    rect: DesktopRect
+    screen_id: Identifier
+    error_code: Literal['native_unavailable', 'panel_failed', 'navigation_failed', 'script_error',
+                        'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout'] | None = None
+
+    @model_validator(mode='after')
+    def valid_receipt(self):
+        if (self.state == 'failed') != (self.error_code is not None):
+            raise ValueError('Only a failed desktop component has a required error_code.')
+        if self.state == 'hidden' and self.visible:
+            raise ValueError('A hidden desktop component cannot be visible.')
+        return self
+
+
+class DesktopObservation(Strict):
+    platform: Literal['macos', 'web', 'ios', 'windows', 'android', 'unknown']
+    supported: bool
+    presented: bool
+    screens: list[DesktopScreen] = Field(default_factory=list, max_length=16)
+    components: list[DesktopComponent] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode='after')
+    def valid_host(self):
+        if self.supported and self.platform != 'macos':
+            raise ValueError('Only the macOS host supports desktop surfaces in this version.')
+        if not self.supported and (self.presented or self.screens or self.components):
+            raise ValueError('An unsupported host cannot report presented native surfaces.')
+        if not self.presented and any(component.visible for component in self.components):
+            raise ValueError('Hidden desktop presentation cannot report a visible component.')
+        screen_ids = [screen.id for screen in self.screens]
+        if len(screen_ids) != len(set(screen_ids)):
+            raise ValueError('Desktop screen identifiers must be unique.')
+        component_ids = [component.id for component in self.components]
+        if len(component_ids) != len(set(component_ids)):
+            raise ValueError('Desktop component identifiers must be unique.')
+        if any(component.screen_id not in screen_ids for component in self.components):
+            raise ValueError('A desktop component must identify an observed screen.')
+        return self
+
+
 class FrontendObservation(Strict):
     client_id: Identifier
     revision: int = Field(ge=1, le=9007199254740991)
@@ -98,11 +157,21 @@ class FrontendObservation(Strict):
     preview: Preview | None = None
     workspace: Workspace | None = None
     surface: Annotated[DefaultSurface | ComponentSurface, Field(discriminator='provider')] | None = None
+    desktop: DesktopObservation | None = None
     components: list[Component] = Field(default_factory=list, max_length=32)
     waiting: list[Waiting] = Field(default_factory=list, max_length=8)
     errors: list[Error] = Field(default_factory=list, max_length=8)
     has_unsent_changes: bool = False
     attachment_ids: list[Identifier] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode='after')
+    def desktop_foreground(self):
+        # The current native host hides its companion and every generated panel
+        # together. A hidden WKWebView may still report document.hidden=false;
+        # do not let that become an actionable foreground client.
+        if self.desktop and self.desktop.supported and not self.desktop.presented and self.foreground:
+            raise ValueError('Hidden desktop presentation cannot be a foreground client.')
+        return self
 
 
 def initialize(db):
@@ -187,10 +256,13 @@ def _current(db, row):
 
 def _summary(db, row):
     state = json.loads(row['state'])
-    return {'client_id': row['client_id'], 'session_id': row['session_id'], 'revision': row['revision'],
+    result = {'client_id': row['client_id'], 'session_id': row['session_id'], 'revision': row['revision'],
             'foreground': state['foreground'], 'stale': not _current(db, row),
             'observed_at': row['observed_at'], 'expires_at': row['expires_at'],
             'viewport': state['viewport']}
+    if state.get('desktop') is not None:
+        result['desktop'] = {key: state['desktop'][key] for key in ('platform', 'supported', 'presented')}
+    return result
 
 
 def clients(db, user_id):
@@ -210,10 +282,11 @@ def client(db, user_id, client_id, auth_hash=None, fresh=False):
 
 def snapshot(db, user_id, client_id):
     row = client(db, user_id, client_id)
-    from .component_views import surface_registration
+    from .component_views import desktop_registration, surface_registration
     state = json.loads(row['state'])
     return {**_summary(db, row), 'state': {**state, 'surface': state.get('surface')},
             'surface_registration': surface_registration(db, row['session_id']),
+            'desktop_registration': desktop_registration(db, row['session_id']),
             'scope': 'Authenticated client-reported semantics; no drafts, form values, DOM, clipboard or pixel verification.'}
 
 
@@ -248,6 +321,8 @@ async def observe(store, user_id, auth_hash, observation):
         # Old clients retry identical revision heartbeats across server upgrades.
         # An absent new optional field must not rewrite their stored signature.
         state.pop('surface', None)
+    if body.desktop is None:
+        state.pop('desktop', None)
     encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(encoded.encode()) > 24576:
         raise ValueError('Frontend observation exceeds 24 KiB.')
@@ -266,6 +341,15 @@ async def observe(store, user_id, auth_hash, observation):
             # race. Accept that truthful report, but never a foreign or invented
             # renderer; snapshot returns the desired registration separately.
             raise UserError('not_found', 'This renderer version was not registered in this conversation.')
+        if body.desktop:
+            for component in body.desktop.components:
+                if not body.session_id or not db.execute(
+                        'SELECT 1 FROM components WHERE session_id=? AND id=? AND version=?',
+                        (body.session_id, component.id, component.version)).fetchone():
+                    raise UserError('not_found', 'This desktop component version was not registered in this conversation.')
+                from .component_views import read_view
+                if component.view_revision > read_view(db, body.session_id, component.id)['view_revision']:
+                    raise UserError('frontend_conflict', 'A desktop observation cannot report a future layout revision.')
         file_ids = set(body.attachment_ids)
         if body.preview:
             file_ids.add(body.preview.file_id)

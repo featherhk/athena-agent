@@ -152,7 +152,7 @@ def main():
         run("xcrun", "swift", "-module-cache-path", cache, SOURCE / "Icon.swift", iconset, env=swift_env)
         run("iconutil", "-c", "icns", iconset, "-o", resources / "Athena.icns")
         run("xcrun", "swiftc", "-O", "-parse-as-library", "-target", f"{arch}-apple-macos13.0", "-module-cache-path", cache,
-            "-framework", "AppKit", "-framework", "WebKit", SOURCE / "Athena.swift", SOURCE / "UpdateCheck.swift", SOURCE / "WindowRecovery.swift", "-o", contents / "MacOS" / "Athena", env=swift_env)
+            "-framework", "AppKit", "-framework", "WebKit", SOURCE / "Athena.swift", SOURCE / "UpdateCheck.swift", SOURCE / "WindowRecovery.swift", SOURCE / "DesktopCompanion.swift", SOURCE / "DesktopSceneHost.swift", SOURCE / "DesktopHitRegions.swift", "-o", contents / "MacOS" / "Athena", env=swift_env)
         verify_payload(app)
         # copy2 may preserve Finder metadata from the developer machine; none belongs in a signed bundle.
         run("xattr", "-cr", app)

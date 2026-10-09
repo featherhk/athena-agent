@@ -1,12 +1,10 @@
 # Distribution
 
-Athena’s desktop application is a native macOS window over the same web client and local Python service. The operator’s model key must never be shipped to a customer. The desktop sidecar and hosted web execution are different trust boundaries; a successful DMG build does not by itself make the cloud service safe to publish.
+Athena’s Mac application is a menu-bar companion with a transparent, shortcut-recalled interaction surface and a local Python service. Generated desktop components can use separate native panels; the ordinary chat history is available on demand. The operator’s model key must never be shipped to a customer. The desktop sidecar and hosted web execution are different trust boundaries; a successful DMG build does not by itself make the cloud service safe to publish.
 
 ## Current macOS preview
 
-See the [build 14 release evidence](releases/2026-10-05-build14.md) for the
-current source, hosted verification, package acceptance and explicit download
-publication status.
+See the [build 15 release evidence](releases/2026-10-05-build15.md) for the previously published preview. The new Mac companion implementation and its test boundaries are documented in [the native host guide](../desktop/macos/README.md) and [acceptance review](reviews/2026-10-09-mac-companion.md). A source change does not update an installed application.
 
 Build on macOS with Xcode command line tools, Node, and uv installed:
 

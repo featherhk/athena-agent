@@ -1,3 +1,4 @@
+import { interactionVisible } from './desktop-bridge';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useI18n } from './i18n';
 import { ActivityFeed, activeActivity, activityGroups, readableActivity, requestActivity } from './task-continuity';
@@ -14,7 +15,7 @@ export function useTaskContinuity(owner: string | null, identityLost: () => void
       () => { source.stop(); lost.current(); }, body), setState, () => lost.current());
     feed.current = source; setState(source.state);
     let departing = false;
-    const visible = () => { if (document.hidden || departing) source.pause(); else source.resume(); };
+    const visible = () => { if (!interactionVisible() || departing) source.pause(); else source.resume(); };
     const leave = () => { departing = true; source.pause(); };
     const enter = () => { departing = false; visible(); };
     document.addEventListener('visibilitychange', visible); window.addEventListener('online', visible);
@@ -33,7 +34,7 @@ export type Continuity = ReturnType<typeof useTaskContinuity>;
 export function useVisibleActivity(continuity: Continuity, session: string | null, runs: { id: string; status: string }[], blocked: boolean, cursor: number) {
   const { state, source } = continuity;
   useEffect(() => {
-    if (blocked || document.hidden || !session) return;
+    if (blocked || !interactionVisible() || !session) return;
     const eligible = state.items.filter(item => readableActivity(item, session, runs, true));
     if (!eligible.length) return;
     const timers = new Map<Element, ReturnType<typeof setTimeout>>();
@@ -45,7 +46,7 @@ export function useVisibleActivity(continuity: Continuity, session: string | nul
         }
         if (timer) continue;
         const item = eligible.find(item => item.run_id === (entry.target as HTMLElement).dataset.activityResult);
-        if (item) timers.set(entry.target, setTimeout(() => { if (!document.hidden) void source.current?.acknowledge(item); }, 700));
+        if (item) timers.set(entry.target, setTimeout(() => { if (interactionVisible()) void source.current?.acknowledge(item); }, 700));
       }
     }, { root: document.querySelector('.scroll-area'), threshold: [0, 0.1, 0.5, 1] });
     for (const element of document.querySelectorAll('[data-activity-result]')) observer.observe(element);

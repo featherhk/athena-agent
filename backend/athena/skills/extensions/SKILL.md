@@ -30,7 +30,7 @@ print(json.dumps({"result": args["a"] + args["b"]}))
 
 ## 组件
 
-`kind: component, action: register` 传 `id/title/source`，`source` 是隔离页面的 HTML。`placement` 支持 inline、workspace、banner、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end、overlay、fullscreen、presence，以及替换整个会话 renderer 的 surface；详细布局与桥接接口见 interface skill 的 references/bridge.md 和 references/surface.md。省略位置时保留原位置，新组件默认为 inline。`update_frontend upsert/remove` 继续有效，并共享同一版本历史。恢复时传组件 `id` 和历史 `version`，位置也一并恢复。组件不能修改固定控制外壳；应用字体、颜色等已有设置应使用 application skill。
+`kind: component, action: register` 传 `id/title/source`，`source` 是隔离页面的 HTML。`placement` 支持 inline、workspace、banner、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end、overlay、fullscreen、presence，以及替换整个会话 renderer 的 surface；详细布局与桥接接口见 interface skill 的 references/bridge.md 和 references/surface.md。Mac 原生桌面位置 desktop 见 desktop skill，先检查宿主支持。省略位置时保留原位置，新组件默认为 inline。`update_frontend upsert/remove` 继续有效，并共享同一版本历史。恢复时传组件 `id` 和历史 `version`，位置也一并恢复。组件不能修改固定控制外壳；应用字体、颜色等已有设置应使用 application skill。
 
 注册响应中的 `render.state: unobserved` 不是显示成功。后续 `read/list` 可查看该版本的浏览器回报（mounted/failed、has_content、in_view、error_code、observed_at）；回报只证明当次加载状态，不代表数据真实、按钮可用、自动刷新成功。已有组件必须从当前会话登记状态确认，不能从历史对话中推定仍存在；详细显示与数据更新限制见 interface skill。
 

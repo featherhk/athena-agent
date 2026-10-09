@@ -305,5 +305,11 @@
   "recharge.storageError": "This browser could not save your payment request. Enable local storage before continuing.",
   "recharge.amountChanged": "Payment amounts have changed. Choose an available amount to continue.",
   "surface.surface": "Full work surface",
-  "surface.recovery": "Recovery mode is active. Custom views are disabled; your chats and files are safe."
+  "surface.recovery": "Recovery mode is active. Custom views are disabled; your chats and files are safe.",
+  "desktop.focus": "Speak to Athena",
+  "desktop.prompt": "What can I do for you?",
+  "desktop.hide": "Hide Athena",
+  "desktop.back": "Back to companion",
+  "surface.desktop": "Desktop",
+  "desktop.collapse": "Put away"
 }

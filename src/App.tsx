@@ -48,6 +48,9 @@ import { useI18n, languages, errorMessage } from './i18n';
 import { useFrontendObservation } from './useFrontendObservation';
 import { observesAppAction, type PreviewObservation } from './frontend-observation';
 import { manageModalFocus, hasNativeModal } from './modal-focus';
+import CompanionPortrait from './CompanionPortrait';
+import { desktopRole, desktopPost, desktopScene, readDesktopState, interactionVisible, setDesktopPresented, companionHitRegions, type DesktopState } from './desktop-bridge';
+import './desktop.css';
 
 function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'files' }) {
   const paths = {
@@ -60,6 +63,10 @@ function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'files' }) {
 }
 
 export default function App() {
+  const [desktop] = useState(() => desktopRole() === 'companion');
+  const [desktopLog, setDesktopLog] = useState(false);
+  const [desktopReplyOpen, setDesktopReplyOpen] = useState(false);
+  const [desktopState, setDesktopState] = useState<{ scope: string; value: DesktopState } | undefined>();
   const appRoot = useRef<HTMLDivElement>(null);
   useEffect(() => appRoot.current ? manageModalFocus(appRoot.current) : undefined, []);
   const { t, locale, choice, reduced, preferences, applyPreferences } = useI18n();
@@ -182,6 +189,8 @@ export default function App() {
   const floating = components.filter(component => floatingPlacements.has(placementOf(component)));
   const panelLayout = arrangePanels(floating, surfaceBounds, locale === 'ar', surfaceHeights);
   const frontendObservation = useFrontendObservation(user?.id || null, appClient.current, {
+    ...(user?.id === uiScope.current.owner && session === uiScope.current.session
+      && desktopState?.scope === (uiScope.current.owner && uiScope.current.session ? `${uiScope.current.owner}:${uiScope.current.session}` : '') ? { desktop: desktopState.value } : {}),
     sessionId: session, components: snapshot.components, surface: actualSurface,
     preview: preview ? previewObservation?.file_id === preview.id ? previewObservation : { file_id: preview.id, status: 'loading' } : inlinePreview ? inlineObservation?.file_id === inlinePreview.id ? inlineObservation : { file_id: inlinePreview.id, status: 'loading' } : null,
     helpIds: (snapshot.help_requests || []).map(item => item.id), choosingFiles: chooseFiles, uploading, reconnecting,
@@ -207,6 +216,7 @@ export default function App() {
     setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false); setSurfaces(false); setActivity(false);
     if (session !== item.session_id) navigate(item.session_id);
     else setSnapshot(next);
+    if (desktop) setDesktopLog(true);
     conversationScroll.policy.pause();
     pendingActivityView.current = item.run_id;
     return true;
@@ -293,7 +303,7 @@ export default function App() {
       setMenu(false); setHistory(false); setFiles(null); setPreview(null); closeAccount(); setAppearance(false);
       navigate(next);
       // This action's navigation advances the generation; subsequent user navigation still cancels it.
-      const afterNavigation = currentGuard(); effectIsCurrent = () => afterNavigation() && !document.hidden;
+      const afterNavigation = currentGuard(); effectIsCurrent = () => afterNavigation() && interactionVisible();
     } else if (action.action === 'open' || action.action === 'close') {
       const open = action.action === 'open';
       if (target === 'activity') {
@@ -346,20 +356,20 @@ export default function App() {
   }
   const appActionHandler = useRef(applyAppAction); appActionHandler.current = applyAppAction;
   useEffect(() => {
-    const wake = () => { if (!document.hidden) setActionWake(old => old + 1); };
+    const wake = () => { if (interactionVisible()) setActionWake(old => old + 1); };
     document.addEventListener('visibilitychange', wake);
     return () => document.removeEventListener('visibilitychange', wake);
   }, []);
   function enqueueAppAction(action: AppAction) {
-    if (!user || document.hidden || appActionSeen.current.has(action.id) || (action.target_client_id && action.target_client_id !== appClient.current)) return;
+    if (!user || !interactionVisible() || appActionSeen.current.has(action.id) || (action.target_client_id && action.target_client_id !== appClient.current)) return;
     const authTicket = authEpoch.current, owner = user.id, client = appClient.current, control = uiScope.current.control;
     const isSameAccount = () => authEpoch.current === authTicket && uiScope.current.owner === owner && appClient.current === client;
     appActionSeen.current.add(action.id);
     appActionQueue.current = appActionQueue.current.then(async () => {
-      if (!isSameAccount() || uiScope.current.control !== control || document.hidden) return;
+      if (!isSameAccount() || uiScope.current.control !== control || !interactionVisible()) return;
       // A preceding action may have navigated this client to another owned conversation.
       const scopeStillCurrent = currentGuard();
-      const isCurrent = () => scopeStillCurrent() && isSameAccount() && !document.hidden;
+      const isCurrent = () => scopeStillCurrent() && isSameAccount() && interactionVisible();
       appActionActive.current++;
       try {
         if (!await prepareAppClaim({ barrier: submissions.current, scope: submissionScope(), current: isCurrent, report: frontendObservation.report })) return;
@@ -412,7 +422,7 @@ export default function App() {
     let stopped = false, checking = false;
     const readingActivity = () => Boolean(document.querySelector('.run-trace[open], .message-reasoning[open], .trace-original[open]'));
     const check = async () => {
-      if (checking || stopped || document.hidden || !upgradeState.current.safe || appActionActive.current || document.activeElement?.tagName === 'IFRAME' || readingActivity()) return;
+      if (checking || stopped || !interactionVisible() || !upgradeState.current.safe || appActionActive.current || document.activeElement?.tagName === 'IFRAME' || readingActivity()) return;
       checking = true; const authTicket = authEpoch.current;
       const version = await checkClientVersion();
       const current = upgradeState.current;
@@ -541,7 +551,7 @@ export default function App() {
     if (!user || !session) return;
     const owner = user.id, sid = session;
     const check = () => {
-      if (document.hidden || uiScope.current.owner !== owner || uiScope.current.session !== sid) return;
+      if (!interactionVisible() || uiScope.current.owner !== owner || uiScope.current.session !== sid) return;
       for (const intent of intents.current!.pendingStops(owner, sid)) void reconcileStop(intent);
       for (const intent of intents.current!.list(owner, sid)) void reconcileSubmission(intent);
     };
@@ -973,12 +983,101 @@ export default function App() {
   const tracedRuns = new Set<string>();
   const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
   const lastAnswerByRun = new Map(snapshot.messages.filter(message => message.run_id && message.role === 'assistant' && (message.content || message.attachments?.length)).map(message => [message.run_id, message.id]));
-  return <div ref={appRoot} className="app" data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
-    <header className="topbar">
+  const latestAnswer = snapshot.messages.filter(message => (!snapshot.runs[0] || message.run_id === snapshot.runs[0].id) && message.role === 'assistant' && (message.content || message.attachments?.length)).at(-1);
+  const latestRun = snapshot.runs[0]?.id;
+  const latestFiles = snapshot.files.filter(file => file.source === 'output');
+  const desktopResult = Boolean((desktopReplyOpen && (latestAnswer || latestRun || latestFiles.length || lastError)) || inlinePreview || components.some(item => !['desktop', 'presence'].includes(placementOf(item))));
+  useEffect(() => { if (desktop && (busy || waiting)) setDesktopReplyOpen(true); }, [desktop, busy, waiting]);
+  const desktopExpanded = Boolean(error || serviceMessage || attached.length || uploading || chooseFiles || desktopLog || desktopResult || renderer || help || auth || history || account || files || preview || menu || appearance || surfaces || activity || voiceActive || pendingIntents.length || pendingStops.length);
+  const nativeActions = useRef<(detail: Record<string, unknown>) => void>(() => {});
+  nativeActions.current = detail => {
+    const action = detail.action;
+    if (action === 'state') {
+      const current = uiScope.current;
+      const scope = current.owner && current.session ? `${current.owner}:${current.session}` : '';
+      const state = readDesktopState(detail.desktop);
+      if (state && detail.scope === scope) { setDesktopState({ scope, value: state }); setDesktopPresented(state.presented); }
+      return;
+    }
+    if (action === 'hidden') { if (!busy && !waiting) setDesktopReplyOpen(false); setDesktopPresented(false); window.dispatchEvent(new Event('athena:background')); return; }
+    if (action === 'show') { if (continuity.state.items.some(item => item.session_id === session && !['running', 'queued'].includes(item.status))) setDesktopReplyOpen(true); setDesktopPresented(true); requestAnimationFrame(() => { if (!document.querySelector('[aria-modal="true"]')) input.current?.focus({ preventScroll: true }); }); return; }
+    if (action === 'menu') { setMenu(true); return; }
+    if (action === 'history') { setDesktopLog(true); setHistory(true); return; }
+    if (action === 'stop') { void stop(); return; }
+    if (action === 'reset') { void reset(); return; }
+    if (action === 'submit' || action === 'navigate') {
+      if (!interactionVisible() || recoveryMode || resetting) return;
+      const component = snapshot.components.find(item => item.id === detail.component_id && item.version === detail.version && !item.view?.hidden);
+      const current = uiScope.current;
+      if (!user || !session || current.owner !== user.id || current.session !== session || detail.scope !== `${current.owner}:${current.session}` || !component || placementOf(component) !== 'desktop') return;
+      if (action === 'submit' && typeof detail.text === 'string' && detail.text.trim() && detail.text.length <= 30000) void submit(detail.text);
+      if (action === 'navigate' && typeof detail.session_id === 'string' && /^[\w-]{1,64}$/.test(detail.session_id)) navigate(detail.session_id);
+    }
+  };
+  useEffect(() => {
+    if (!desktop) return;
+    document.documentElement.dataset.desktop = 'companion';
+    const receive = (event: Event) => { const detail = (event as CustomEvent).detail; if (detail && typeof detail === 'object') nativeActions.current(detail); };
+    window.addEventListener('athena:desktop', receive);
+    desktopPost({ action: 'observe' });
+    return () => { window.removeEventListener('athena:desktop', receive); delete document.documentElement.dataset.desktop; delete document.documentElement.dataset.desktopPresented; };
+  }, [desktop]);
+  const desktopLayout = useRef({ expanded: false, modal: false });
+  desktopLayout.current = { expanded: desktopExpanded, modal: Boolean(desktopLog || renderer || help || auth || history || account || files || preview || menu || appearance || surfaces || activity) };
+  const scene = JSON.stringify(desktopScene(user?.id || null, session, snapshot.components, recoveryMode || resetting));
+  useEffect(() => { if (desktop) { desktopPost(JSON.parse(scene)); desktopPost({ action: 'observe' }); } }, [desktop, scene]);
+  useEffect(() => {
+    if (!desktop || !appRoot.current) return;
+    let scheduled = 0, lastSize = '';
+    const watched = new Set<Element>();
+    const report = () => { if (!scheduled) scheduled = requestAnimationFrame(() => {
+      scheduled = 0;
+      const app = appRoot.current;
+      if (!app) return;
+      // Autofocus may scroll the shell before its native panel has expanded.
+      // Reading areas own their scroll; the transparent outer canvas does not.
+      if (app.scrollTop || app.scrollLeft) app.scrollTo(0, 0);
+      const result = app.querySelector<HTMLElement>('.companion-result');
+      const content = result ? Math.max(0, ...[...result.children].map(child => child.getBoundingClientRect().bottom))
+        - result.getBoundingClientRect().top + result.scrollTop + 20 : 0;
+      const size = { action: 'resize', mode: desktopLayout.current.expanded ? 'expanded' : 'compact',
+        height: desktopLayout.current.modal ? 680 : Math.min(680, Math.max(260, Math.ceil(content
+          + (app.querySelector<HTMLElement>('.companion-presence')?.offsetHeight || 0)
+          + (app.querySelector<HTMLElement>('.composer-area')?.offsetHeight || 0) + 26))) };
+      const signature = JSON.stringify(size);
+      if (signature !== lastSize) { desktopPost(size); lastSize = signature; }
+      desktopPost({ action: 'hitRegions', regions: companionHitRegions() });
+      const next = new Set(app.querySelectorAll('.companion-result,.composer-area,.companion-presence'));
+      for (const node of watched) if (!next.has(node)) { observer.unobserve(node); watched.delete(node); }
+      for (const node of next) if (!watched.has(node)) { watched.add(node); observer.observe(node); }
+    }); };
+    const observer = new ResizeObserver(report); observer.observe(appRoot.current);
+    const mutations = new MutationObserver(report); mutations.observe(appRoot.current, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'open', 'data-desktop-expanded'] });
+    window.addEventListener('resize', report); document.addEventListener('focusin', report); report();
+    return () => { observer.disconnect(); mutations.disconnect(); window.removeEventListener('resize', report); document.removeEventListener('focusin', report); cancelAnimationFrame(scheduled); };
+  }, [desktop]);
+  return <div ref={appRoot} className={`app${desktop ? ' desktop-companion' : ''}`} data-desktop-expanded={desktopExpanded} data-renderer={renderer ? "component" : "default"} data-reading={reading} data-phase={orbPhase}>
+    {desktop && <div className="companion-presence" data-desktop-hit>
+      {presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <button className="companion-avatar" type="button" aria-label={t('desktop.focus')} onClick={() => input.current?.focus()}><CompanionPortrait phase={orbPhase} listening={voiceActive} /></button>}
+      <span className="companion-status" role="status">{busy || waiting ? t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`) : t('desktop.prompt')}</span>
+      <button className="companion-hide" aria-label={t('desktop.hide')} title={t('desktop.hide')} onClick={() => desktopPost({ action: 'hide' })}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6 8 8m0-8-8 8" /></svg></button>
+    </div>}
+    {(!desktop || desktopLog) && <header className="topbar">
       <button className="brand" onClick={() => { navigate(null); }} aria-label={t('newChat')}><AthenaMark compact /><span className="brand-wordmark">athena</span></button>
-      <nav aria-label={t('chatControls')}>{renderer && <><button className="quiet" onClick={returnToDefault}>{t('backToChat')}</button><button className="icon-button" aria-label={t('files.attach')} onClick={() => fileInput.current?.click()}><Icon name="files" /></button><button className="quiet" onClick={() => void stop()}>{t('stop')}</button><button className="icon-button" aria-label={t('reset')} onClick={() => void reset()}><Icon name="reset" /></button></>}{!preview && !auth && !account && !appearance && !files && !history && !menu && !surfaces && activityControl()}{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
-    </header>
-    {renderer ? <section className="session-surface" aria-label={renderer.title}>{renderWidget(renderer)}</section> : <div className="workspace-layout">
+      <nav aria-label={t('chatControls')}>{desktop && <button className="quiet" onClick={() => setDesktopLog(false)}>{t('desktop.back')}</button>}{renderer && <><button className="quiet" onClick={returnToDefault}>{t('backToChat')}</button><button className="icon-button" aria-label={t('files.attach')} onClick={() => fileInput.current?.click()}><Icon name="files" /></button><button className="quiet" onClick={() => void stop()}>{t('stop')}</button><button className="icon-button" aria-label={t('reset')} onClick={() => void reset()}><Icon name="reset" /></button></>}{!preview && !auth && !account && !appearance && !files && !history && !menu && !surfaces && activityControl()}{workspace && !resetting && <button className="quiet workspace-return" onClick={() => { void Promise.all(workspaces.filter(item => !item.view?.hidden).map(item => changeComponentView(item, { hidden: true }))).catch(() => {}); }}>{t('backToChat')}</button>}<button className="icon-button menu-button" title={t('menu')} aria-label={t('menu')} onClick={() => setMenu(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button></nav>
+    </header>}
+    {desktop && !desktopLog ? <>
+      {renderer ? <section className="session-surface companion-result" data-desktop-hit aria-label={renderer.title}>{renderWidget(renderer)}</section> : desktopResult && <main className="companion-result scroll-area" data-desktop-hit ref={conversationScroll.ref} {...conversationScroll.handlers}>
+        {!busy && !waiting && <div className="companion-result-heading"><button className="quiet" onClick={() => { setDesktopReplyOpen(false); setInlinePreview(null); }}>{t('desktop.collapse')}</button></div>}
+        {latestAnswer && <article className="message assistant" data-run-id={latestAnswer.run_id} data-activity-result={(latestAnswer.run_id ? runsById.get(latestAnswer.run_id)?.status : undefined) === 'complete' ? latestAnswer.run_id : undefined}><div dir="auto" data-message-id={latestAnswer.id} data-message-role="assistant"><MessageBody content={latestAnswer.content} effect={effectFor(latestAnswer.id)} /></div>{latestAnswer.attachments?.map(file => fileCard(file))}</article>}
+        {latestRun && session && <RunTrace sessionId={session} runId={latestRun} revision={snapshot.cursor} phase={snapshot.runs[0]?.phase} status={snapshot.runs[0]?.status} />}
+        {latestFiles.length > 0 && <section className="output-files" aria-label={t('files.outputs')}>{latestFiles.map(file => canDisplayArtifact(file) ? <ArtifactResult key={file.id} file={file} selected={inlinePreview?.id === file.id} observe={inlinePreview?.id === file.id ? observeInline : undefined} /> : fileCard(file))}</section>}
+        {inlinePreview && !latestFiles.some(file => file.id === inlinePreview.id) && <ArtifactResult file={inlinePreview} selected close={() => setInlinePreview(null)} observe={observeInline} />}
+        {!resetting && components.filter(item => !['desktop', 'presence', 'surface'].includes(placementOf(item))).map(item => renderWidget(item))}
+        {lastError && <p className="notice" role="status">{lastError}</p>}
+        <div ref={end} />
+      </main>}
+    </> : renderer ? <section className="session-surface" aria-label={renderer.title}>{renderWidget(renderer)}</section> : <div className="workspace-layout">
       {!resetting && components.some(component => placementOf(component) === 'sidebar-start') && <aside className="surface-sidebar" data-side="start">{components.filter(component => placementOf(component) === 'sidebar-start').map(component => renderWidget(component))}</aside>}
       <div className="reading-pane">
     {!workspace && <div className="agent-presence">{presence && !resetting ? <div className="custom-presence">{renderWidget(presence)}</div> : <Orb phase={orbPhase} />}<span className="presence-label" role="status">{t(waitingAgents && !waiting ? 'agents.waiting' : orbPhase === 'responding' ? 'responding' : orbPhase === 'idle' ? 'status.ready' : `status.${orbPhase}`)}</span></div>}
@@ -1019,13 +1118,13 @@ export default function App() {
       {!resetting && components.some(component => placementOf(component) === 'sidebar-end') && <aside className="surface-sidebar" data-side="end">{components.filter(component => placementOf(component) === 'sidebar-end').map(component => renderWidget(component))}</aside>}
     </div>}
     {(renderer || workspace) && inlinePreview && <div className="surface-artifact"><ArtifactResult key={inlinePreview.id} file={inlinePreview} selected close={() => setInlinePreview(null)} observe={observeInline} /></div>}
-    <footer className="composer-area" ref={composer}><div className="composer-wrap">
+    <footer className="composer-area" ref={composer} data-desktop-hit={desktop || undefined}><div className="composer-wrap">
       {recoveryMode && <p className="notice" role="status">{t('surface.recovery')}</p>}
       {rendererUnavailable && <p className="notice" role="status">{t('componentUnavailable')}</p>}
       {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} answers={helpAnswers}
         change={answers => { if (!helpDraftScope) return; helpDrafts.current!.write(helpDraftScope, answers); setHelpDraftRevision(old => old + 1); }}
         select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
-      {busy && !waiting && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : waitingAgents ? t('agents.waiting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
+      {busy && !waiting && (!desktop || reconnecting || queued > 0) && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : waitingAgents ? t('agents.waiting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
       {pendingStops.length > 0 && <section className="submission-recovery notice" data-stop-recovery role="region" aria-label={t('send.stopUnknown')}>
         <p role="status">{t('send.stopUnknown')}</p>
         {pendingStops.map(intent => <div key={intent.id} data-stop-id={intent.id}>

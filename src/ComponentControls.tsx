@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Component, Placement, ViewChange } from './api';
+import { desktopRole } from './desktop-bridge';
 import { placementOf } from './component-layout';
 import { useI18n } from './i18n';
 
@@ -34,7 +35,7 @@ export default function ComponentControls({ component, change, busy = false }: {
     <button type="button" className="surface-icon" title={t('surface.options')} aria-label={t('surface.options')} aria-expanded={open} onClick={toggle}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6m6 4v6" /></svg></button>
     <button type="button" className="surface-icon" title={t('surface.hide')} aria-label={t('surface.hide')} disabled={busy} onClick={() => change({ hidden: true })}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M7 17 17 7" /></svg></button>
     {open && <div className="component-options" style={panelStyle}>
-      <label>{t('surface.position')}<select aria-label={t('surface.position')} value={placement} disabled={busy} onChange={event => { change({ placement: event.target.value as Placement, x: null, y: null }); setOpen(false); }}>{positions.map(position => <option key={position} value={position}>{t(`surface.${position}`)}</option>)}</select></label>
+      <label>{t('surface.position')}<select aria-label={t('surface.position')} value={placement} disabled={busy} onChange={event => { change({ placement: event.target.value as Placement, x: null, y: null }); setOpen(false); }}>{(desktopRole() ? ['desktop' as const, ...positions] : placement === 'desktop' ? ['desktop' as const, ...positions] : positions).map(position => <option key={position} value={position}>{t(`surface.${position}`)}</option>)}</select></label>
       {sized && !placement.startsWith('sidebar') && <label>{t('surface.width')}<input type="range" min="240" max="1200" step="20" defaultValue={component.view?.width || 320} aria-label={t('surface.width')} disabled={busy} onPointerUp={event => change({ width: Number(event.currentTarget.value) })} onKeyUp={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) change({ width: Number(event.currentTarget.value) }); }} /></label>}
       {sized && <label>{t('surface.height')}<input type="range" min="160" max="900" step="20" defaultValue={component.view?.height || 300} aria-label={t('surface.height')} disabled={busy} onPointerUp={event => change({ height: Number(event.currentTarget.value) })} onKeyUp={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) change({ height: Number(event.currentTarget.value) }); }} /></label>}
       <button className="quiet" disabled={busy} onClick={() => { change({ placement: null, x: null, y: null, width: null, height: null }); setOpen(false); }}>{t('surface.default')}</button>

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { FrontendReporter } from '../src/frontend-observation.ts';
 import { frontendRequest } from '../src/frontend-request.ts';
+import { interactionVisible } from '../src/desktop-bridge.ts';
 import { prepareMessageSource } from '../src/frontend-submission.ts';
 
 // Exercise the real effect and transport lifecycle. Layout and React commit timing
@@ -49,7 +50,7 @@ function fixture() {
       requests.push({ url, body: JSON.parse(init.body), signal: init.signal });
       return { ok: status === 'accepted', json: async () => status === 'accepted' ? { accepted: true } : { code: status } };
     },
-  })(name => name === 'react' ? hooks : { FrontendReporter, frontendRequest, prepareMessageSource, observeFrontend: (_, facts) => ({ ...state, foreground: !document.hidden, errors: facts.reconnecting ? [{ source: 'connection', code: 'connection_lost' }] : state.errors }) }, module, module.exports);
+  })(name => name === 'react' ? hooks : { FrontendReporter, frontendRequest, prepareMessageSource, interactionVisible: () => interactionVisible(document), observeFrontend: (_, facts) => ({ ...state, foreground: interactionVisible(document), errors: facts.reconnecting ? [{ source: 'connection', code: 'connection_lost' }] : state.errors }) }, module, module.exports);
   const render = (owner = 'owner', client = 'client1') => {
     refIndex = 0; effectIndex = 0;
     return module.exports.useFrontendObservation(owner, client, {}, action => received.push(action), () => { revoked++; }, () => { identityLost++; });
@@ -194,4 +195,24 @@ test('heartbeat discovers a missed CLOSED event; failed refresh retries and back
   f.document.hidden = false; f.document.dispatchEvent(new Event('visibilitychange')); await flush();
   assert.ok(f.timerDelays().includes(20000)); await f.tick(20000); assert.equal(f.sources.length, 2);
   f.sources[1].error(); f.cleanup(); assert.ok(!f.timerDelays().some(delay => delay >= 5000));
+});
+
+test('native panel hiding closes foreground delivery even while WebKit reports a visible document', async () => {
+  const f = fixture();
+  f.document.documentElement = { dataset: {} };
+  f.render(); await flush();
+  assert.equal(f.sources.length, 1);
+  f.document.documentElement.dataset.desktopPresented = 'false';
+  f.document.dispatchEvent(new Event('visibilitychange')); await flush();
+  assert.equal(f.document.hidden, false);
+  assert.equal(f.requests.at(-1).body.foreground, false);
+  assert.equal(f.sources[0].closed, true);
+  const requests = f.requests.length;
+  f.intervals.forEach(callback => callback()); await flush();
+  assert.equal(f.requests.length, requests, 'Hidden native panel must not renew itself as an active target');
+  f.document.documentElement.dataset.desktopPresented = 'true';
+  f.document.dispatchEvent(new Event('visibilitychange')); await flush();
+  assert.equal(f.requests.at(-1).body.foreground, true);
+  assert.equal(f.sources.length, 2);
+  f.cleanup();
 });

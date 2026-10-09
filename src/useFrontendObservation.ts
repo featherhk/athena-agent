@@ -1,3 +1,4 @@
+import { interactionVisible } from './desktop-bridge';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { AppAction } from './api';
 import { FrontendReporter, observeFrontend, type FrontendFacts } from './frontend-observation';
@@ -45,7 +46,7 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     channel.current = reporter;
     const cancelReconnect = () => { if (reconnectTimer !== undefined) clearTimeout(reconnectTimer); reconnectTimer = undefined; };
     const scheduleReconnect = () => {
-      if (disposed || departing || checkingIdentity || document.hidden || reconnectTimer !== undefined) return;
+      if (disposed || departing || checkingIdentity || !interactionVisible() || reconnectTimer !== undefined) return;
       reconnectTimer = setTimeout(() => { reconnectTimer = undefined; report(true); }, reconnectDelay);
       reconnectDelay = Math.min(30000, reconnectDelay * 2);
     };
@@ -56,11 +57,11 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     };
     const connect = () => {
       recoverClosed(events);
-      if (disposed || departing || checkingIdentity || document.hidden || events || reconnectTimer !== undefined) return;
+      if (disposed || departing || checkingIdentity || !interactionVisible() || events || reconnectTimer !== undefined) return;
       const source = new EventSource(`/api/frontend/clients/${encodeURIComponent(clientId)}/events`);
       events = source;
       const message = (event: MessageEvent) => {
-        if (disposed || events !== source || checkingIdentity || document.hidden) return;
+        if (disposed || events !== source || checkingIdentity || !interactionVisible()) return;
         try {
           const item = JSON.parse(event.data);
           if (item.type === 'app_action' && item.payload?.target_client_id === clientId) receive.current(item.payload);
@@ -89,7 +90,7 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     };
     schedule.current = enqueue;
     const visibility = () => {
-      if (document.hidden) { events?.close(); events = null; cancelReconnect(); }
+      if (!interactionVisible()) { events?.close(); events = null; cancelReconnect(); }
       else if (channelFailed) scheduleReconnect();
       report(true);
     };
@@ -101,7 +102,7 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
     const app = document.querySelector('.app');
     if (app) mutations.observe(app, { subtree: true, childList: true, attributes: true,
       attributeFilter: ['data-app-view', 'data-component-state', 'data-component-error', 'data-component-instance', 'data-placement', 'style', 'hidden'] });
-    const interval = setInterval(() => { if (!document.hidden && !departing) { recoverClosed(events); report(true); } }, 30000);
+    const interval = setInterval(() => { if (interactionVisible() && !departing) { recoverClosed(events); report(true); } }, 30000);
     window.addEventListener('resize', enqueue); window.visualViewport?.addEventListener('resize', enqueue);
     window.addEventListener('scroll', enqueue, true); window.addEventListener('pointerup', enqueue);
     window.addEventListener('online', visibility); window.addEventListener('pagehide', pagehide); window.addEventListener('pageshow', pageshow);
@@ -123,7 +124,7 @@ export function useFrontendObservation(owner: string | null, clientId: string, f
   const snapshot = useCallback(() => channel.current?.snapshot() || null, []);
   const prepareSubmission = useCallback((sessionId: string, clientId: string, isCurrent: () => boolean) => prepareMessageSource({
     sessionId, clientId, rendered: () => committed.current,
-    current: () => isCurrent() && !document.hidden, report,
+    current: () => isCurrent() && interactionVisible(), report,
   }), [report]);
   return { report, snapshot, prepareSubmission };
 }

@@ -4,8 +4,13 @@ import AppKit
 private func tr(_ key: String) -> String { NSLocalizedString(key, comment: "") }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-    private var window: NSWindow!
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, NSWindowDelegate {
+    private var window: CompanionPanel!
+    private var statusItem: NSStatusItem?
+    private var shortcut: CompanionShortcut?
+    private var companionMode = DesktopCompanion.Mode.compact
+    private var companionHeight: CGFloat?
+    private var pendingDesktopAction: String?
     private var webView: WKWebView!
     private var child: Process?
     private var output: Pipe?
@@ -16,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var loadingLabel: NSTextField!
     private var updateTask: Task<Void, Never>?
     private var recovery = WindowRecovery()
+    private let scene = DesktopSceneHost()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Opening a second copy only activates the running app; it never attaches to an arbitrary port.
@@ -25,35 +31,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         makeMenu()
         makeWindow()
+        makeStatusItem()
+        shortcut = CompanionShortcut { [weak self] in self?.toggleCompanion() }
+        if shortcut?.register() == false {
+            let unavailable = NSMenuItem(title: tr("shortcut_unavailable"), action: nil, keyEquivalent: "")
+            unavailable.isEnabled = false
+            statusItem?.menu?.insertItem(unavailable, at: 1)
+        }
+        if !UserDefaults.standard.bool(forKey: "AthenaCompanionHasLaunched") {
+            showCompanion()
+            UserDefaults.standard.set(true, forKey: "AthenaCompanionHasLaunched")
+        }
         startBackend()
     }
 
     private func makeWindow() {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 780),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                          backing: .buffered, defer: false)
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1080, height: 780)
+        window = CompanionPanel(contentRect: DesktopCompanion.frame(mode: .compact, visibleFrame: screen),
+                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.title = "Athena"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.minSize = NSSize(width: 390, height: 560)
-        window.setFrameAutosaveName("AthenaMainWindow")
-        window.center()
+        window.delegate = self
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.level = .floating
+        window.isFloatingPanel = true
+        window.hidesOnDeactivate = false
+        window.becomesKeyOnlyIfNeeded = false
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.add(self, name: "athenaDesktop")
+        configuration.userContentController.addUserScript(WKUserScript(source: DesktopCompanion.bootstrap,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = false
+        webView.underPageBackgroundColor = .clear
+        webView.setValue(false, forKey: "drawsBackground")
         let container = NSView()
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(calibratedRed: 0.973, green: 0.965, blue: 0.949, alpha: 1).cgColor
+        container.layer?.backgroundColor = NSColor.clear.cgColor
         webView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(webView)
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: container.topAnchor, constant: 28),
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
             webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
         loadingLabel = NSTextField(labelWithString: tr("starting"))
@@ -65,8 +92,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             loadingLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor)
         ])
         window.contentView = container
+        DesktopHitRegions.shared.register(window)
+        scene.onState = { [weak self] state in self?.sendDesktopDetail(["action": "state", "scope": self?.scene.observationScope ?? "", "desktop": state]) }
+        scene.onInteraction = { [weak self] detail in
+            self?.showCompanion()
+            self?.sendDesktopDetail(detail)
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    }
+
+    @objc private func screensChanged() { resizeCompanion(companionMode, height: companionHeight); scene.screensChanged() }
+
+
+    private func makeStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem?.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Athena")
+        statusItem?.button?.toolTip = "Athena"
+        let menu = NSMenu()
+        let toggle = menu.addItem(withTitle: tr("toggle_companion"), action: #selector(toggleCompanion), keyEquivalent: "")
+        toggle.target = self
+        menu.addItem(withTitle: tr("history"), action: #selector(showHistory), keyEquivalent: "").target = self
+        menu.addItem(withTitle: tr("account_settings"), action: #selector(showSettings), keyEquivalent: "").target = self
+        menu.addItem(withTitle: tr("stop_work"), action: #selector(stopWork), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: tr("recover_window"), action: #selector(offerRecovery), keyEquivalent: "").target = self
+        menu.addItem(withTitle: tr("check_updates"), action: #selector(checkForUpdates(_:)), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: tr("quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        statusItem?.menu = menu
+    }
+
+    private func resizeCompanion(_ mode: DesktopCompanion.Mode, height: CGFloat? = nil) {
+        companionMode = mode
+        companionHeight = mode == .expanded ? height : nil
+        let screen = window.screen ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let anchor = NSPoint(x: window.frame.midX, y: window.frame.minY)
+        window.setFrame(DesktopCompanion.frame(mode: mode, visibleFrame: visible, anchor: anchor, preferredHeight: companionHeight), display: true)
+    }
+
+    @objc private func toggleCompanion() {
+        if window.isVisible { hideCompanion() } else { showCompanion() }
+    }
+
+    private func showCompanion(action: String = "show") {
+        guard !terminating else { return }
+        if !window.isVisible {
+            let pointer = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
+            if let visible = screen?.visibleFrame {
+                window.setFrame(DesktopCompanion.frame(mode: companionMode, visibleFrame: visible, preferredHeight: companionHeight), display: false)
+            }
+        }
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        DesktopHitRegions.shared.visibilityChanged()
+        scene.setPresented(true)
+        if webView.isLoading || webView.isHidden { pendingDesktopAction = action }
+        else { sendDesktopAction(action) }
+    }
+
+    private func hideCompanion() {
+        guard window.attachedSheet == nil else { return }
+        // Visibility is not cancellation. Keep this WebKit document, draft and sidecar alive.
+        sendDesktopAction("hidden")
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('athena:background'))", completionHandler: nil)
+        webView.setMicrophoneCaptureState(.none, completionHandler: nil)
+        webView.pauseAllMediaPlayback(completionHandler: nil)
+        window.orderOut(nil)
+        DesktopHitRegions.shared.visibilityChanged()
+        scene.setPresented(false)
+    }
+
+    @objc private func showHistory() { resizeCompanion(.expanded); showCompanion(action: "history") }
+    @objc private func showSettings() { resizeCompanion(.expanded); showCompanion(action: "menu") }
+    @objc private func stopWork() { sendDesktopAction("stop") }
+
+    private func sendDesktopAction(_ action: String) {
+        guard ["show", "history", "menu", "stop", "reset", "hidden"].contains(action), isLocal(webView.url) else { return }
+        sendDesktopDetail(["action": action])
+    }
+
+    private func sendDesktopDetail(_ detail: [String: Any]) {
+        guard isLocal(webView.url), let data = try? JSONSerialization.data(withJSONObject: detail),
+              let value = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('athena:desktop',{detail:\(value)}))", completionHandler: nil)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool { hideCompanion(); return false }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "athenaDesktop", message.webView === webView,
+              DesktopCompanion.trusts(frameIsMain: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url,
+                  origin: localURL, currentURL: webView.url),
+              let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
+        switch action {
+        case "resize":
+            guard let value = body["mode"] as? String, let mode = DesktopCompanion.Mode(rawValue: value) else { return }
+            var height: CGFloat?
+            if let raw = body["height"] {
+                guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite,
+                      (260...680).contains(number.doubleValue) else { return }
+                height = number.doubleValue
+            }
+            resizeCompanion(mode, height: height)
+        case "hide": hideCompanion()
+        case "hitRegions": DesktopHitRegions.shared.update(window, payload: body["regions"])
+        case "observe": sendDesktopDetail(["action": "state", "scope": scene.observationScope, "desktop": scene.observation()])
+        case "scene": if let localURL { scene.reconcile(body, origin: localURL) }
+        default: break
+        }
     }
 
     private func makeMenu() {
@@ -97,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc private func checkForUpdates(_ item: NSMenuItem) {
         guard updateTask == nil, window.attachedSheet == nil else { return }
+        showCompanion()
         item.title = tr("checking_updates")
         let info = Bundle.main.infoDictionary ?? [:]
         let installed = DesktopVersion(version: info["CFBundleShortVersionString"] as? String ?? "?",
@@ -216,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingLabel.stringValue = tr("unavailable")
         loadingLabel.isHidden = false
         webView.isHidden = true
+        guard window.isVisible else { statusItem?.button?.toolTip = tr("unavailable"); return }
         let alert = NSAlert()
         alert.messageText = tr("unavailable")
         alert.informativeText = tr("recovery_detail")
@@ -228,12 +364,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func reload() {
-        if let localURL, let request = recovery.request(for: localURL) { webView.load(request) }
+        if let localURL, let home = DesktopCompanion.home(localURL), let request = recovery.request(for: home) {
+            DesktopHitRegions.shared.reset(window)
+            webView.load(request)
+        }
         else if child == nil { startBackend() }
     }
 
     @objc private func offerRecovery() {
         guard window.attachedSheet == nil else { return }
+        showCompanion()
         let alert = NSAlert()
         alert.messageText = tr("recover_window")
         alert.informativeText = tr("recover_window_detail")
@@ -241,7 +381,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         alert.addButton(withTitle: tr("close"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
+            self.scene.closeAll()
             self.recovery.activate()
+            self.sendDesktopAction("reset")
+            self.resizeCompanion(.compact)
             self.reload()
         }
     }
@@ -250,6 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingLabel.stringValue = tr("page_unavailable")
         loadingLabel.isHidden = false
         webView.isHidden = true
+        guard window.isVisible else { statusItem?.button?.toolTip = tr("page_unavailable"); return }
         guard window.attachedSheet == nil else { return }
         let alert = NSAlert()
         alert.messageText = tr("page_unavailable")
@@ -261,12 +405,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        window.makeKeyAndOrderFront(nil); return true
+        showCompanion(); return true
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
         updateTask?.cancel()
+        shortcut?.unregister()
+        DesktopHitRegions.shared.unregister(window)
+        scene.closeAll()
+        sendDesktopAction("hidden")
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('athena:background'))", completionHandler: nil)
         guard let child, child.isRunning else { return .terminateNow }
         child.terminate()
         Task { @MainActor in
@@ -285,6 +434,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadingLabel.isHidden = true; webView.isHidden = false
+        statusItem?.button?.toolTip = "Athena"
+        if let action = pendingDesktopAction { pendingDesktopAction = nil; sendDesktopAction(action) }
+        else { sendDesktopAction(window.isVisible ? "show" : "hidden") }
+        sendDesktopDetail(["action": "state", "scope": scene.observationScope, "desktop": scene.observation()])
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if recovery.contentProcessFailed() { reload() }
@@ -295,7 +448,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Generated sandbox frames stay inside WebKit. Only the trusted main document can navigate the shell.
         if action.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
         if isLocal(action.request.url) {
-            decisionHandler(action.shouldPerformDownload ? .download : .allow)
+            let fileLink = action.sourceFrame.isMainFrame && action.navigationType == .linkActivated
+                && (action.request.httpMethod ?? "GET") == "GET" && DesktopCompanion.isFileContent(action.request.url, origin: localURL)
+            decisionHandler(action.shouldPerformDownload || fileLink ? .download : .allow)
         } else {
             if let url = action.request.url, ["https", "http", "mailto"].contains(url.scheme ?? ""),
                action.navigationType == .linkActivated { NSWorkspace.shared.open(url) }
@@ -331,17 +486,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        guard isLocal(response.url), let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { completionHandler(nil); return }
+        #if ATHENA_NATIVE_CHECKS
+        if let destination = fixtureDownloadDestination { completionHandler(destination); return }
+        #endif
+        showCompanion()
         let panel = NSSavePanel()
         panel.nameFieldStringValue = (suggestedFilename as NSString).lastPathComponent
         panel.beginSheetModal(for: window) { result in completionHandler(result == .OK ? panel.url : nil) }
     }
 
     #if ATHENA_NATIVE_CHECKS
+    var fixtureDownloadDestination: URL?
+    var fixtureCompletedDownloads = 0
+    #endif
+    func download(_ download: WKDownload, willPerformHTTPRedirection response: HTTPURLResponse,
+                  newRequest request: URLRequest, decisionHandler: @escaping (WKDownload.RedirectPolicy) -> Void) {
+        decisionHandler(isLocal(request.url) ? .allow : .cancel)
+    }
+    func downloadDidFinish(_ download: WKDownload) {
+        #if ATHENA_NATIVE_CHECKS
+        fixtureCompletedDownloads += 1
+        #endif
+    }
+
+    #if ATHENA_NATIVE_CHECKS
+    var fixtureScene: DesktopSceneHost { scene }
+    var fixtureStatusMenu: NSMenu? { statusItem?.menu }
     /// Separate test executable only; it never starts a backend or opens an account.
     func configureNativeFixture(_ home: URL) -> (NSWindow, WKWebView) {
         precondition(recovery.request(for: home) != nil)
         makeMenu()
         makeWindow()
+        makeStatusItem()
+        showCompanion()
         localURL = home
         reload()
         return (window, webView)
@@ -356,7 +534,7 @@ struct AthenaMain {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.regular)
+        app.setActivationPolicy(.accessory)
         app.run()
     }
 }

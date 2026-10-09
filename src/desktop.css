@@ -1,0 +1,76 @@
+/* The desktop is the canvas. Only things one can use have a material surface. */
+html[data-desktop],html[data-desktop] body,html[data-desktop] #root { background:transparent!important; }
+.app.desktop-companion { background:transparent; padding:8px 18px 14px; gap:0; overflow:hidden; height:100dvh; min-height:0; }
+.desktop-companion .companion-presence { position:relative; display:flex; flex-direction:column; align-items:center; align-self:center; flex-shrink:0; width:180px; height:162px; padding:6px 16px 10px; }
+.companion-avatar { display:block; padding:0; width:116px; height:128px; background:transparent; border:0; border-radius:45%; }
+.companion-avatar:focus-visible { outline:1px solid var(--accent); outline-offset:4px; }
+.companion-portrait { width:100%; height:100%; overflow:visible; }
+.companion-status { font-size:11px; line-height:20px; white-space:nowrap; letter-spacing:.025em; color:var(--ink); padding:0 8px; border-radius:12px; background:color-mix(in srgb,var(--surface) 90%,transparent); }
+.companion-hide { position:absolute; inset-inline-end:4px; top:36px; width:24px; height:24px; padding:3px; border-radius:50%; background:var(--surface); color:var(--muted); opacity:0; transition:opacity .15s; }
+.companion-presence:hover .companion-hide,.companion-presence:focus-within .companion-hide { opacity:1; }
+.companion-hide svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; }
+.desktop-companion[data-desktop-expanded='true'] .companion-presence { height:102px; padding:0 12px 6px; }
+.desktop-companion[data-desktop-expanded='true'] .companion-avatar { width:72px; height:78px; }
+.desktop-companion .custom-presence { width:116px; height:128px; }
+.desktop-companion[data-desktop-expanded='true'] .custom-presence { width:72px; height:78px; }
+.desktop-companion .custom-presence .widget { padding:0; margin:0; border:0; background:transparent; height:100%; }
+.desktop-companion .custom-presence iframe { height:100%!important; }
+.desktop-companion .custom-presence .widget-toolbar { display:none; }
+.desktop-companion .composer-area { position:relative; padding:10px 0 0; margin-top:auto; width:100%; max-height:65%; overflow:visible; }
+.desktop-companion .composer-wrap { width:100%; max-width:none; }
+.desktop-companion .composer { gap:7px; padding:9px 10px 9px 13px; border-radius:23px; align-items:center; box-shadow:0 3px 14px #35293f0d; }
+.desktop-companion .composer textarea { font-size:15px; line-height:1.6; padding:7px 0; min-height:36px; max-height:96px; }
+.desktop-companion .composer .send { border-radius:50%; width:34px; height:34px; }
+.desktop-companion .composer .send.stop { width:38px; height:38px; }
+.desktop-companion .composer .attach-button { width:28px; height:34px; padding:5px; }
+.desktop-companion .composer .attach-button svg { width:16px; height:16px; }
+.desktop-companion .send-actions { gap:5px; }
+.desktop-companion .companion-result { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:var(--tint) transparent; background:var(--surface); border:1px solid var(--tint); border-radius:16px; padding:20px 24px; }
+.desktop-companion .companion-result .message { width:100%; max-width:none; margin:0 0 10px; font-size:16px; line-height:1.8; }
+.desktop-companion .companion-result .run-trace { margin-bottom:0; }
+.desktop-companion .companion-result .output-files { margin-top:10px; }
+.desktop-companion .companion-result.session-surface { padding:0; }
+.desktop-companion .topbar { flex-shrink:0; min-height:48px; height:auto; padding:4px 12px; background:var(--surface); border:1px solid var(--tint); border-radius:12px 12px 0 0; }
+.desktop-companion .topbar .brand { display:none; }
+.desktop-companion .topbar nav { width:100%; justify-content:space-between; }
+.desktop-companion .workspace-layout { background:var(--surface); border:1px solid var(--tint); border-top:0; border-radius:0 0 12px 12px; overflow:hidden; }
+.desktop-companion .workspace-layout .agent-presence,.desktop-companion .greeting { display:none; }
+.desktop-companion .conversation { padding:18px 24px; }
+.desktop-companion .overlay { background:transparent; padding:10px; }
+.desktop-companion .dialog { max-height:calc(100dvh - 28px); box-shadow:0 4px 18px #251b3020; }
+.desktop-companion .drawer { border-radius:14px; border:1px solid var(--tint); box-shadow:0 4px 18px #251b3020; }
+.desktop-companion .notice { margin:8px 0; }
+.desktop-companion .voice-control.active { bottom:calc(100% + 10px); }
+.desktop-companion .voice-call { border-radius:16px; }
+.desktop-companion .toast { bottom:90px; }
+.desktop-companion .user-help { background:var(--surface); border-radius:16px; }
+.app.desktop-widget { width:100vw; height:100dvh; min-height:0; padding:0; background:transparent; overflow:hidden; }
+.desktop-widget .widget[data-placement='desktop'] { position:relative; width:100%; height:100%; max-width:none!important; padding:0; margin:0; border:0; border-radius:0; background:transparent; overflow:hidden; }
+.desktop-widget .widget-toolbar { display:none; }
+.desktop-widget .widget iframe { width:100%; height:100%!important; border-radius:0; }
+.desktop-widget .widget-failure { position:absolute; inset:0; z-index:5; background:var(--surface); padding:12px; border:1px solid var(--tint); border-radius:10px; }
+.desktop-widget-error { margin:0; padding:16px; border-radius:12px; color:var(--ink); background:var(--surface); }
+.companion-body,.companion-face,.companion-wing,.companion-eyes { transform-box:fill-box; transform-origin:center; }
+.companion-portrait.idle .companion-eyes { animation:companion-blink 8s infinite; }
+.companion-portrait.thinking .companion-face { animation:companion-think 3.6s ease-in-out infinite; }
+.companion-portrait.executing .companion-wing { animation:companion-work 1.1s ease-in-out infinite alternate; }
+.companion-portrait.executing .companion-wing.right { animation-direction:alternate-reverse; }
+.companion-portrait.responding .companion-body,.companion-portrait.listening .companion-body { animation:companion-speak 1.8s ease-in-out infinite; }
+.companion-portrait.waiting .companion-face { transform:rotate(-8deg); }
+@keyframes companion-blink { 0%,42%,46%,100% { transform:scaleY(1); } 44% { transform:scaleY(.12); } }
+@keyframes companion-think { 0%,100% { transform:rotate(-5deg); } 50% { transform:rotate(5deg) translateY(-1px); } }
+@keyframes companion-work { from { transform:rotate(-7deg); } to { transform:rotate(7deg); } }
+@keyframes companion-speak { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2px); } }
+@media (prefers-reduced-motion:reduce) { .companion-portrait * { animation:none!important; } }
+html[data-reduce-motion='true'] .companion-portrait * { animation:none!important; }
+
+.companion-attention { opacity:0; }
+.companion-portrait.listening .companion-attention { opacity:1; }
+.companion-result-heading { display:flex; justify-content:flex-end; margin:-14px -14px 0; }
+.companion-result-heading .quiet { padding:5px 10px; font-size:11px; }
+
+/* Generic toolbar SVG rules must not outline the sculpted portrait. */
+.companion-avatar .companion-portrait { stroke:none; stroke-width:0; }
+.desktop-companion .dialog:focus { outline:1px solid var(--tint); outline-offset:2px; }
+html[data-desktop],html[data-desktop] body,html[data-desktop] #root { overflow:clip; }
+.app.desktop-companion { overflow:clip; }

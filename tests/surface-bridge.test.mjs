@@ -13,6 +13,7 @@ import * as layout from '../src/component-layout.ts';
 import * as forms from '../src/component-forms.ts';
 import * as interactions from '../src/surface-interactions.ts';
 import * as anchors from '../src/text-anchors.ts';
+import * as desktopBridge from '../src/desktop-bridge.ts';
 import * as runtime from '../src/surface-runtime.ts';
 import { readSurfaceFile } from '../src/surface-files.ts';
 
@@ -194,11 +195,11 @@ function compile(name, overrides = {}) {
   return module.exports;
 }
 const Widget = compile('Widget.tsx', {
-  './api': { api: async (...args) => { apiCalls.push(args); return {}; } }, './i18n': i18n,
+  './desktop-bridge': desktopBridge, './api': { api: async (...args) => { apiCalls.push(args); return {}; } }, './i18n': i18n,
   './widget-document': { widgetDocument }, './appearance': appearance, './effects': effects,
   './component-layout': layout, './component-forms': forms, './surface-interactions': interactions,
   './text-anchors': anchors, './surface-runtime': runtime,
-  './ComponentControls': compile('ComponentControls.tsx', { './i18n': i18n, './component-layout': layout }),
+  './ComponentControls': compile('ComponentControls.tsx', { './i18n': i18n, './component-layout': layout, './desktop-bridge': desktopBridge }),
   './CanvasActions': compile('CanvasActions.tsx'),
 }).default;
 

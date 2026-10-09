@@ -47,7 +47,7 @@ final class NativeRecoveryChecks: NSObject, NSApplicationDelegate {
 
     private func check(_ home: URL) async {
         do {
-            try await wait { !self.web.isLoading && self.web.url == home && !self.web.isHidden }
+            try await wait { !self.web.isLoading && self.web.url == DesktopCompanion.home(home) && !self.web.isHidden }
             try await wait { await self.js("document.getElementById('draft') !== null") as? Bool == true }
             _ = await js("document.getElementById('draft').value='Keep this synthetic draft';window.requestProof=17")
             guard let recover = menu(recovery: true), let reload = menu(recovery: false) else {
@@ -55,7 +55,7 @@ final class NativeRecoveryChecks: NSObject, NSApplicationDelegate {
             }
             invoke(recover)
             try await wait { self.window.attachedSheet != nil }
-            try require(web.url?.query == nil, "Recovery navigated before user confirmation")
+            try require(web.url?.query == "desktop=companion", "Recovery navigated before user confirmation")
             window.endSheet(window.attachedSheet!, returnCode: .alertSecondButtonReturn)
             try await wait { self.window.attachedSheet == nil }
             let draft = await js("document.getElementById('draft').value") as? String
@@ -65,26 +65,26 @@ final class NativeRecoveryChecks: NSObject, NSApplicationDelegate {
             invoke(recover)
             try await wait { self.window.attachedSheet != nil }
             window.endSheet(window.attachedSheet!, returnCode: .alertFirstButtonReturn)
-            try await wait { !self.web.isLoading && self.web.url?.query == "recovery=1" && !self.web.isHidden }
+            try await wait { !self.web.isLoading && self.web.url?.query == "desktop=companion&recovery=1" && !self.web.isHidden }
             passed.append("native-menu-loads-safe-get")
             invoke(reload)
-            try await wait { !self.web.isLoading && self.web.url?.query == "recovery=1" }
+            try await wait { !self.web.isLoading && self.web.url?.query == "desktop=companion&recovery=1" }
             passed.append("command-r-preserves-safe-mode")
 
             // A fresh host represents a normal window before its first content-process failure.
             window.orderOut(nil)
             host = AppDelegate()
             (window, web) = host.configureNativeFixture(home)
-            try await wait { !self.web.isLoading && self.web.url == home && !self.web.isHidden }
+            try await wait { !self.web.isLoading && self.web.url == DesktopCompanion.home(home) && !self.web.isHidden }
             host.webViewWebContentProcessDidTerminate(web)
-            try await wait { !self.web.isLoading && self.web.url?.query == "recovery=1" }
+            try await wait { !self.web.isLoading && self.web.url?.query == "desktop=companion&recovery=1" }
             passed.append("first-process-failure-enters-safe-mode")
             host.webViewWebContentProcessDidTerminate(web)
             try await wait { self.window.attachedSheet != nil }
             try require(web.isHidden && !web.isLoading, "Repeated process failure continued automatic reloads")
             passed.append("second-process-failure-stops-loop")
             window.endSheet(window.attachedSheet!, returnCode: .alertFirstButtonReturn)
-            try await wait { self.window.attachedSheet == nil && !self.web.isHidden && !self.web.isLoading && self.web.url?.query == "recovery=1" }
+            try await wait { self.window.attachedSheet == nil && !self.web.isHidden && !self.web.isLoading && self.web.url?.query == "desktop=companion&recovery=1" }
             passed.append("native-failure-retry-remains-safe")
             finish(nil)
         } catch { finish(error) }

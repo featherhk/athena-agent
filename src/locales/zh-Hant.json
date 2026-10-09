@@ -305,5 +305,11 @@
   "recharge.storageError": "瀏覽器無法儲存付款請求，請允許本機儲存後再繼續。",
   "recharge.amountChanged": "可儲值的金額已調整，請重新選擇金額。",
   "surface.surface": "完整工作介面",
-  "surface.recovery": "已進入復原模式，自訂介面已停用，聊天和檔案仍然保留。"
+  "surface.recovery": "已進入復原模式，自訂介面已停用，聊天和檔案仍然保留。",
+  "desktop.focus": "與 Athena 交流",
+  "desktop.prompt": "有什麼需要我幫忙？",
+  "desktop.hide": "隱藏 Athena",
+  "desktop.back": "收起紀錄",
+  "surface.desktop": "桌面",
+  "desktop.collapse": "收起"
 }

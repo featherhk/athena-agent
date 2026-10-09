@@ -305,5 +305,11 @@
   "recharge.storageError": "Ce navigateur n’a pas pu enregistrer votre demande. Activez le stockage local avant de continuer.",
   "recharge.amountChanged": "Les montants disponibles ont changé. Choisissez un montant pour continuer.",
   "surface.surface": "Espace de travail complet",
-  "surface.recovery": "Mode de récupération actif. Les vues personnalisées sont désactivées. Vos conversations et fichiers sont conservés."
+  "surface.recovery": "Mode de récupération actif. Les vues personnalisées sont désactivées. Vos conversations et fichiers sont conservés.",
+  "desktop.focus": "Parler à Athena",
+  "desktop.prompt": "Comment puis-je vous aider ?",
+  "desktop.hide": "Masquer Athena",
+  "desktop.back": "Fermer l’historique",
+  "surface.desktop": "Bureau",
+  "desktop.collapse": "Replier"
 }

@@ -1,6 +1,7 @@
 """Durable host layout, independent of agent-authored component source versions."""
 import json
 import math
+import re
 
 from .errors import UserError
 from .store import now
@@ -50,9 +51,18 @@ def surface_selected(db, session_id, component_id, version):
     return selected.get('id') == component_id and selected.get('version') == version
 
 
-def validate_view(change):
+def desktop_registration(db, session_id):
+    """Desired native surfaces; registration is never evidence of display."""
+    if session_id is None:
+        return []
+    return [{key: item[key] for key in ('id', 'version', 'view_revision', 'view')}
+            for item in active_components(db, session_id, include_source=False)
+            if item['view'].get('placement', item['placement']) == 'desktop']
+
+
+def validate_view(change, *, placement=None):
     from .registry import COMPONENT_PLACEMENTS
-    if not isinstance(change, dict) or not change or set(change) - {"hidden", "placement", "x", "y", "width", "height"}:
+    if not isinstance(change, dict) or (not change and placement is None) or set(change) - {"hidden", "placement", "x", "y", "width", "height", "screen_id"}:
         raise UserError("invalid_input", "Supply supported component layout fields.")
     for key, value in change.items():
         if value is None:
@@ -61,8 +71,17 @@ def validate_view(change):
             valid = type(value) is bool
         elif key == "placement":
             valid = value in COMPONENT_PLACEMENTS
+        elif key == "screen_id":
+            valid = isinstance(value, str) and re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', value) is not None
+            if placement is not None:
+                valid = valid and placement == 'desktop'
         else:
-            lower, upper = (0, 1) if key in ("x", "y") else (240, 1600) if key == "width" else (160, 1600)
+            if key in ("x", "y"):
+                lower, upper = 0, 1
+            elif placement is None or placement == 'desktop':
+                lower, upper = 32, 16384
+            else:
+                lower, upper = (240, 1600) if key == "width" else (160, 1600)
             valid = type(value) in (int, float) and math.isfinite(value) and lower <= value <= upper
         if not valid:
             raise UserError("invalid_input", "Invalid component layout value.")
@@ -73,7 +92,7 @@ async def update_view(store, session_id, component_id, version, revision, change
     if type(version) is not int or version < 1 or type(revision) is not int or revision < 0:
         raise UserError("invalid_input", "Read the current component version and view_revision before changing its layout.")
     def update(db):
-        component = db.execute("SELECT version,active FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (session_id, component_id)).fetchone()
+        component = db.execute("SELECT version,active,placement FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (session_id, component_id)).fetchone()
         if component is None or not component['active']:
             raise UserError("not_found", "This component is no longer active.")
         current = read_view(db, session_id, component_id)
@@ -85,6 +104,10 @@ async def update_view(store, session_id, component_id, version, revision, change
                 state.pop(key, None)
             else:
                 state[key] = value
+        # Validate the merged, effective placement on the SQLite owner thread.
+        # A concurrent layout cannot turn small desktop geometry into a browser
+        # layout, and clearing an override returns to the registered placement.
+        validate_view(state, placement=state.get('placement', component['placement']))
         # Even an identical 'open' brings an existing workspace to the front.
         stamp = now()
         db.execute("INSERT INTO component_views VALUES (?,?,?,?,?) ON CONFLICT(session_id,component_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,updated_at=excluded.updated_at",

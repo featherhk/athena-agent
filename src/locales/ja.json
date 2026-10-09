@@ -305,5 +305,11 @@
   "recharge.storageError": "ブラウザーに支払いリクエストを保存できません。ローカルストレージを有効にしてから続けてください。",
   "recharge.amountChanged": "利用できる金額が変更されました。金額を選び直してください。",
   "surface.surface": "作業画面全体",
-  "surface.recovery": "復旧モードです。カスタム画面は無効になっています。会話とファイルは保持されています。"
+  "surface.recovery": "復旧モードです。カスタム画面は無効になっています。会話とファイルは保持されています。",
+  "desktop.focus": "Athena に話しかける",
+  "desktop.prompt": "何かお手伝いしましょうか",
+  "desktop.hide": "Athena を隠す",
+  "desktop.back": "履歴を閉じる",
+  "surface.desktop": "デスクトップ",
+  "desktop.collapse": "閉じる"
 }
