@@ -22,7 +22,20 @@ class ComponentViewInput(BaseModel):
     view: dict
 
 
+class ComponentFinishInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    version: int = Field(ge=1)
+
+
 def register_component_routes(app, exists):
+    @app.post('/api/sessions/{session_id}/components/{component_id}/finish')
+    async def finish(session_id: str, component_id: str, body: ComponentFinishInput, request: Request):
+        await exists(session_id, request)
+        result = await app.state.engine.tools.registry.finish_component(session_id, component_id, body.version)
+        if result['changed']:
+            await app.state.engine.emit(session_id, 'refresh', {})
+        return result
+
     @app.post("/api/sessions/{session_id}/components/{component_id}/view")
     async def layout(session_id: str, component_id: str, body: ComponentViewInput, request: Request):
         await exists(session_id, request)

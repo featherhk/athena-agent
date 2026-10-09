@@ -7,7 +7,7 @@ description: "注册、检查、停用和恢复用户工具、组件、技能目
 
 不要修改 Athena 仓库、依赖、数据库、认证或 reset 外壳。先查看已有能力；确实缺少时，在外部文件区注册扩展，再验证结果。用户自己的工作文件使用 ATHENA_WORKSPACE。
 
-统一操作为 `runtime` 的 `op: registry`；将 `kind: tool | component | skill | policy`、`action: list | read | register | restore | remove` 和其他字段放在 `args` 中。工具、技能和策略按账户共享，组件只属于当前对话。所有修改保存为新版本；停用也追加版本，历史不被改写。
+统一操作为 `runtime` 的 `op: registry`；将 `kind: tool | component | skill | policy`、`action: list | read | register | restore | remove` 和其他字段放在 `args` 中。组件另支持 layout 和 finish。工具、技能和策略按账户共享，组件只属于当前对话。所有修改保存为新版本；停用也追加版本，历史不被改写。
 
 - `list` 返回版本元数据，不自动载入源码；可按 `name` 或组件 `id` 过滤，用 `offset/limit` 翻页。`current` 指最新版本，只有 `enabled: true` 才当前生效；旧记录的 `active` 是其当时状态。
 - `read` 传名称和可选 `version`，默认最新版本；停用后仍可读取历史。先查实际内容再修改。
@@ -33,6 +33,8 @@ print(json.dumps({"result": args["a"] + args["b"]}))
 `kind: component, action: register` 传 `id/title`，以及 `source` 或 `file_id` 二选一：`source` 是隔离页面 HTML；`file_id` 是已有真实文件，使用同一安全预览器，不把表格内容重写成 HTML。`placement` 支持 inline、workspace、banner、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end、overlay、fullscreen、presence，以及替换整个会话 renderer 的 surface；详细布局与桥接接口见 interface skill 的 references/bridge.md 和 references/surface.md。Mac 原生桌面位置 desktop 见 desktop skill，先检查宿主支持。省略位置时保留原位置，新组件默认为 inline。`update_frontend upsert/remove` 继续有效，并共享同一版本历史。恢复时传组件 `id` 和历史 `version`，文件来源和位置也一并恢复。组件不能修改固定控制外壳；应用字体、颜色等已有设置应使用 application skill。
 
 文件来源的组件返回 `file_id` 与规范 `file` 描述（含 `content_revision`）；可显式选择同账户其他会话文件，先向用户说明来源，不暗中改用别的会话资料。自动交付生成的 `athena_file_` 前缀由宿主管理，不能用 register 覆盖；可照常 read/layout/remove/restore。文件更新仍读取原文件，不复制出第二份。文件来源与 HTML 源码共享版本、停用、fork、Reset 机制；普通刷新不得重新打开用户收起的组件。文件预览的真实结果查看 `app snapshot` 中带相同 `file_id/content_revision` 的桌面回执，不把 HTML 加载状态当成表格已显示。
+
+一次性效果在 register 时传 `duration_ms`（1–120000 毫秒）；返回绝对 `expires_at`。到期、停止或重启会追加结束版本，源码留在文件区；fork 保留历史但不激活一次性效果。提前结束用 `kind:component,action:finish,id,version`，必须是实际版本；重复调用幂等，旧回调不能终止新版本。显式 register/restore 新版本才重新计时；更新同一组件省略 duration_ms 会沿用原时长，明确 `null` 才改为持续组件。文件工作面等持续工具默认没有时限。仅清空 canvas 或收起界面不等于已结束生命周期，不要宣称它不会重播。
 
 注册响应中的 `render.state: unobserved` 不是显示成功。后续 `read/list` 可查看该版本的浏览器回报（mounted/failed、has_content、in_view、error_code、observed_at）；回报只证明当次加载状态，不代表数据真实、按钮可用、自动刷新成功。已有组件必须从当前会话登记状态确认，不能从历史对话中推定仍存在；详细显示与数据更新限制见 interface skill。
 

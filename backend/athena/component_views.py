@@ -28,10 +28,12 @@ def read_view(db, session_id, component_id):
 
 
 def active_components(db, session_id, *, include_source=True):
+    from .registry import expire_components
+    expire_components(db, session_id)
     # Include folded surfaces: the independent shell can always reopen them.
     # Selection/observation only needs metadata, not every potentially large HTML
     # document. Join layouts once rather than querying once per component.
-    columns = 'c.*' if include_source else 'c.id,c.version,c.placement,c.created_at,c.file_id'
+    columns = 'c.*' if include_source else 'c.id,c.version,c.placement,c.created_at,c.file_id,c.duration_ms,c.expires_at'
     rows = db.execute(f"""SELECT {columns},v.state AS _view_state,v.revision AS view_revision,v.updated_at AS view_updated_at
         FROM components c LEFT JOIN component_views v ON v.session_id=c.session_id AND v.component_id=c.id
         WHERE c.session_id=? AND c.version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id)
@@ -70,6 +72,7 @@ def desktop_registration(db, session_id):
     if session_id is None:
         return []
     return [{**{key: item[key] for key in ('id', 'version', 'view_revision', 'view')},
+             **({'duration_ms': item['duration_ms'], 'expires_at': item['expires_at']} if item.get('duration_ms') else {}),
              **({'file_id': item['file_id'], 'content_revision': (item.get('file') or {}).get('content_revision')}
                 if item.get('file_id') else {})}
             for item in active_components(db, session_id, include_source=False)
@@ -108,6 +111,8 @@ async def update_view(store, session_id, component_id, version, revision, change
     if type(version) is not int or version < 1 or type(revision) is not int or revision < 0:
         raise UserError("invalid_input", "Read the current component version and view_revision before changing its layout.")
     def update(db):
+        from .registry import expire_components
+        expire_components(db, session_id)
         component = db.execute("SELECT version,active,placement FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (session_id, component_id)).fetchone()
         if component is None or not component['active']:
             raise UserError("not_found", "This component is no longer active.")

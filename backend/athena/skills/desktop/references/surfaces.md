@@ -32,6 +32,8 @@ HTML 使用现有隔离组件约定，CSS/SVG/Canvas 可以定义形象和交互
 
 ## 整片桌面上的效果
 
+烟花、飘雪和短暂庆祝必须是一次性组件：注册时传 `duration_ms:10000`（1–120000 毫秒），不要省略这个字段。宿主返回 `expires_at` 并到期持久化结束；Stop 也结束当前会话的短暂效果，保留文件工作面和持续工具。重启不会重演，fork 只保留历史。提前完成可用 `runtime registry kind:component,action:finish,id,version`；再次演出要明确注册/恢复一个新版本。旧版本的 finish 不会结束新版本。页面本地的定时器只负责动画节奏与停止绘制，不能代替这个持久化期限。
+
 烟花、飘雪等没有窗口边界的表达用 `placement:"desktop"`，不要用 `inline`、`workspace` 或网页 `fullscreen`。先读当前 Mac 的 `screens`，将组件布局的 `screen_id` 设为实际屏幕，`x:0,y:0,width:visible_frame.width,height:visible_frame.height`；每个屏幕需要独立组件时才分别注册。当前宿主约束到 `visible_frame`，不覆盖菜单栏和 Dock；不能声称覆盖了未观察到的屏幕或系统保留区域。
 
 页面是透明画布：`html,body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent }`，Canvas/SVG 铺满自己的视口。不加背景、标题栏、边框、卡片和说明面板。纯视觉效果调用 `Athena.interact([])` 声明没有交互区域；需要按钮或可抓取形象时只声明实际区域，不用整个屏幕的透明矩形抢走点击。该桥接名称是 `interact`；没有 `interactions` 方法。它请求宿主指针路由，不能把脚本执行成功当成已验证其他应用可点击。

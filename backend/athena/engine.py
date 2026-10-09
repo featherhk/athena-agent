@@ -129,6 +129,11 @@ class Engine:
         self.stop_epochs[session_id] = self.stop_epochs.get(session_id, 0) + 1
         def cancel_queue(db):
             db.execute("UPDATE sessions SET submission_revision=submission_revision+1 WHERE id=?", (session_id,))
+            from .registry import finish_transient_components
+            finish_transient_components(db, session_id, reason='stopped')
+            # Fence a tool still preparing its external source before actor
+            # cancellation completes. A late transient registration checks this.
+            db.execute("UPDATE runs SET phase='stopped' WHERE session_id=? AND status='running'", (session_id,))
             from .user_help import cancel_help
             from .app_controls import cancel_app_actions
             from .agents import cancel_branch, cancel_waits
@@ -486,6 +491,10 @@ class Engine:
             self.kick(child['child_session_id'])
 
     async def tick(self):
+        from .registry import expire_components
+        expired = await self.store.call(expire_components)
+        for session_id in expired:
+            await self.emit(session_id, 'refresh', {})
         await self.reconcile_agents()
         resetting = frozenset(self.resetting_users)
         def wake(db):
@@ -589,7 +598,7 @@ class Engine:
                     db.execute("UPDATE messages SET status='cancelled' WHERE session_id=? AND status='queued'", (sid,))
                     rows = db.execute("SELECT c.* FROM components c WHERE session_id=? AND version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id) AND active=1", (sid,)).fetchall()
                     for row in rows:
-                        db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id) VALUES (?,?,?,?,?,0,?,?,?,?)", (sid, row["id"], row["version"]+1, row["title"], row["html"], now(), row["file_path"], row["placement"], row["file_id"]))
+                        db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id,duration_ms,expires_at) VALUES (?,?,?,?,?,0,?,?,?,?,?,?)", (sid, row["id"], row["version"]+1, row["title"], row["html"], now(), row["file_path"], row["placement"], row["file_id"], row['duration_ms'], row['expires_at']))
                     db.execute("DELETE FROM component_views WHERE session_id=?", (sid,))
                 from .registry import reset_registry
                 reset_registry(db, user_id)

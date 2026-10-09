@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 def now() -> str:
@@ -58,6 +58,7 @@ class Store:
                 ("sessions", "user_id", "TEXT REFERENCES users(id)"), ("components", "file_path", "TEXT"),
                 ("components", "placement", "TEXT NOT NULL DEFAULT 'inline'"),
                 ("components", "file_id", "TEXT"),
+                ("components", "duration_ms", "INTEGER"), ("components", "expires_at", "TEXT"),
                 ("sessions", "model_profile_id", "TEXT NOT NULL DEFAULT 'default'"),
                 ("sessions", "model_epoch", "INTEGER NOT NULL DEFAULT 0"),
                 ("sessions", "submission_revision", "INTEGER NOT NULL DEFAULT 0"),
@@ -120,6 +121,10 @@ class Store:
             db.execute("UPDATE user_help SET status='cancelled',resolved_at=? WHERE status='preparing'", (now(),))
             from .agents import recover_agents
             recover_agents(db)
+            # A one-shot effect interrupted by restart must not start over when
+            # its HTML is mounted again, even if its original deadline is future.
+            from .registry import finish_transient_components
+            finish_transient_components(db, reason='restarted')
         await self.call(recover)
 
     async def close(self):
@@ -243,14 +248,17 @@ class Store:
 
     async def fork(self, session_id):
         def fork(db):
+            from .registry import expire_components, finish_transient_components
+            expire_components(db, session_id)
             if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('running','queued','waiting_user','waiting_agents')", (session_id,)).fetchone():
                 raise UserError("fork_busy", "请先停下当前任务，再从这里另开对话。")
             history = self._history(db, session_id)
             original = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
             identifier = uid()
             db.execute("INSERT INTO sessions(id,project_id,title,parent_id,fork_seq,created_at,user_id,model_profile_id,model_epoch) VALUES (?,?,?,?,?,?,?,?,?)", (identifier, original["project_id"], original["title"] + " · 新方向", session_id, max((m["seq"] for m in history), default=0), now(), original["user_id"], original["model_profile_id"], original["model_epoch"]))
-            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id) SELECT ?,id,version,title,html,active,created_at,file_path,placement,file_id FROM components WHERE session_id=?", (identifier, session_id))
+            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id,duration_ms,expires_at) SELECT ?,id,version,title,html,active,created_at,file_path,placement,file_id,duration_ms,expires_at FROM components WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO component_views SELECT ?,component_id,state,revision,updated_at FROM component_views WHERE session_id=?", (identifier, session_id))
+            finish_transient_components(db, identifier, reason='forked')
             db.execute("INSERT INTO context_prefixes SELECT ?,epoch,boundary,prompt,created_at FROM context_prefixes WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO context_clips SELECT ?,message_id,content,created_at FROM context_clips WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO compactions SELECT lower(hex(randomblob(16))),?,through_seq,before_chars,after_chars,created_at FROM compactions WHERE session_id=?", (identifier, session_id))

@@ -1,6 +1,7 @@
 """User-owned, append-only extension versions outside the application checkout."""
 import asyncio
 import base64
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -36,6 +37,45 @@ def policy_state(name, active=True, current=True):
     known = name in BUILTIN_POLICY_CONSUMERS
     return {"state": "historical" if not current else "disabled" if not active else "active" if known else "waiting_for_consumer",
             "effective": bool(known and active and current)}
+
+
+def _finish_component(db, session_id, component_id, version, reason):
+    """A terminal version is a durable tombstone, never a browser-only hide."""
+    row = Registry._record(db, 'component', session_id, component_id)
+    if row['duration_ms'] is None:
+        raise UserError('invalid_input', 'This component is persistent. Remove it explicitly instead.')
+    if not row['active'] and row['version'] == version + 1:
+        return {'id': component_id, 'version': row['version'], 'finished_version': version,
+                'accepted': True, 'changed': False, 'enabled': False, 'status': 'finished'}
+    if row['version'] != version or not row['active']:
+        return {'id': component_id, 'version': row['version'], 'accepted': False,
+                'changed': False, 'status': 'obsolete_version'}
+    Registry._insert(db, 'component', session_id, component_id, version + 1, row, active=False)
+    Registry._component_event(db, session_id, component_id, version + 1, 'finish', row['placement'],
+                              reason=reason, finished_version=version)
+    return {'id': component_id, 'version': version + 1, 'finished_version': version,
+            'accepted': True, 'changed': True, 'enabled': False, 'status': 'finished'}
+
+
+def finish_transient_components(db, session_id=None, *, reason, expired_at=None):
+    sql = """SELECT c.session_id,c.id,c.version FROM components c WHERE c.active=1
+        AND c.duration_ms IS NOT NULL
+        AND c.version=(SELECT MAX(n.version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id)"""
+    args = []
+    if session_id is not None:
+        sql += ' AND c.session_id=?'
+        args.append(session_id)
+    if expired_at is not None:
+        sql += ' AND c.expires_at<=?'
+        args.append(expired_at)
+    rows = db.execute(sql, args).fetchall()
+    for row in rows:
+        _finish_component(db, row['session_id'], row['id'], row['version'], reason)
+    return {row['session_id'] for row in rows}
+
+
+def expire_components(db, session_id=None, *, stamp=None):
+    return finish_transient_components(db, session_id, reason='expired', expired_at=stamp or now())
 
 
 def _initialize(db):
@@ -261,12 +301,18 @@ class Registry:
             raise ValueError("Unknown or disabled skill")
         return result
 
-    async def operate(self, args, session_id):
+    async def operate(self, args, session_id, run_id=None):
         kind, action = args.get("kind"), args.get("action")
-        if kind not in KINDS or action not in ("list", "read", "register", "restore", "remove", "layout"):
+        if kind not in KINDS or action not in ("list", "read", "register", "restore", "remove", "layout", "finish"):
             raise ValueError("Registry requires kind and action")
         await initialize_registry(self.store)
         user, owner = await self._scope(session_id, kind)
+        admission_revision = None
+        if kind == 'component':
+            def prepare(db):
+                expire_components(db, owner)
+                return db.execute('SELECT submission_revision FROM sessions WHERE id=?', (owner,)).fetchone()[0]
+            admission_revision = await self.store.call(prepare)
         key = KINDS[kind][2]
         name = args.get(key) or (args.get("name") if kind == "component" else None)
         if name is not None:
@@ -282,6 +328,10 @@ class Registry:
         version = args.get("version")
         if version is not None and (type(version) is not int or version < 1):
             raise ValueError("Version must be a positive integer")
+        if action == 'finish':
+            if kind != 'component' or version is None:
+                raise ValueError('Finish requires a component id and its exact version.')
+            return await self.finish_component(owner, name, version)
         if action == "layout":
             if kind != "component":
                 raise ValueError("Layout applies to components only.")
@@ -307,6 +357,7 @@ class Registry:
                 item["description" if kind != "component" else "title"] = row["description" if kind != "component" else "title"]
                 item["enabled"] = bool(row["active"] and row["current"])
                 if kind == "component":
+                    item.update(duration_ms=row['duration_ms'], expires_at=row['expires_at'])
                     from .component_views import file_fields
                     item.update(await self.store.call(lambda db, row=row: file_fields(db, owner, row)))
                     item.update(await self.store.call(lambda db, row=row: read_view(db, owner, row['id'])))
@@ -335,6 +386,7 @@ class Registry:
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 render = await self.store.call(lambda db: self._render_status(db, owner, name, row["version"]))
                 return {**result, "enabled": bool(row["active"] and row["version"] == latest["version"]),
+                        'duration_ms': row['duration_ms'], 'expires_at': row['expires_at'],
                         "title": row["title"], "source": row["html"], "placement": row.get("placement", "inline"), "render": render}
             result["description"] = row["description"]
             if kind in ("tool", "policy"):
@@ -375,7 +427,7 @@ class Registry:
             if kind == "component":
                 args = {**{key: value for key, value in args.items() if key not in ('source', 'file_id')},
                         **({'file_id': row['file_id']} if row.get('file_id') else {'source': row['html']}),
-                        "title": row["title"], "placement": row.get("placement", "inline")}
+                        "title": row["title"], "placement": row.get("placement", "inline"), 'duration_ms': row['duration_ms']}
             elif kind in ("tool", "policy"):
                 source = await asyncio.to_thread(self._path(row, user).read_text, encoding="utf-8")
                 args = {**args, "source": source, "description": row["description"]}
@@ -392,13 +444,18 @@ class Registry:
                             resources[str(path.relative_to(root))] = {"encoding": "base64", "content": base64.b64encode(path.read_bytes()).decode()}
                     return resources
                 args = {**args, "files": await asyncio.to_thread(read_package)}
-        return await self._register(args, kind, user, owner, name, action)
+        return await self._register(args, kind, user, owner, name, action, run_id, admission_revision)
+
+    async def finish_component(self, session_id, component_id, version):
+        if not isinstance(component_id, str) or not COMPONENT_ID.fullmatch(component_id) or type(version) is not int or version < 1:
+            raise UserError('invalid_input', 'Finish requires the component id and exact version.')
+        return await self.store.call(lambda db: _finish_component(db, session_id, component_id, version, 'finished'))
 
     @staticmethod
-    def _component_event(db, session_id, component_id, version, action, placement):
+    def _component_event(db, session_id, component_id, version, action, placement, **details):
         # Commit the refresh signal with the version; reconnecting clients recover it.
         payload = {"kind": "component", "id": component_id, "version": version,
-                   "action": action, "placement": placement, "enabled": action != "remove"}
+                   "action": action, "placement": placement, "enabled": action not in ("remove", "finish"), **details}
         db.execute("INSERT INTO events(session_id,type,payload,created_at) VALUES (?,?,?,?)",
                    (session_id, "registry_changed", json.dumps(payload), now()))
 
@@ -477,13 +534,13 @@ class Registry:
             db.execute("INSERT INTO extensions VALUES (?,?,?,?,?,?,?,?)", (owner, name, version,
                        record["description"], record["parameters"], record["file_path"], int(active), now()))
         elif kind == "component":
-            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                       (owner, name, version, record["title"], record["html"], int(active), now(), record["file_path"], record.get("placement", "inline"), record.get('file_id')))
+            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id,duration_ms,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (owner, name, version, record["title"], record["html"], int(active), now(), record["file_path"], record.get("placement", "inline"), record.get('file_id'), record.get('duration_ms'), record.get('expires_at')))
         else:
             db.execute(f"INSERT INTO {KINDS[kind][0]} VALUES (?,?,?,?,?,?,?)", (owner, name, version,
                        record["description"], record["file_path"], int(active), now()))
 
-    async def _register(self, args, kind, user, owner, name, action):
+    async def _register(self, args, kind, user, owner, name, action, run_id=None, admission_revision=None):
         record, package = {}, None
         if kind == "skill":
             package, record["description"] = _package(args, name)
@@ -509,14 +566,17 @@ class Registry:
                 compile(source, name, "exec")
                 record["description"] = _description(args.get("description"))
             else:
-                old = await self.store.rows("SELECT title,placement FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (owner, name))
+                old = await self.store.rows("SELECT title,placement,duration_ms FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (owner, name))
                 title = args.get("title", old[0]["title"] if old else file['name'][:80] if file_id else "小工具")
                 placement = args.get("placement", old[0]["placement"] if old else "inline")
                 if placement not in COMPONENT_PLACEMENTS:
                     raise ValueError("Use a supported component placement: " + ", ".join(COMPONENT_PLACEMENTS))
                 if not isinstance(title, str) or len(title) > 80:
                     raise ValueError("Component title must be at most 80 characters")
-                record.update(title=title, html='' if file_id else source, placement=placement, file_id=file_id)
+                duration = args.get('duration_ms', old[0]['duration_ms'] if old else None)
+                if duration is not None and (type(duration) is not int or not 1 <= duration <= 120000):
+                    raise UserError('invalid_input', 'Transient components require duration_ms between 1 and 120000.')
+                record.update(title=title, html='' if file_id else source, placement=placement, file_id=file_id, duration_ms=duration)
         area = {"tool": "backend", "component": "frontend", "skill": "skills", "policy": "policies"}[kind]
         directory = self.config.data_dir / "extensions" / user / area / (owner if kind == "component" else name)
         path = directory / (uid() + ('.json' if record.get('file_id') else {"tool": ".py", "component": ".html", "skill": "", "policy": ".py"}[kind]))
@@ -540,6 +600,12 @@ class Registry:
             table, column, key = KINDS[kind]
             if kind == "component":
                 from .component_views import read_view, validate_view
+                if record['duration_ms'] is not None:
+                    revision = db.execute('SELECT submission_revision FROM sessions WHERE id=?', (owner,)).fetchone()[0]
+                    run = db.execute('SELECT status,phase FROM runs WHERE id=? AND session_id=?', (run_id, owner)).fetchone() if run_id else None
+                    if revision != admission_revision or (run_id and (run is None or run['status'] != 'running' or run['phase'] == 'stopped')):
+                        raise UserError('component_changed', 'This task stopped while the effect was being prepared; it was not displayed.')
+                    record['expires_at'] = (datetime.now(timezone.utc) + timedelta(milliseconds=record['duration_ms'])).isoformat()
                 if record.get('file_id'):
                     from .files import component_file
                     component_file(db, owner, record['file_id'])
@@ -557,7 +623,10 @@ class Registry:
                 from .component_views import read_view, surface_selected
                 result.update(read_view(db, owner, name))
                 result.update(enabled=True, placement=record["placement"], render=self._render_status(db, owner, name, version),
-                              surface_selected=surface_selected(db, owner, name, version))
+                              surface_selected=surface_selected(db, owner, name, version),
+                              duration_ms=record.get('duration_ms'), expires_at=record.get('expires_at'))
+                latest = self._record(db, kind, owner, name)
+                result['enabled'] = bool(latest['active'] and latest['version'] == version)
                 from .component_views import file_fields
                 result.update(file_fields(db, owner, record))
             return {**result, **policy_state(name)} if kind == "policy" else result

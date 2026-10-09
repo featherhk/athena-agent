@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE TABLE IF NOT EXISTS components (
  session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, version INTEGER NOT NULL,
  title TEXT NOT NULL, html TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
- file_path TEXT, file_id TEXT,
+ file_path TEXT, file_id TEXT, duration_ms INTEGER, expires_at TEXT,
  PRIMARY KEY(session_id, id, version)
 );
 CREATE TABLE IF NOT EXISTS component_views (

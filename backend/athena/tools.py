@@ -33,6 +33,7 @@ TOOLS = [
         "title": {"type": "string", "maxLength": 80},
         "placement": {"type": "string", "enum": list(COMPONENT_PLACEMENTS)},
         "html": {"type": "string", "maxLength": 100000},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 1, "maximum": 120000},
     }, ["op", "id"]),
     function("runtime", "操作 Athena。先用 op=skill、args.name 按需读取技能。", {
         "op": {"type": "string"}, "args": {"type": "object"},
@@ -101,7 +102,7 @@ class ToolRunner:
         if name == "exec":
             return await self.shell(args, session_id, run_id)
         if name == "update_frontend":
-            return await self.component(args, session_id)
+            return await self.component(args, session_id, run_id)
         return await self.runtime(args, session_id, run_id)
 
     async def compact(self, session_id, target_tokens=20000, default_plan=None, protect_latest=False, *, request_profile=None, request_tools=None, max_payload_chars=None):
@@ -183,11 +184,11 @@ class ToolRunner:
         text = await asyncio.to_thread(path.read_text, errors="replace") if path.exists() else ""
         return {"exit_code": process.returncode, "output": clip(text, self.config.tool_output_chars), "artifact_id": artifact_id, "error": error, "output_limit_reached": truncated, "cancelled": cancelled}
 
-    async def component(self, args, session_id):
+    async def component(self, args, session_id, run_id=None):
         if args["op"] not in ("upsert", "remove"):
             raise ValueError("Unknown component operation")
         result = await self.registry.operate({**args, "kind": "component",
-            "action": "register" if args["op"] == "upsert" else "remove", "source": args.get("html")}, session_id)
+            "action": "register" if args["op"] == "upsert" else "remove", "source": args.get("html")}, session_id, run_id=run_id)
         return {**result, "status": args["op"]}
 
     async def runtime(self, args, session_id, run_id):
@@ -202,7 +203,7 @@ class ToolRunner:
         if op == "browser":
             return await self.browser.operate(args, session_id, run_id)
         if op == "registry":
-            return await self.registry.operate(args, session_id)
+            return await self.registry.operate(args, session_id, run_id=run_id)
         if op == "files":
             from .file_tools import file_operation
             return await file_operation(self.store, self.config, session_id, args)
