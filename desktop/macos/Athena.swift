@@ -456,6 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard quitRequest == request, !terminating else { return }
         quitRequest = nil
         NSApp.reply(toApplicationShouldTerminate: false)
+        webView.evaluateJavaScript("window.dispatchEvent(new Event('athena:quit-cancelled'))", completionHandler: nil)
         showCompanion()
         let alert = NSAlert()
         alert.messageText = tr("save_failed")

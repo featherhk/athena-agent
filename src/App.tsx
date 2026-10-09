@@ -52,6 +52,7 @@ import CompanionPortrait from './CompanionPortrait';
 import CompanionSurfaceControls from './CompanionSurfaceControls';
 import CompanionTaskAttention from './CompanionTaskAttention';
 import { DesktopResumeStore, readResumeClaim } from './desktop-resume';
+import { DesktopTransitionFence } from './desktop-transition';
 import { desktopRole, desktopPost, desktopScene, readDesktopState, interactionVisible, setDesktopPresented, companionHitRegions, type DesktopState } from './desktop-bridge';
 import './desktop.css';
 
@@ -77,6 +78,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
   const [resumeReady, setResumeReady] = useState(!desktop);
+  const [desktopFrozen, setDesktopFrozen] = useState(false);
+  const desktopTransition = useRef(new DesktopTransitionFence());
+  const uploadPending = useRef(0);
   const [hasUsers, setHasUsers] = useState(true);
   const [session, setSession] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>(empty);
@@ -248,6 +252,7 @@ export default function App() {
   }, []);
   function effectFor(id: string) { return Object.values(textEffects).map(effects => effects[id]).filter(Boolean).at(-1); }
   function currentGuard() { return scopeGuard(() => uiScope.current); }
+  function submissionGuard() { const scope = currentGuard(); return () => scope() && !desktopTransition.current.blocked; }
   function submissionScope() {
     const scope = uiScope.current;
     return JSON.stringify([scope.owner, scope.session, scope.generation, scope.control, appClient.current]);
@@ -260,7 +265,18 @@ export default function App() {
     }
   }
   function showDraft(draft: Draft) { setText(draft.text); setAttached(draft.attached); }
+  function freezeDesktop(kind: 'quit' | 'logout') {
+    if (!desktop) return undefined;
+    if (uploadPending.current) throw new Error(t('desktop.saveFailed'));
+    const ticket = desktopTransition.current.begin(kind);
+    setDesktopFrozen(true); window.dispatchEvent(new Event('athena:background'));
+    return ticket;
+  }
+  function thawDesktop(ticket: number | undefined) {
+    if (ticket !== undefined && desktopTransition.current.release(ticket)) setDesktopFrozen(false);
+  }
   function editDraft(change: Partial<Pick<Draft, 'text' | 'attached'>>) {
+    if (desktopTransition.current.blocked) return;
     const { owner, session: sid } = uiScope.current;
     showDraft(drafts.current!.write(owner, sid, { ...drafts.current!.read(owner, sid), ...change }));
   }
@@ -269,6 +285,7 @@ export default function App() {
     editDraft({ attached: change(drafts.current!.read(scope.owner, scope.session).attached) });
   }
   function navigate(next: string | null, migrate = false) {
+    if (desktopTransition.current.blocked) return;
     if (desktop) { setDesktopLog(false); setDesktopReplyOpen(Boolean(next)); }
     // Selecting the already open conversation changes presentation only. Its
     // unchanged effect dependencies would never reload an emptied snapshot.
@@ -305,6 +322,7 @@ export default function App() {
   }
   function adjustComponent(component: Component, view: ViewChange) { void changeComponentView(component, view).catch(() => {}); }
   async function applyAppAction(action: AppAction, isCurrent: () => boolean): Promise<AppReceipt> {
+    if (desktopTransition.current.blocked && action.action !== 'sign_out') return interruptedReceipt();
     if (!isCurrent()) return interruptedReceipt();
     if (action.expected_revision != null && frontendObservation.snapshot()?.revision !== action.expected_revision) return { status: 'dismissed', error_code: 'frontend_conflict' };
     let effectIsCurrent = isCurrent;
@@ -384,12 +402,13 @@ export default function App() {
       const scopeStillCurrent = currentGuard();
       const isCurrent = () => scopeStillCurrent() && isSameAccount() && interactionVisible();
       appActionActive.current++;
+      let transition: number | undefined;
       try {
-        if (action.action === 'sign_out') await desktopResume.current?.flush(owner);
+        if (action.action === 'sign_out') { transition = freezeDesktop('logout'); await desktopResume.current?.flush(owner); }
         if (!await prepareAppClaim({ barrier: submissions.current, scope: submissionScope(), current: isCurrent, report: frontendObservation.report })) return;
         const applied = await consumeAppAction(action, client, api, (request, guard) => appActionHandler.current(request, guard), isCurrent, isSameAccount);
         if (applied && action.action === 'sign_out' && isSameAccount()) acceptUser(null);
-      } finally { appActionActive.current--; }
+      } finally { thawDesktop(transition); appActionActive.current--; }
     }).catch(() => { /* A dispatched effect is never replayed; unclaimed requests can reconnect. */ })
       .finally(() => { appActionSeen.current.delete(action.id); });
   }
@@ -452,13 +471,19 @@ export default function App() {
   useEffect(() => {
     if (!desktop) return;
     const flush = async () => {
-      await desktopResume.current!.flush(uiScope.current.owner || undefined);
-      return true;
+      const ticket = freezeDesktop('quit');
+      try {
+        await desktopResume.current!.flush(uiScope.current.owner || undefined);
+        if (!desktopTransition.current.owns(ticket!)) throw new Error('desktop_transition_cancelled');
+        return true;
+      } catch (error) { thawDesktop(ticket); throw error; }
     };
     window.__ATHENA_FLUSH_RESUME__ = flush;
-    const leaving = () => { void flush().catch(() => {}); };
+    const leaving = () => { void desktopResume.current!.flush(uiScope.current.owner || undefined).catch(() => {}); };
+    const cancelled = () => { if (desktopTransition.current.cancelQuit()) setDesktopFrozen(false); };
     window.addEventListener('pagehide', leaving);
-    return () => { delete window.__ATHENA_FLUSH_RESUME__; window.removeEventListener('pagehide', leaving); };
+    window.addEventListener('athena:quit-cancelled', cancelled);
+    return () => { delete window.__ATHENA_FLUSH_RESUME__; window.removeEventListener('pagehide', leaving); window.removeEventListener('athena:quit-cancelled', cancelled); };
   }, [desktop, resumeReady]);
   useEffect(() => {
     if (!user) return;
@@ -670,7 +695,7 @@ export default function App() {
 
   function requestLogin() { setAuth(hasUsers ? 'login' : 'register'); }
   async function submit(value = text, mode: 'queue' | 'interrupt' = 'queue', fromComposer = true, throwOnError = false, retryIntent?: SubmissionIntent) {
-    if (!ready || !resumeReady || (!value.trim() && (!fromComposer || attached.length === 0) && !retryIntent) || sending || resetting || uploading) {
+    if (desktopTransition.current.blocked || !ready || !resumeReady || (!value.trim() && (!fromComposer || attached.length === 0) && !retryIntent) || sending || resetting || uploading) {
       if (throwOnError) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       return;
     }
@@ -681,7 +706,7 @@ export default function App() {
     let acceptedReceipt: { status: 'accepted'; run_id?: string; help_id?: string } | undefined;
     let intent: SubmissionIntent | undefined, dispatched = false, retrying = false;
     const owner = user.id, control = uiScope.current.control;
-    let isCurrent = currentGuard(), sid = session;
+    let isCurrent = submissionGuard(), sid = session;
     let sentDraft = drafts.current!.read(owner, sid);
     const sentFiles = new Set(fromComposer ? sentDraft.attached.map(file => file.id) : []);
     setSending(true); setError(''); conversationScroll.policy.resume();
@@ -690,7 +715,7 @@ export default function App() {
         sid = (await api<{ id: string }>('/sessions', {})).id;
         if (!isCurrent()) { if (throwOnError) throw new VoiceSubmissionError('not_sent'); return; }
         const unchanged = drafts.current!.read(owner, null).revision === sentDraft.revision;
-        navigate(sid, true); submissions.current.move(submission, submissionScope()); isCurrent = currentGuard(); setSending(true);
+        navigate(sid, true); submissions.current.move(submission, submissionScope()); isCurrent = submissionGuard(); setSending(true);
         sentDraft = { ...sentDraft, revision: unchanged ? drafts.current!.read(owner, sid).revision : -1 };
       }
       intent = retryIntent || (fromComposer ? intents.current!.forDraft(owner, sid, sentDraft) : undefined);
@@ -771,15 +796,17 @@ export default function App() {
     return acceptedReceipt;
   }
   async function ensureVoiceSession() {
+    if (desktopTransition.current.blocked) return null;
     if (!user) { requestLogin(); return null; }
     if (session) return session;
-    const isCurrent = currentGuard();
+    const isCurrent = submissionGuard();
     const next = await api<{ id: string }>('/sessions', {});
     if (!isCurrent()) return null;
     navigate(next.id, true);
     return next.id;
   }
   async function submitVoice(value: string) {
+    if (desktopTransition.current.blocked) throw new VoiceSubmissionError('not_sent');
     if (session && help && helpDraftScope) {
       // Read at submission time: a typed edit may have committed since this
       // utterance began. A full saved form is never an implicit retry command.
@@ -788,7 +815,7 @@ export default function App() {
       if (!question || !value.trim()) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
       const submission = submissions.current.begin(submissionScope());
       if (!submission) throw new VoiceSubmissionError('not_sent', new Error('voice_busy'));
-      const receipt = new VoiceSubmissionReceipt(), isCurrent = currentGuard();
+      const receipt = new VoiceSubmissionReceipt(), isCurrent = submissionGuard();
       try {
         const sent = helpDrafts.current!.write(helpDraftScope, { ...saved.answers, [question.id]: value });
         setHelpDraftRevision(old => old + 1);
@@ -829,10 +856,10 @@ export default function App() {
     catch (e) { if (isCurrent()) setError((e as Error).message); if (throwOnError) throw e; }
   }
   async function answerHelp(answers: Record<string, string>) {
-    if (!session || !help || !helpDraftScope || sending || uploading) return;
+    if (desktopTransition.current.blocked || !session || !help || !helpDraftScope || sending || uploading) return;
     const submission = submissions.current.begin(submissionScope());
     if (!submission) return;
-    const sid = session, owner = user!.id, isCurrent = currentGuard();
+    const sid = session, owner = user!.id, isCurrent = submissionGuard();
     const answerScope = helpDraftScope, sentAnswers = helpDrafts.current!.read(answerScope);
     const sentFiles = new Set(attached.map(file => file.id));
     setSending(true); setError('');
@@ -916,12 +943,13 @@ export default function App() {
     // Clear the native selection before any early return or await, so choosing
     // the same file after a validation failure always emits another change.
     if (fileInput.current) fileInput.current.value = '';
-    if (!chosen.length || uploading) return;
+    if (desktopTransition.current.blocked || !chosen.length || uploading) return;
     if (!user) { requestLogin(); return; }
     const owner = user.id, authTicket = authEpoch.current;
     if (chosen.length + attached.length > 10) { setError(t('files.limit')); return; }
     if (chosen.some(file => file.size > 20 * 1024 * 1024)) { setError(t('error.file_too_large')); return; }
     let isCurrent = currentGuard(), sid = session;
+    uploadPending.current++;
     setUploading(true); setError('');
     try {
       if (!sid) {
@@ -939,12 +967,13 @@ export default function App() {
         if (authEpoch.current === authTicket && uiScope.current.owner === owner && uiScope.current.session === sid) showDraft(next);
       }
     } catch (e) { if (isCurrent()) setError((e as Error).message); }
-    finally { if (isCurrent()) setUploading(false); }
+    finally { uploadPending.current--; if (isCurrent()) setUploading(false); }
   }
   async function signOut() {
     const ticket = authEpoch.current;
-    invalidateActions();
+    let transition: number | undefined;
     try {
+      transition = freezeDesktop('logout'); invalidateActions();
       await desktopResume.current?.flush(uiScope.current.owner || undefined);
       try { await api('/auth/logout', {}); }
       catch (error) {
@@ -954,6 +983,7 @@ export default function App() {
       }
       if (authEpoch.current === ticket) acceptUser(null);
     } catch (e) { if (authEpoch.current === ticket) setError((e as Error).message); }
+    finally { thawDesktop(transition); }
   }
   async function forkSession() {
     if (!session) return;
@@ -984,6 +1014,7 @@ export default function App() {
       if (method === 'file') return readSurfaceFile(() => surfaceFileSnapshot.current, args.file_id, isCurrentSurface);
       if (method === 'draft') return drafts.current!.read(user.id, session);
       if (method === 'writeDraft') {
+        if (desktopTransition.current.blocked) throw new SurfaceError('surface_closed');
         const draft = drafts.current!.read(user.id, session);
         if (args.expected_revision !== draft.revision) throw new SurfaceError('draft_conflict');
         if (typeof args.text !== 'string' || args.text.length > 30000) throw new SurfaceError('invalid_request');
@@ -1215,8 +1246,8 @@ export default function App() {
     <footer className="composer-area" ref={composer} data-desktop-hit={desktop || undefined}><div className="composer-wrap">
       {recoveryMode && <p className="notice" role="status">{t('surface.recovery')}</p>}
       {rendererUnavailable && <p className="notice" role="status">{t('componentUnavailable')}</p>}
-      {help && <UserHelp key={help.id} request={help} busy={sending || uploading} answer={answerHelp} answers={helpAnswers}
-        change={answers => { if (!helpDraftScope) return; helpDrafts.current!.write(helpDraftScope, answers); setHelpDraftRevision(old => old + 1); }}
+      {help && <UserHelp key={help.id} request={help} busy={desktopFrozen || sending || uploading} answer={answerHelp} answers={helpAnswers}
+        change={answers => { if (desktopTransition.current.blocked || !helpDraftScope) return; helpDrafts.current!.write(helpDraftScope, answers); setHelpDraftRevision(old => old + 1); }}
         select={value => { editDraft({ text: value }); input.current?.focus(); }} />}
       {busy && !waiting && (!desktop || reconnecting || queued > 0) && <div className="activity" role="status"><span className="typing"><i /><i /><i /></span>{reconnecting ? t('reconnecting') : waitingAgents ? t('agents.waiting') : orbPhase === 'executing' ? t('working') : orbPhase === 'responding' ? t('responding') : t('thinking')}{queued > 0 && <small>{t('queuedCount', { count: queued })}</small>}</div>}
       {pendingStops.length > 0 && <section className="submission-recovery notice" data-stop-recovery role="region" aria-label={t('send.stopUnknown')}>
@@ -1241,12 +1272,12 @@ export default function App() {
       {chooseFiles && <div className="activity"><button className="quiet" type="button" onClick={() => { setChooseFiles(false); fileInput.current?.click(); }}>{t('files.attach')}</button><button className="icon-button" type="button" aria-label={t('close')} onClick={() => setChooseFiles(false)}>×</button></div>}
       <input type="file" multiple hidden ref={fileInput} onChange={event => void upload(event.target.files)} />
       <form className={`composer${renderer ? ' surface-call-controls' : ''}`} data-task-active={busy || waiting || sending} onSubmit={event => { event.preventDefault(); void submit(); }}>
-        {!renderer && <><button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={!resumeReady || uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
-        <textarea dir="auto" readOnly={!resumeReady} ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+        {!renderer && <><button className="icon-button attach-button" type="button" title={t('files.attach')} aria-label={t('files.attach')} disabled={!resumeReady || desktopFrozen || uploading || sending} onClick={() => user ? fileInput.current?.click() : requestLogin()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 13 8-8" /></svg></button>
+        <textarea dir="auto" readOnly={!resumeReady || desktopFrozen} ref={input} aria-label={t('message')} placeholder={t(help ? help.questions.length === 1 ? 'help.placeholder' : 'queue' : 'placeholder')} value={text} rows={1} maxLength={30000} onChange={event => { editDraft({ text: event.target.value }); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
         </>}<div className="send-actions" key="actions">
-          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || !resumeReady || resetting || sending || uploading || pendingIntents.length > 0 || pendingStops.length > 0} hasPendingDelivery={value => Boolean(user && session && intents.current!.list(user.id, session).some(intent => !intent.draft && intent.text === value))} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
+          <VoiceCall key={voiceRecovery} sessionId={session} ownerId={user?.id || null} messages={voiceMessages} busy={busy} disabled={!ready || !resumeReady || desktopFrozen || resetting || sending || uploading || pendingIntents.length > 0 || pendingStops.length > 0} hasPendingDelivery={value => Boolean(user && session && intents.current!.list(user.id, session).some(intent => !intent.draft && intent.text === value))} ensureSession={ensureVoiceSession} submit={submitVoice} interrupt={interruptVoice} onActiveChange={setVoiceActive} />
           {!renderer && <ComposerActions busy={busy} sending={sending} questions={help?.questions.length || 0} text={text} attachmentCount={attached.length}
-            disabled={sending || uploading || !ready || !resumeReady || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />}
+            disabled={desktopFrozen || sending || uploading || !ready || !resumeReady || resetting} stop={() => void stop()} interrupt={() => void submit(text, 'interrupt')} />}
         </div>
       </form>
     </div></footer>
