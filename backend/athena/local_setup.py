@@ -162,6 +162,7 @@ def register_routes(app, config, login_response):
             credential = key
             if not credential and previous["api_base"].rstrip("/") == profile.api_base:
                 credential = (config.api_key if previous_id == "default" else "") or _setting(db, "deepseek_api_key" if previous_id == "default" else "provider_key:" + previous_id, "")
+            has_existing_credential = bool(credential)
             if not credential:
                 if urlparse(profile.api_base).hostname not in ("127.0.0.1", "localhost", "::1"):
                     raise HTTPException(400, "local_provider_key_required")
@@ -173,19 +174,26 @@ def register_routes(app, config, login_response):
                     raise HTTPException(404, "session_not_found")
                 if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status IN ('queued','running','waiting_user','waiting_agents')", (body.session_id,)).fetchone():
                     raise HTTPException(409, "local_model_busy")
-            definition = json.dumps(profile.snapshot())
-            db.execute("INSERT INTO model_profiles VALUES (?,?,1,?)", (profile.id, definition, now()))
-            _set(db, "provider_key:" + profile.id, credential)
-            _set(db, PROFILE, profile.id)
-            _set(db, REVISION, revision + 1)
-            if session:
+            same_connection = has_existing_credential and not key and all(previous[name] == getattr(profile, name)
+                                              for name in ("provider", "model", "api_base"))
+            selected = previous if same_connection else profile.snapshot()
+            selected_id = selected["id"]
+            definition = json.dumps(selected)
+            if not same_connection:
+                db.execute("INSERT INTO model_profiles VALUES (?,?,1,?)", (selected_id, definition, now()))
+                _set(db, "provider_key:" + selected_id, credential)
+                _set(db, PROFILE, selected_id)
+                revision += 1
+                _set(db, REVISION, revision)
+            session_changed = bool(session and session["model_profile_id"] != selected_id)
+            if session_changed:
                 epoch = session["model_epoch"] + 1
-                db.execute("UPDATE sessions SET model_profile_id=?,model_epoch=? WHERE id=?", (profile.id, epoch, body.session_id))
+                db.execute("UPDATE sessions SET model_profile_id=?,model_epoch=? WHERE id=?", (selected_id, epoch, body.session_id))
                 db.execute("INSERT INTO model_switches VALUES (?,?,?,?,?,?,?,?,?)", (uid(), body.session_id, None,
-                           session["model_profile_id"], profile.id, epoch, "Local model settings", definition, now()))
-            return {"configured": True, "revision": revision + 1,
-                    "profile": {key: profile.snapshot()[key] for key in ("id", "provider", "model", "api_base")}}
-        result = await app.state.store.call(save)
-        if body.session_id:
-            await app.state.engine.emit(body.session_id, "model_changed", {"profile_id": profile.id})
+                           session["model_profile_id"], selected_id, epoch, "Local model settings", definition, now()))
+            return {"configured": True, "revision": revision,
+                    "profile": {key: selected[key] for key in ("id", "provider", "model", "api_base")}}, session_changed
+        result, session_changed = await app.state.store.call(save)
+        if session_changed:
+            await app.state.engine.emit(body.session_id, "model_changed", {"profile_id": result["profile"]["id"]})
         return result

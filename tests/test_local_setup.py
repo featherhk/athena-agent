@@ -290,3 +290,87 @@ async def test_restart_keeps_identity_and_uses_byok_for_real_stream_transport(lo
             assert 'fixture-secret' not in json.dumps(snapshot)
             receipts = await restarted.state.store.rows('SELECT * FROM requests')
             assert receipts[0]['status'] == 'complete' and 'fixture-secret' not in json.dumps(receipts)
+
+
+async def test_identical_provider_save_preserves_profile_context_epoch_and_events(local_config):
+    app = create_app(local_config)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport(app), base_url='http://127.0.0.1:4317') as client:
+            await client.post('/api/local/bootstrap', json={})
+            saved = (await client.post('/api/local/provider', json=provider())).json()
+            sid = (await client.post('/api/sessions', json={})).json()['id']
+            context = await app.state.engine.context(sid)
+            events = await app.state.store.rows('SELECT * FROM events')
+            for key in [None, '', None]:
+                result = await client.post('/api/local/provider', json=provider(revision=1, api_key=key, session_id=sid))
+                assert result.status_code == 200 and result.json() == saved
+                profile, epoch = await app.state.engine.models.selected(sid)
+                assert profile.id == saved['profile']['id'] and epoch == 0
+                assert await app.state.engine.context(sid) == context
+            assert len(await app.state.store.rows('SELECT id FROM model_profiles')) == 2
+            assert not await app.state.store.rows('SELECT * FROM model_switches')
+            assert await app.state.store.rows('SELECT * FROM events') == events
+            without_session = await client.post('/api/local/provider', json=provider(revision=1, api_key=None))
+            assert without_session.json() == saved
+            assert 'fixture-secret' not in without_session.text
+
+
+async def test_same_default_reuses_profile_but_switches_other_idle_session_and_keeps_busy_guard(local_config):
+    app = create_app(local_config)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport(app), base_url='http://127.0.0.1:4317') as client:
+            await client.post('/api/local/bootstrap', json={})
+            first = (await client.post('/api/local/provider', json=provider())).json()
+            sid = (await client.post('/api/sessions', json={})).json()['id']
+            second = (await client.post('/api/local/provider', json=provider(revision=1, model='next-model', api_key=None))).json()
+            assert (await app.state.engine.models.selected(sid))[0].id == first['profile']['id']
+            await app.state.store.execute("INSERT INTO runs(id,session_id,status,created_at) VALUES ('switch-busy',?,'running','2026-10-01')", (sid,))
+            unchanged = provider(revision=2, model='next-model', api_key=None, session_id=sid)
+            blocked = await client.post('/api/local/provider', json=unchanged)
+            assert blocked.status_code == 409 and blocked.json()['code'] == 'local_model_busy'
+            assert (await app.state.engine.models.selected(sid))[1] == 0
+            await app.state.store.execute("UPDATE runs SET status='complete' WHERE id='switch-busy'")
+            switched = await client.post('/api/local/provider', json=unchanged)
+            assert switched.status_code == 200 and switched.json() == second
+            current, epoch = await app.state.engine.models.selected(sid)
+            assert current.id == second['profile']['id'] and epoch == 1
+            assert len(await app.state.store.rows('SELECT id FROM model_profiles')) == 3
+            events = await app.state.store.rows("SELECT payload FROM events WHERE type='model_changed'")
+            assert len(events) == 1 and json.loads(events[0]['payload'])['profile_id'] == second['profile']['id']
+            assert (await client.post('/api/local/provider', json=unchanged)).json() == second
+            assert len(await app.state.store.rows('SELECT id FROM model_switches')) == 1
+            assert len(await app.state.store.rows("SELECT seq FROM events WHERE type='model_changed'")) == 1
+
+
+async def test_new_key_is_explicit_boundary_even_when_model_is_unchanged(local_config):
+    app = create_app(local_config)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport(app), base_url='http://127.0.0.1:4317') as client:
+            await client.post('/api/local/bootstrap', json={})
+            first = (await client.post('/api/local/provider', json=provider())).json()
+            sid = (await client.post('/api/sessions', json={})).json()['id']
+            result = await client.post('/api/local/provider', json=provider(revision=1, api_key='fixture-replaced-private-key', session_id=sid))
+            assert result.status_code == 200 and result.json()['revision'] == 2
+            profile, epoch = await app.state.engine.models.selected(sid)
+            assert epoch == 1 and profile.id != first['profile']['id']
+            assert await app.state.engine.models.key(profile) == 'fixture-replaced-private-key'
+            assert 'fixture-replaced' not in result.text
+            audit = await app.state.store.rows('SELECT * FROM model_switches')
+            assert len(audit) == 1 and 'fixture-replaced' not in json.dumps(audit)
+            assert (await client.get('/api/local/provider')).json()['profile']['id'] == profile.id
+
+
+async def test_unconfigured_keyless_default_is_configured_before_noop_is_allowed(local_config):
+    app = create_app(replace(local_config, api_base='http://127.0.0.1:11434/v1'))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport(app), base_url='http://127.0.0.1:4317') as client:
+            await client.post('/api/local/bootstrap', json={})
+            initial = (await client.get('/api/local/provider')).json()
+            assert not initial['configured']
+            fields = {key: initial['profile'][key] for key in ('provider', 'model', 'api_base')}
+            saved = await client.post('/api/local/provider', json=provider(**fields, api_key=None))
+            assert saved.status_code == 200 and saved.json()['revision'] == 1
+            current = (await client.get('/api/local/provider')).json()
+            assert current == saved.json() and current['configured']
+            repeated = await client.post('/api/local/provider', json=provider(**fields, api_key=None, revision=1))
+            assert repeated.json() == current
