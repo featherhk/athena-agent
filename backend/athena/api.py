@@ -131,7 +131,9 @@ def create_app(config: Config | None = None):
         if host not in ("127.0.0.1", "localhost", "::1", "testserver", public.hostname if public else None):
             return JSONResponse({"error": "Only local requests are accepted"}, status_code=403)
         origin = request.headers.get("origin")
-        allowed_origins = {f"http://{host}:{port}" for host in ("127.0.0.1", "localhost") for port in (os.environ.get("ATHENA_PORT", "4317"), "5173")}
+        # IPv6 URL authorities require brackets; keep the same explicit local
+        # hosts and ports rather than accepting arbitrary loopback-looking names.
+        allowed_origins = {f"http://{host}:{port}" for host in ("127.0.0.1", "localhost", "[::1]") for port in (os.environ.get("ATHENA_PORT", "4317"), "5173")}
         if public:
             allowed_origins = {config.public_origin}
         if origin and origin not in allowed_origins:

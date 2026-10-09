@@ -48,6 +48,38 @@ async def test_fresh_bootstrap_is_atomic_and_reuses_only_marked_identity(local_c
             assert (await client.post('/api/local/bootstrap', json={})).json()['user']['id'] == user['id']
 
 
+async def test_ipv6_loopback_browser_can_bootstrap_and_save_local_provider(local_config, monkeypatch):
+    monkeypatch.setenv('ATHENA_PORT', '4497')
+    app = create_app(replace(local_config, bind_host='::1'))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport(app, '::1'), base_url='http://[::1]:4497',
+                                     headers={'Origin': 'http://[::1]:4497', 'Sec-Fetch-Site': 'same-origin'}) as client:
+            response = await client.post('/api/local/bootstrap', json={})
+            assert response.status_code == 200
+            user = response.json()['user']
+            assert (await client.get('/api/auth/me')).json()['user']['id'] == user['id']
+            saved = await client.post('/api/local/provider', json=provider(
+                provider='Local', api_base='http://[::1]:11434/v1', api_key=None))
+            assert saved.status_code == 200 and saved.json()['configured']
+            session = (await client.post('/api/sessions', json={})).json()['id']
+            selected, _ = await app.state.engine.models.selected(session)
+            assert selected.id == saved.json()['profile']['id']
+
+
+@pytest.mark.parametrize('origin', [
+    'http://[::1]:4498', 'https://[::1]:4497', 'http://[::ffff:127.0.0.1]:4497',
+    'http://[::2]:4497', 'http://localhost.attacker.example:4497', 'null',
+])
+async def test_ipv6_browser_origin_does_not_expand_host_scheme_or_port_access(local_config, monkeypatch, origin):
+    monkeypatch.setenv('ATHENA_PORT', '4497')
+    app = create_app(replace(local_config, bind_host='::1'))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport(app, '::1'), base_url='http://[::1]:4497',
+                                     headers={'Origin': origin}) as client:
+            assert (await client.post('/api/local/bootstrap', json={})).status_code == 403
+            assert not await app.state.store.rows('SELECT id FROM users')
+
+
 @pytest.mark.parametrize('extra', [
     {'bind_host': '0.0.0.0'}, {'bind_host': '::'}, {'public_origin': 'https://local.example'},
     {'local_setup_enabled': False},
