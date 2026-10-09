@@ -7,6 +7,19 @@ from .errors import UserError
 from .store import now
 
 
+def file_fields(db, session_id, component):
+    """Never expose a descriptor without checking both source and target owner."""
+    file_id = component['file_id'] if 'file_id' in component.keys() else None
+    file = None
+    if file_id:
+        from .files import component_file
+        try:
+            file = component_file(db, session_id, file_id)
+        except UserError:
+            pass  # Preserve recoverable registration, but fail closed on content.
+    return {'file_id': file_id, 'file': file}
+
+
 def read_view(db, session_id, component_id):
     row = db.execute("SELECT * FROM component_views WHERE session_id=? AND component_id=?", (session_id, component_id)).fetchone()
     return {"view": json.loads(row["state"]) if row else {},
@@ -18,7 +31,7 @@ def active_components(db, session_id, *, include_source=True):
     # Include folded surfaces: the independent shell can always reopen them.
     # Selection/observation only needs metadata, not every potentially large HTML
     # document. Join layouts once rather than querying once per component.
-    columns = 'c.*' if include_source else 'c.id,c.version,c.placement,c.created_at'
+    columns = 'c.*' if include_source else 'c.id,c.version,c.placement,c.created_at,c.file_id'
     rows = db.execute(f"""SELECT {columns},v.state AS _view_state,v.revision AS view_revision,v.updated_at AS view_updated_at
         FROM components c LEFT JOIN component_views v ON v.session_id=c.session_id AND v.component_id=c.id
         WHERE c.session_id=? AND c.version=(SELECT MAX(version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id)
@@ -28,6 +41,7 @@ def active_components(db, session_id, *, include_source=True):
         item = dict(row)
         item['view'] = json.loads(item.pop('_view_state') or '{}')
         item['view_revision'] = item['view_revision'] or 0
+        item.update(file_fields(db, session_id, item))
         items.append(item)
     candidates = [item for item in items if item['view'].get('placement', item['placement']) == 'surface'
                   and not item['view'].get('hidden', False)]
@@ -55,7 +69,9 @@ def desktop_registration(db, session_id):
     """Desired native surfaces; registration is never evidence of display."""
     if session_id is None:
         return []
-    return [{key: item[key] for key in ('id', 'version', 'view_revision', 'view')}
+    return [{**{key: item[key] for key in ('id', 'version', 'view_revision', 'view')},
+             **({'file_id': item['file_id'], 'content_revision': (item.get('file') or {}).get('content_revision')}
+                if item.get('file_id') else {})}
             for item in active_components(db, session_id, include_source=False)
             if item['view'].get('placement', item['placement']) == 'desktop']
 

@@ -30,7 +30,9 @@ print(json.dumps({"result": args["a"] + args["b"]}))
 
 ## 组件
 
-`kind: component, action: register` 传 `id/title/source`，`source` 是隔离页面的 HTML。`placement` 支持 inline、workspace、banner、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end、overlay、fullscreen、presence，以及替换整个会话 renderer 的 surface；详细布局与桥接接口见 interface skill 的 references/bridge.md 和 references/surface.md。Mac 原生桌面位置 desktop 见 desktop skill，先检查宿主支持。省略位置时保留原位置，新组件默认为 inline。`update_frontend upsert/remove` 继续有效，并共享同一版本历史。恢复时传组件 `id` 和历史 `version`，位置也一并恢复。组件不能修改固定控制外壳；应用字体、颜色等已有设置应使用 application skill。
+`kind: component, action: register` 传 `id/title`，以及 `source` 或 `file_id` 二选一：`source` 是隔离页面 HTML；`file_id` 是已有真实文件，使用同一安全预览器，不把表格内容重写成 HTML。`placement` 支持 inline、workspace、banner、四角 top-start/top-end/bottom-start/bottom-end、sidebar-start/sidebar-end、overlay、fullscreen、presence，以及替换整个会话 renderer 的 surface；详细布局与桥接接口见 interface skill 的 references/bridge.md 和 references/surface.md。Mac 原生桌面位置 desktop 见 desktop skill，先检查宿主支持。省略位置时保留原位置，新组件默认为 inline。`update_frontend upsert/remove` 继续有效，并共享同一版本历史。恢复时传组件 `id` 和历史 `version`，文件来源和位置也一并恢复。组件不能修改固定控制外壳；应用字体、颜色等已有设置应使用 application skill。
+
+文件来源的组件返回 `file_id` 与规范 `file` 描述（含 `content_revision`）；可显式选择同账户其他会话文件，先向用户说明来源，不暗中改用别的会话资料。自动交付生成的 `athena_file_` 前缀由宿主管理，不能用 register 覆盖；可照常 read/layout/remove/restore。文件更新仍读取原文件，不复制出第二份。文件来源与 HTML 源码共享版本、停用、fork、Reset 机制；普通刷新不得重新打开用户收起的组件。文件预览的真实结果查看 `app snapshot` 中带相同 `file_id/content_revision` 的桌面回执，不把 HTML 加载状态当成表格已显示。
 
 注册响应中的 `render.state: unobserved` 不是显示成功。后续 `read/list` 可查看该版本的浏览器回报（mounted/failed、has_content、in_view、error_code、observed_at）；回报只证明当次加载状态，不代表数据真实、按钮可用、自动刷新成功。已有组件必须从当前会话登记状态确认，不能从历史对话中推定仍存在；详细显示与数据更新限制见 interface skill。
 

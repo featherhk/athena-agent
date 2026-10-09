@@ -277,6 +277,9 @@ def create_app(config: Config | None = None):
     @app.get("/api/sessions/{session_id}")
     async def snapshot(session_id: str, request: Request):
         await exists(session_id, request)
+        # Refresh disk metadata before projecting file-backed components, so
+        # file cards and desktop registrations share one content revision.
+        files = await list_session_files(app.state.store, config, request.state.user['id'], session_id)
         def snapshot(db):
             from .component_views import active_components
             from .agents import branch, public_job
@@ -293,7 +296,7 @@ def create_app(config: Config | None = None):
         result = await app.state.store.call(snapshot)
         result["account_action"] = await pending_account_action(app.state.store, request.state.user["id"])
         result["preferences"] = await read_preferences(app.state.store, request.state.user["id"])
-        result["files"] = await list_session_files(app.state.store, config, request.state.user["id"], session_id)
+        result["files"] = files
         result["help_requests"] = await list_help(app.state.store, session_id, request.state.user["id"])
         from .agents import delegated_help
         result['help_requests'] += await delegated_help(app.state.store, session_id, request.state.user['id'])

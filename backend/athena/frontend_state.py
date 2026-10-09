@@ -109,8 +109,10 @@ class DesktopComponent(Workspace):
     visible: bool
     rect: DesktopRect
     screen_id: Identifier
+    file_id: Identifier | None = None
+    content_revision: str | None = Field(default=None, max_length=128)
     error_code: Literal['native_unavailable', 'panel_failed', 'navigation_failed', 'script_error',
-                        'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout'] | None = None
+                        'unhandled_rejection', 'blocked_resource', 'empty_document', 'load_timeout', 'preview_unavailable'] | None = None
 
     @model_validator(mode='after')
     def valid_receipt(self):
@@ -323,6 +325,11 @@ async def observe(store, user_id, auth_hash, observation):
         state.pop('surface', None)
     if body.desktop is None:
         state.pop('desktop', None)
+    else:
+        for incoming, encoded_component in zip(body.desktop.components, state['desktop']['components']):
+            for field in ('file_id', 'content_revision'):
+                if field not in incoming.model_fields_set:
+                    encoded_component.pop(field, None)
     encoded = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if len(encoded.encode()) > 24576:
         raise ValueError('Frontend observation exceeds 24 KiB.')
@@ -343,10 +350,19 @@ async def observe(store, user_id, auth_hash, observation):
             raise UserError('not_found', 'This renderer version was not registered in this conversation.')
         if body.desktop:
             for component in body.desktop.components:
-                if not body.session_id or not db.execute(
-                        'SELECT 1 FROM components WHERE session_id=? AND id=? AND version=?',
-                        (body.session_id, component.id, component.version)).fetchone():
+                registration = db.execute('SELECT file_id FROM components WHERE session_id=? AND id=? AND version=?',
+                                          (body.session_id, component.id, component.version)).fetchone() if body.session_id else None
+                if not registration:
                     raise UserError('not_found', 'This desktop component version was not registered in this conversation.')
+                if registration['file_id'] != component.file_id:
+                    raise UserError('frontend_conflict', 'This file observation does not match its registered component.')
+                if component.file_id:
+                    from .files import component_file
+                    file = component_file(db, body.session_id, component.file_id)
+                    if file['content_revision'] != component.content_revision:
+                        raise UserError('frontend_conflict', 'This file observation has an obsolete content revision.')
+                elif component.content_revision is not None:
+                    raise UserError('frontend_conflict', 'HTML components cannot report file content revisions.')
                 from .component_views import read_view
                 if component.view_revision > read_view(db, body.session_id, component.id)['view_revision']:
                     raise UserError('frontend_conflict', 'A desktop observation cannot report a future layout revision.')

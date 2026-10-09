@@ -8,6 +8,7 @@ import shutil
 
 import jsonschema
 
+from .errors import UserError
 from .store import now, uid
 
 
@@ -27,6 +28,8 @@ COMPONENT_ID = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
 COMPONENT_PLACEMENTS = ("inline", "workspace", "banner", "top-start", "top-end", "bottom-start", "bottom-end", "overlay", "fullscreen", "presence", "sidebar-start", "sidebar-end", "surface", "desktop")
 COMPONENT_ERRORS = ("script_error", "unhandled_rejection", "blocked_resource", "empty_document", "load_timeout")
 MAX_FILES, MAX_PACKAGE_BYTES = 64, 4 * 1024 * 1024
+FILE_COMPONENT_PREFIX = 'athena_file_'
+FILE_COMPONENT_VIEW = {'x': 0.05, 'y': 0.1, 'width': 860, 'height': 560}
 
 
 def policy_state(name, active=True, current=True):
@@ -157,6 +160,11 @@ class Registry:
 
     @staticmethod
     def _render_status(db, session_id, component_id, version):
+        component = db.execute('SELECT file_id FROM components WHERE session_id=? AND id=? AND version=?',
+                               (session_id, component_id, version)).fetchone()
+        if component and component['file_id']:
+            return {'state': 'unobserved', 'functional_verification': 'not_performed',
+                    'scope': 'file_preview_only', 'observation': 'app_snapshot_desktop'}
         report = db.execute("SELECT state,has_content,in_view,error_code,created_at FROM component_reports "
                             "WHERE session_id=? AND component_id=? AND version=? ORDER BY seq DESC LIMIT 1",
                             (session_id, component_id, version)).fetchone()
@@ -182,6 +190,8 @@ class Registry:
         await initialize_registry(self.store)
         def record(db):
             current = self._record(db, "component", session_id, component_id)
+            if current.get('file_id'):
+                raise ValueError('File previews require a file-aware host observation, not an HTML document report.')
             if current["version"] != version or not current["active"]:
                 return {"accepted": False, "reason": "obsolete_version"}
             previous = db.execute("SELECT state,has_content,in_view,error_code FROM component_reports "
@@ -267,6 +277,8 @@ class Registry:
                 raise ValueError("Use a valid component id or a lowercase user_ tool/skill name")
         if action != "list" and name is None:
             raise ValueError(f"Registry {action} requires {key}")
+        if kind == 'component' and action == 'register' and name.startswith(FILE_COMPONENT_PREFIX):
+            raise UserError('invalid_input', 'This component id is reserved for file delivery. Use layout, remove or restore, or choose another id.')
         version = args.get("version")
         if version is not None and (type(version) is not int or version < 1):
             raise ValueError("Version must be a positive integer")
@@ -295,6 +307,8 @@ class Registry:
                 item["description" if kind != "component" else "title"] = row["description" if kind != "component" else "title"]
                 item["enabled"] = bool(row["active"] and row["current"])
                 if kind == "component":
+                    from .component_views import file_fields
+                    item.update(await self.store.call(lambda db, row=row: file_fields(db, owner, row)))
                     item.update(await self.store.call(lambda db, row=row: read_view(db, owner, row['id'])))
                     item['surface_selected'] = selected.get('id') == row['id'] and selected.get('version') == row['version']
                     item["placement"] = row.get("placement", "inline")
@@ -313,9 +327,10 @@ class Registry:
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 result.update(policy_state(name, row["active"], latest["version"] == row["version"]))
             if kind == "component":
-                from .component_views import read_view, surface_selected
+                from .component_views import file_fields, read_view, surface_selected
                 result.update(await self.store.call(lambda db: {
                     **read_view(db, owner, name),
+                    **file_fields(db, owner, row),
                     'surface_selected': surface_selected(db, owner, name, row['version'])}))
                 latest = await self.store.call(lambda db: self._record(db, kind, owner, name))
                 render = await self.store.call(lambda db: self._render_status(db, owner, name, row["version"]))
@@ -358,7 +373,9 @@ class Registry:
                 raise ValueError("Restore requires an explicit historical version")
             row = await self.store.call(lambda db: self._record(db, kind, owner, name, version))
             if kind == "component":
-                args = {**args, "source": row["html"], "title": row["title"], "placement": row.get("placement", "inline")}
+                args = {**{key: value for key, value in args.items() if key not in ('source', 'file_id')},
+                        **({'file_id': row['file_id']} if row.get('file_id') else {'source': row['html']}),
+                        "title": row["title"], "placement": row.get("placement", "inline")}
             elif kind in ("tool", "policy"):
                 source = await asyncio.to_thread(self._path(row, user).read_text, encoding="utf-8")
                 args = {**args, "source": source, "description": row["description"]}
@@ -385,14 +402,83 @@ class Registry:
         db.execute("INSERT INTO events(session_id,type,payload,created_at) VALUES (?,?,?,?)",
                    (session_id, "registry_changed", json.dumps(payload), now()))
 
+    async def present_file(self, session_id, file_id, *, reveal):
+        """Idempotent default delivery through the ordinary versioned registry.
+
+        Closing, removing or Reset leaves a durable component tombstone. Passive
+        delivery never undoes that choice; only an explicit reveal can reopen it.
+        """
+        from .component_views import file_fields, read_view, surface_selected
+        from .files import component_file, ensure_component_file
+        if type(reveal) is not bool or not isinstance(file_id, str) or not COMPONENT_ID.fullmatch(file_id):
+            raise UserError('invalid_input', 'Select a valid file to present.')
+        name = FILE_COMPONENT_PREFIX + file_id
+        if not COMPONENT_ID.fullmatch(name):
+            raise UserError('invalid_input', 'Invalid file presentation identifier.')
+        await initialize_registry(self.store)
+        user, owner = await self._scope(session_id, 'component')
+        await ensure_component_file(self.config, self.store, owner, file_id, inherited_only=not reveal)
+        directory = self.config.data_dir / 'extensions' / user / 'frontend' / owner
+        path = directory / (uid() + '.json')
+        def write():
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with path.open('x', encoding='utf-8') as output:
+                path.chmod(0o600)
+                json.dump({'kind': 'file', 'file_id': file_id}, output)
+        await asyncio.to_thread(write)
+        def present(db):
+            file = component_file(db, owner, file_id, inherited_only=not reveal)
+            prior = db.execute('SELECT * FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1',
+                               (owner, name)).fetchone()
+            if prior is not None and prior['file_id'] != file_id:
+                raise UserError('component_changed', 'This reserved id already belongs to another component; it was not overwritten.')
+            created = prior is None
+            changed = created
+            if created:
+                record = {'title': file['name'][:80], 'html': '', 'file_id': file_id,
+                          'placement': 'desktop', 'file_path': str(path.relative_to(self.config.data_dir))}
+                version = 1
+                self._insert(db, 'component', owner, name, version, record)
+                self._component_event(db, owner, name, version, 'register', 'desktop')
+            elif reveal and not prior['active']:
+                version = prior['version'] + 1
+                self._insert(db, 'component', owner, name, version, dict(prior))
+                self._component_event(db, owner, name, version, 'restore', prior['placement'])
+                changed = True
+            else:
+                version = prior['version']
+            current = read_view(db, owner, name)
+            if created or (reveal and (current['view'].get('hidden', False) or (changed and not current['view']))):
+                state = {**(FILE_COMPONENT_VIEW if not current['view'] else current['view']), 'hidden': False}
+                revision, stamp = current['view_revision'] + 1, now()
+                db.execute('INSERT INTO component_views VALUES (?,?,?,?,?) ON CONFLICT(session_id,component_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,updated_at=excluded.updated_at',
+                           (owner, name, json.dumps(state), revision, stamp))
+                db.execute('INSERT INTO events(session_id,type,payload,created_at) VALUES (?,?,?,?)',
+                           (owner, 'component_view', json.dumps({'id': name, 'version': version, 'view': state, 'view_revision': revision}), stamp))
+                changed = True
+            row = dict(db.execute('SELECT * FROM components WHERE session_id=? AND id=? AND version=?', (owner, name, version)).fetchone())
+            return {'component': {**row, **read_view(db, owner, name), **file_fields(db, owner, row),
+                                  'surface_selected': surface_selected(db, owner, name, version)},
+                    'created': created, 'changed': changed}
+        try:
+            result = await self.store.call(present)
+        except Exception:
+            await asyncio.to_thread(path.unlink, missing_ok=True)
+            raise
+        # Cancellation can race a committed SQLite operation. Preserve the
+        # manifest on unknown outcome; never delete a potentially referenced file.
+        if not result['created']:
+            await asyncio.to_thread(path.unlink, missing_ok=True)
+        return result
+
     @staticmethod
     def _insert(db, kind, owner, name, version, record, active=True):
         if kind == "tool":
             db.execute("INSERT INTO extensions VALUES (?,?,?,?,?,?,?,?)", (owner, name, version,
                        record["description"], record["parameters"], record["file_path"], int(active), now()))
         elif kind == "component":
-            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement) VALUES (?,?,?,?,?,?,?,?,?)",
-                       (owner, name, version, record["title"], record["html"], int(active), now(), record["file_path"], record.get("placement", "inline")))
+            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (owner, name, version, record["title"], record["html"], int(active), now(), record["file_path"], record.get("placement", "inline"), record.get('file_id')))
         else:
             db.execute(f"INSERT INTO {KINDS[kind][0]} VALUES (?,?,?,?,?,?,?)", (owner, name, version,
                        record["description"], record["file_path"], int(active), now()))
@@ -402,7 +488,15 @@ class Registry:
         if kind == "skill":
             package, record["description"] = _package(args, name)
         else:
-            source = _source(args.get("source"))
+            file_id = args.get('file_id') if kind == 'component' else None
+            if file_id is not None:
+                if not isinstance(file_id, str) or not COMPONENT_ID.fullmatch(file_id) or args.get('source') is not None:
+                    raise ValueError('Provide either an owned file_id or HTML source, not both.')
+                from .files import ensure_component_file
+                file = await ensure_component_file(self.config, self.store, owner, file_id)
+                source = json.dumps({'kind': 'file', 'file_id': file_id}, ensure_ascii=False)
+            else:
+                source = _source(args.get("source"))
             if kind in ("tool", "policy"):
                 if kind == "tool":
                     parameters = args.get("parameters")
@@ -416,16 +510,16 @@ class Registry:
                 record["description"] = _description(args.get("description"))
             else:
                 old = await self.store.rows("SELECT title,placement FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1", (owner, name))
-                title = args.get("title", old[0]["title"] if old else "小工具")
+                title = args.get("title", old[0]["title"] if old else file['name'][:80] if file_id else "小工具")
                 placement = args.get("placement", old[0]["placement"] if old else "inline")
                 if placement not in COMPONENT_PLACEMENTS:
                     raise ValueError("Use a supported component placement: " + ", ".join(COMPONENT_PLACEMENTS))
                 if not isinstance(title, str) or len(title) > 80:
                     raise ValueError("Component title must be at most 80 characters")
-                record.update(title=title, html=source, placement=placement)
+                record.update(title=title, html='' if file_id else source, placement=placement, file_id=file_id)
         area = {"tool": "backend", "component": "frontend", "skill": "skills", "policy": "policies"}[kind]
         directory = self.config.data_dir / "extensions" / user / area / (owner if kind == "component" else name)
-        path = directory / (uid() + ({"tool": ".py", "component": ".html", "skill": "", "policy": ".py"}[kind]))
+        path = directory / (uid() + ('.json' if record.get('file_id') else {"tool": ".py", "component": ".html", "skill": "", "policy": ".py"}[kind]))
         def write():
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             if package is not None:
@@ -446,6 +540,9 @@ class Registry:
             table, column, key = KINDS[kind]
             if kind == "component":
                 from .component_views import read_view, validate_view
+                if record.get('file_id'):
+                    from .files import component_file
+                    component_file(db, owner, record['file_id'])
                 view = read_view(db, owner, name)['view']
                 validate_view(view, placement=view.get('placement', record['placement']))
             if kind == "tool":
@@ -461,6 +558,8 @@ class Registry:
                 result.update(read_view(db, owner, name))
                 result.update(enabled=True, placement=record["placement"], render=self._render_status(db, owner, name, version),
                               surface_selected=surface_selected(db, owner, name, version))
+                from .component_views import file_fields
+                result.update(file_fields(db, owner, record))
             return {**result, **policy_state(name)} if kind == "policy" else result
         try:
             return await self.store.call(register)

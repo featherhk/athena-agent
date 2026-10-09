@@ -22,6 +22,14 @@ HTML 使用现有隔离组件约定，CSS/SVG/Canvas 可以定义形象和交互
 
 `hidden:true` 收起，`hidden:false` 展开；`null` 清除某项覆盖。变更源码保留布局和收起状态。`screen_id` 只适用于 desktop；改回网页位置时必须清除它，并清除或调整不满足网页尺寸范围的宽高。源码注册的位置也受现有布局覆盖影响，先检查有效 placement。布局有版本冲突时先重新读，不盲目重发。
 
+## 真实文件的桌面交付
+
+表格、文档、图片等已有文件使用 `runtime app action:preview,file_id` 交给宿主。Mac companion 把它呈现在独立桌面组件中，猫头鹰与输入仍是轻量入口，不把完整表格嵌回回复框。网页宿主保持页面内预览。自动交付只首次打开；用户收起、移除或 Reset 后不会因为刷新再次弹出，显式 preview 可重开。
+
+需要指定布局时，先 list/read 现有组件，优先修改它的 layout。新文件组件也可用 `runtime registry kind:component,action:register,id,title,file_id,placement:desktop`；`file_id` 与 HTML `source` 二选一。它指向文件原件，不是一个另存的 HTML 表格。`athena_file_` 前缀是默认交付的保留 ID，可以 layout/remove/restore，不能 register 覆盖。文件组件的 `file` 使用规范文件描述，内容变化由 `content_revision` 标识；版本恢复、fork、Reset 保留文件来源，文件本身不删除。同账户跨会话选择文件时应说明来源，不把其它会话文件误当当前任务结果。
+
+文件显示使用独立回执：`state.desktop.components[]` 的 `file_id/content_revision` 必须与 `desktop_registration` 对应，`state:mounted` 表示文件预览已经准备好；`failed,error_code:preview_unavailable` 表示预览失败。`registry render.scope:file_preview_only` 提示查这些回执，HTML 页面导航完成不证明文档已解析。预览不等于编辑器或公式重算引擎，不承诺尚未实现的原件编辑功能。
+
 ## 整片桌面上的效果
 
 烟花、飘雪等没有窗口边界的表达用 `placement:"desktop"`，不要用 `inline`、`workspace` 或网页 `fullscreen`。先读当前 Mac 的 `screens`，将组件布局的 `screen_id` 设为实际屏幕，`x:0,y:0,width:visible_frame.width,height:visible_frame.height`；每个屏幕需要独立组件时才分别注册。当前宿主约束到 `visible_frame`，不覆盖菜单栏和 Dock；不能声称覆盖了未观察到的屏幕或系统保留区域。

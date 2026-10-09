@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 def now() -> str:
@@ -57,6 +57,7 @@ class Store:
             for table, column, definition in (
                 ("sessions", "user_id", "TEXT REFERENCES users(id)"), ("components", "file_path", "TEXT"),
                 ("components", "placement", "TEXT NOT NULL DEFAULT 'inline'"),
+                ("components", "file_id", "TEXT"),
                 ("sessions", "model_profile_id", "TEXT NOT NULL DEFAULT 'default'"),
                 ("sessions", "model_epoch", "INTEGER NOT NULL DEFAULT 0"),
                 ("sessions", "submission_revision", "INTEGER NOT NULL DEFAULT 0"),
@@ -248,7 +249,7 @@ class Store:
             original = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
             identifier = uid()
             db.execute("INSERT INTO sessions(id,project_id,title,parent_id,fork_seq,created_at,user_id,model_profile_id,model_epoch) VALUES (?,?,?,?,?,?,?,?,?)", (identifier, original["project_id"], original["title"] + " · 新方向", session_id, max((m["seq"] for m in history), default=0), now(), original["user_id"], original["model_profile_id"], original["model_epoch"]))
-            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement) SELECT ?,id,version,title,html,active,created_at,file_path,placement FROM components WHERE session_id=?", (identifier, session_id))
+            db.execute("INSERT INTO components(session_id,id,version,title,html,active,created_at,file_path,placement,file_id) SELECT ?,id,version,title,html,active,created_at,file_path,placement,file_id FROM components WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO component_views SELECT ?,component_id,state,revision,updated_at FROM component_views WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO context_prefixes SELECT ?,epoch,boundary,prompt,created_at FROM context_prefixes WHERE session_id=?", (identifier, session_id))
             db.execute("INSERT INTO context_clips SELECT ?,message_id,content,created_at FROM context_clips WHERE session_id=?", (identifier, session_id))

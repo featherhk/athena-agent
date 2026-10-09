@@ -18,7 +18,9 @@ import zipfile
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict
 
+from .errors import UserError
 from .store import now, uid
 from .document_preview import docx_preview
 from .spreadsheet_preview import xlsx_preview
@@ -138,6 +140,60 @@ def public_file(record):
     result["preview_url"] = f'/api/files/{record["id"]}/preview'
     result["content_revision"] = record["content_revision"] if "content_revision" in record.keys() else None
     return result
+
+
+def component_file(db, session_id, file_id, *, inherited_only=False):
+    """Canonical owned file descriptor, resolved on the SQLite owner thread.
+
+    Explicit selection may use another conversation's file in the same account.
+    Automatic presentation only follows the current conversation's ancestry.
+    """
+    row = db.execute("""SELECT f.* FROM file_entries f
+        JOIN sessions origin ON origin.id=f.session_id
+        JOIN sessions target ON target.id=?
+        WHERE f.id=? AND f.user_id=target.user_id AND origin.user_id=target.user_id""",
+        (session_id, file_id)).fetchone()
+    if row is None:
+        raise UserError('not_found', 'This file is not available in this account.')
+    if inherited_only:
+        inherited = db.execute("""WITH RECURSIVE lineage(id,parent_id,user_id) AS (
+            SELECT id,parent_id,user_id FROM sessions WHERE id=?
+            UNION SELECT s.id,s.parent_id,s.user_id FROM sessions s JOIN lineage l
+                ON s.id=l.parent_id AND s.user_id=l.user_id)
+            SELECT 1 FROM lineage WHERE id=?""", (session_id, row['session_id'])).fetchone()
+        if inherited is None:
+            raise UserError('not_found', 'Select this other conversation\'s file explicitly to open it.')
+    return public_file(row)
+
+
+async def ensure_component_file(config, store, session_id, file_id, *, inherited_only=False):
+    """Backfill an old file's observation token before publishing a new surface."""
+    file = await store.call(lambda db: component_file(db, session_id, file_id, inherited_only=inherited_only))
+    if file['content_revision']:
+        return file
+    rows = await store.rows('SELECT * FROM file_entries WHERE id=?', (file_id,))
+    if not rows:
+        raise UserError('not_found', 'This file is no longer available.')
+    def inspect():
+        handle, _ = _open_file(config, rows[0])
+        with handle:
+            info = os.fstat(handle.fileno())
+            return _content_revision(info), info.st_size
+    try:
+        revision, size = await asyncio.to_thread(inspect)
+    except HTTPException:
+        raise UserError('not_found', 'This file is no longer available.') from None
+    def backfill(db):
+        component_file(db, session_id, file_id, inherited_only=inherited_only)
+        db.execute("UPDATE file_entries SET content_revision=?,size=? WHERE id=? AND (content_revision IS NULL OR content_revision='')",
+                   (revision, size, file_id))
+        return component_file(db, session_id, file_id, inherited_only=inherited_only)
+    return await store.call(backfill)
+
+
+class FilePresentationInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    reveal: bool
 
 
 async def _session_owned(store, user_id, session_id):
@@ -309,6 +365,21 @@ def register_file_routes(app: FastAPI):
     async def session_files(session_id: str, request: Request):
         store, config, user_id = context(request)
         return await list_session_files(store, config, user_id, session_id)
+
+    @app.post('/api/sessions/{session_id}/files/{file_id}/presentation')
+    async def presentation(session_id: str, file_id: str, body: FilePresentationInput, request: Request):
+        store, _, user_id = context(request)
+        await _session_owned(store, user_id, session_id)
+        result = await app.state.engine.tools.registry.present_file(session_id, file_id, reveal=body.reveal)
+        # Versions/layout and their audit events have committed before waking SSE.
+        # A lost response may be retried: the same file keeps the same component.
+        if result['changed']:
+            for queue in app.state.engine.listeners.get(session_id, ()):
+                try:
+                    queue.put_nowait({'type': 'refresh'})
+                except asyncio.QueueFull:
+                    pass  # SSE always catches up from the durable event log.
+        return result
 
     @app.post("/api/sessions/{session_id}/files", status_code=201)
     async def upload(session_id: str, request: Request, name: str):
