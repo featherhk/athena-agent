@@ -36,10 +36,12 @@ See LICENSE, NOTICE, TRADEMARKS.md and CONTRIBUTING.md.
 | State | Local external data directory | Mac local or web server, as disclosed |
 | Keys | Write-only fixed setup; never model tools | Never customer onboarding |
 
-The local setup is in implementation. Existing multi-account stores must not be
-silently assigned to a new owner. Non-loopback/self-hosted server deployment
-keeps authentication. Do not publish a source-install walkthrough as verified
-until a fresh-data-directory run has passed it.
+The local setup is implemented. A fresh-data-directory browser run verified
+bootstrap, provider setup, streamed replies and reload persistence using a local
+test provider, without a cloud account or paid API request. Existing multi-account
+stores are not silently assigned to a new owner. Non-loopback/self-hosted server
+deployment keeps authentication. This acceptance does not certify every external
+provider or the future public download.
 
 ## Release gates
 
@@ -47,9 +49,11 @@ until a fresh-data-directory run has passed it.
 - [x] Scan tracked paths and all reachable Git blobs for prohibited data and
   known credential patterns (`node scripts/check-repository.mjs --history`).
   This is a pattern scan, not a complete secret/provenance audit.
-- [ ] Review Actions logs/artifacts, releases, LFS and provider-specific secrets
-  before making a currently private repository public.
-- [ ] Fresh local BYOK start without cloud sign-in; no keys in responses or tools.
+- [x] Review the accessible Actions logs/artifacts, releases and reachable LFS
+  references; see [the audit and its remaining scope](open-source-audit.md).
+  Recheck newly created runs before changing visibility.
+- [x] Fresh local BYOK start without cloud sign-in; write-only credentials,
+  streamed response and reload persistence verified with synthetic fixtures.
 - [ ] Installed Mac: owl movement/collapse/current turn; independent file surface.
 - [ ] A short effect ends, Stop ends it, and app restart never replays it.
 - [ ] Record the exact downloadable build with synthetic files.
