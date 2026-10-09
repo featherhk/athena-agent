@@ -217,6 +217,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             try await wait { self.components().isEmpty }
             passed.append("signout-empty-scene-removes-old-account-panels")
             try await checkFileSurface(origin)
+            try await checkTransientSurfaces(origin)
             // A screen-sized visual is a distinct native surface, not clipped to the companion.
             item["width"] = 16384; item["height"] = 16384
             await send(["action": "scene", "scope": "owner:session_a", "session_id": "session_a", "items": [item]])
@@ -382,6 +383,67 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
         let downloads = await js("events.filter(e=>e.action==='download'&&e.file_id==='file_ledger').length") as? Int
         try require(downloads == 1, "Old content document retained file download capability")
         passed.append("file-content-revision-replaces-webview-and-revokes-old-document-actions")
+        scene.closeAll()
+    }
+    private func checkTransientSurfaces(_ origin: URL) async throws {
+        let scene = host.fixtureScene
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func expiry(_ offset: TimeInterval) -> String { formatter.string(from: Date().addingTimeInterval(offset)) }
+        func spec(_ id: String, _ version: Int = 1, expires: String? = nil) -> [String: Any] {
+            var result: [String: Any] = ["id": id, "version": version, "view_revision": 1, "title": "Synthetic effect", "width": 180, "height": 140]
+            if let expires { result["expires_at"] = expires }
+            return result
+        }
+        func reconcile(_ specs: [[String: Any]]) { scene.reconcile(["scope": "owner:session_a", "session_id": "session_a", "items": specs], origin: origin) }
+        func state(_ id: String) -> [String: Any]? { components().first { $0["id"] as? String == id } }
+        let persistent: [String: Any] = ["id": "persistent_file", "version": 1, "view_revision": 1, "title": "Persistent ledger.xlsx",
+            "file_id": "file_persistent", "content_revision": "s1-forever", "width": 620, "height": 400]
+        let old = spec("expired_before_load", expires: expiry(-10))
+        let beforeLoads = scene.fixtureDocumentLoads
+        reconcile([old])
+        try require(state("expired_before_load")?["state"] as? String == "hidden"
+                    && state("expired_before_load")?["visible"] as? Bool == false && scene.fixtureDocumentLoads == beforeLoads,
+                    "An already expired effect loaded or briefly appeared")
+        try await wait { await self.js("events.some(e=>e.action==='componentEnded'&&e.component_id==='expired_before_load'&&e.version===1&&e.scope==='owner:session_a')") as? Bool == true }
+        let expiredWeb = scene.fixtureWebView(id: "expired_before_load")
+        var attemptedRevival = old; attemptedRevival["expires_at"] = expiry(60); attemptedRevival["hidden"] = false
+        reconcile([attemptedRevival]); scene.setPresented(false); scene.setPresented(true)
+        try require(state("expired_before_load")?["visible"] as? Bool == false && scene.fixtureWebView(id: "expired_before_load") === expiredWeb,
+                    "The same expired version restarted during reconcile or recall")
+        passed.append("already-expired-effect-never-loads-and-same-version-reconcile-cannot-revive-it")
+        let timed = spec("short_effect", expires: expiry(0.9))
+        reconcile([persistent, timed])
+        try await wait { state("persistent_file")?["state"] as? String == "mounted" }
+        let persistentWeb = scene.fixtureWebView(id: "persistent_file")
+        let loads = scene.fixtureDocumentLoads
+        for _ in 0..<12 { reconcile([persistent, timed]) }
+        scene.setPresented(false)
+        try await wait { state("short_effect")?["state"] as? String == "hidden" }
+        try await wait { await self.js("events.filter(e=>e.action==='componentEnded'&&e.component_id==='short_effect'&&e.version===1).length===1") as? Bool == true }
+        scene.setPresented(true)
+        try require(state("short_effect")?["visible"] as? Bool == false && state("persistent_file")?["state"] as? String == "mounted"
+                    && state("persistent_file")?["visible"] as? Bool == true && scene.fixtureWebView(id: "persistent_file") === persistentWeb
+                    && scene.fixtureDocumentLoads == loads, "Native expiry affected a persistent file or scene refresh reloaded effects")
+        reconcile([persistent, timed]); scene.setPresented(false); scene.setPresented(true)
+        try require(state("short_effect")?["visible"] as? Bool == false, "An ended animation replayed on recall")
+        passed.append("absolute-native-expiry-does-not-renew-on-scene-refresh-or-affect-persistent-files")
+        let replaced = spec("replaced_effect", expires: expiry(0.35))
+        reconcile([persistent, replaced])
+        let stale = scene.fixtureWebView(id: "replaced_effect")
+        let next = spec("replaced_effect", 2, expires: expiry(60))
+        reconcile([persistent, next])
+        try await wait { state("replaced_effect")?["state"] as? String == "mounted" }
+        try await Task.sleep(for: .milliseconds(500))
+        try require(state("replaced_effect")?["version"] as? Int == 2 && state("replaced_effect")?["visible"] as? Bool == true
+                    && scene.fixtureWebView(id: "replaced_effect") !== stale, "A cancelled old expiry removed the replacement version")
+        let endedReplacement = await js("events.some(e=>e.action==='componentEnded'&&e.component_id==='replaced_effect')") as? Bool
+        try require(endedReplacement == false, "An old timer emitted an end receipt for a replacement")
+        passed.append("replaced-component-version-invalidates-old-native-expiry-task")
+        var invalid = next; invalid["expires_at"] = "not-a-date"
+        reconcile([invalid])
+        try require(state("persistent_file") != nil && state("replaced_effect")?["version"] as? Int == 2,
+                    "Malformed expiry partially replaced a valid native scene")
+        passed.append("invalid-expiry-rejects-the-whole-scene-without-changing-current-documents")
         scene.closeAll()
     }
     private func checkMainMenu() async throws {

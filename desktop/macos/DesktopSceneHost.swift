@@ -69,6 +69,9 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         var restoreFrame: NSRect?
         var reportedMaximized: Bool?
         var pendingLayout: (id: String, revision: Int, previous: [String: Any])?
+        var expiresAt: Date?
+        var expiryTask: Task<Void, Never>?
+        var expired = false
         var state = "loading"
         var error: String?
         var loadToken = UUID()
@@ -102,6 +105,14 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     private static func number(_ value: Any?, fallback: Double) -> CGFloat {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite else { return fallback }
         return number.doubleValue
+    }
+    private static func expiration(_ value: Any?) -> Date? {
+        guard let text = value as? String, text.count <= 64 else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: text) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: text)
     }
     private static func screenID(_ screen: NSScreen) -> String {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue ?? "0"
@@ -137,6 +148,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
                 guard Self.identifier(spec["file_id"]) != nil, let content = spec["content_revision"] as? String,
                       !content.isEmpty, content.count <= 128 else { return }
             } else if spec["content_revision"] != nil { return }
+            if let expiry = spec["expires_at"], !(expiry is NSNull), Self.expiration(expiry) == nil { return }
             parsed.append((id, version, revision, spec))
         }
         if self.scope != requestedScope || self.origin != origin { closeAll() }
@@ -159,9 +171,10 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
                         item.spec = next
                     } else {
                         item.viewRevision = revision; item.spec = spec
-                        item.pendingLayout = nil; item.gestures?.enabled = true
+                        item.pendingLayout = nil; item.gestures?.enabled = !item.expired
                     }
                     item.panel.title = (spec["title"] as? String).map { String($0.prefix(200)) } ?? "Athena"
+                    scheduleExpiration(item)
                     position(item)
                 }
             } else { create(id: id, version: version, revision: revision, spec: spec) }
@@ -200,10 +213,13 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         } else { panel.contentView = web }
         DesktopHitRegions.shared.register(panel)
         items[id] = item
-        position(item); load(item)
+        scheduleExpiration(item)
+        position(item)
+        if !item.expired { load(item) }
     }
 
     private func position(_ item: Item) {
+        if !item.expired, let expiry = item.expiresAt, expiry <= Date() { expire(item); return }
         var changed = false
         if let screen = screen(item.spec) {
             let target = frame(item.spec, screen: screen)
@@ -215,7 +231,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
                 #endif
             }
         }
-        let visible = presented && item.spec["hidden"] as? Bool != true
+        let visible = presented && !item.expired && item.spec["hidden"] as? Bool != true
         if item.panel.isVisible != visible {
             if visible { item.panel.orderFront(nil) } else { item.panel.orderOut(nil) }
             changed = true
@@ -228,7 +244,10 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     private func load(_ item: Item) {
-        guard let origin, let scope, let sessionID, var url = URLComponents(url: origin, resolvingAgainstBaseURL: false) else { return }
+        guard !item.expired, let origin, let scope, let sessionID, var url = URLComponents(url: origin, resolvingAgainstBaseURL: false) else { return }
+        #if ATHENA_NATIVE_CHECKS
+        fixtureDocumentLoads += 1
+        #endif
         item.state = "loading"; item.error = nil; item.loadToken = UUID()
         url.path = "/"
         url.queryItems = [URLQueryItem(name: "desktop", value: "widget"), URLQueryItem(name: "session", value: sessionID),
@@ -242,9 +261,43 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         let token = item.loadToken
         Task { @MainActor [weak self, weak item] in
             try? await Task.sleep(for: .seconds(30))
-            guard let self, let item, self.items[item.id] === item, item.loadToken == token, item.state == "loading" else { return }
+            guard let self, let item, self.items[item.id] === item, !item.expired, item.loadToken == token, item.state == "loading" else { return }
             self.fail(item, code: "load_timeout")
         }
+    }
+
+    private func scheduleExpiration(_ item: Item) {
+        guard !item.expired else { return }
+        let expiry = Self.expiration(item.spec["expires_at"])
+        guard item.expiresAt != expiry else { return }
+        item.expiryTask?.cancel(); item.expiryTask = nil
+        item.expiresAt = expiry
+        guard let expiry else { return }
+        if expiry <= Date() { expire(item); return }
+        let version = item.version
+        item.expiryTask = Task { @MainActor [weak self, weak item] in
+            do {
+                while expiry > Date() { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
+            }
+            catch { return }
+            guard let self, let item, self.items[item.id] === item, item.version == version,
+                  item.expiresAt == expiry, !item.expired else { return }
+            self.expire(item)
+        }
+    }
+    private func expire(_ item: Item) {
+        guard items[item.id] === item, !item.expired else { return }
+        item.expired = true; item.state = "hidden"; item.error = nil
+        item.expiryTask?.cancel(); item.expiryTask = nil
+        item.pendingLayout = nil; item.gestures?.enabled = false; item.loadToken = UUID()
+        // Expiry is enforced by the native host even while the parent document
+        // sleeps. Unload the generated page so its timers/media cannot restart.
+        item.web.configuration.userContentController.removeScriptMessageHandler(forName: "athenaDesktop")
+        item.web.stopLoading(); item.web.navigationDelegate = nil; item.web.uiDelegate = nil
+        item.web.loadHTMLString("", baseURL: nil)
+        position(item)
+        interaction(item, action: "componentEnded", values: [:])
+        publish()
     }
 
     func setPresented(_ value: Bool) {
@@ -255,7 +308,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
     func refreshDocuments(_ body: [String: Any]) {
         guard body["scope"] as? String == scope, let scope else { return }
-        for item in items.values {
+        for item in items.values where !item.expired {
             let detail: [String: Any] = ["scope": scope, "component_id": item.id, "version": item.version]
             guard let bytes = try? JSONSerialization.data(withJSONObject: detail), let json = String(data: bytes, encoding: .utf8) else { continue }
             item.web.evaluateJavaScript("dispatchEvent(new CustomEvent('athena:widget-refresh',{detail:\(json)}))", completionHandler: nil)
@@ -280,13 +333,14 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
     private func remove(_ id: String) {
         guard let item = items.removeValue(forKey: id) else { return }
+        item.expiryTask?.cancel(); item.expiryTask = nil
         item.web.configuration.userContentController.removeScriptMessageHandler(forName: "athenaDesktop")
         item.web.stopLoading(); item.web.navigationDelegate = nil; item.web.uiDelegate = nil
         DesktopHitRegions.shared.unregister(item.panel)
         item.panel.orderOut(nil); item.panel.close()
     }
     private func bound(_ web: WKWebView?) -> Item? { items.values.first { $0.web === web } }
-    private func fail(_ item: Item, code: String) { item.state = "failed"; item.error = code; publish() }
+    private func fail(_ item: Item, code: String) { guard !item.expired else { return }; item.state = "failed"; item.error = code; publish() }
     private func publish() {
         let state = observation()
         // State reports can prompt frontend reconciliation; only actual native changes
@@ -313,7 +367,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
             let screen = screen(item.spec)
             let area = screen?.visibleFrame ?? .zero
             var result: [String: Any] = ["id": item.id, "version": item.version, "view_revision": item.viewRevision,
-                "state": item.spec["hidden"] as? Bool == true ? "hidden" : item.state, "visible": item.panel.isVisible,
+                "state": item.expired || item.spec["hidden"] as? Bool == true ? "hidden" : item.state, "visible": item.panel.isVisible,
                 "rect": ["x": item.panel.frame.minX - area.minX, "y": area.maxY - item.panel.frame.maxY,
                          "width": item.panel.frame.width, "height": item.panel.frame.height],
                 "screen_id": screen.map(Self.screenID) ?? "0"]
@@ -337,7 +391,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         proposeLayout(item, values: layout(item, frame: item.panel.frame, screen: screen))
     }
     private func proposeLayout(_ item: Item, values: [String: Any]) {
-        guard item.pendingLayout == nil else { return }
+        guard !item.expired, item.pendingLayout == nil else { return }
         let id = UUID().uuidString
         item.pendingLayout = (id, item.viewRevision, item.spec)
         item.spec.merge(values) { _, new in new }
@@ -389,7 +443,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "athenaDesktop", let item = bound(message.webView),
+        guard message.name == "athenaDesktop", let item = bound(message.webView), !item.expired,
               DesktopCompanion.trusts(frameIsMain: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url,
                   origin: origin, currentURL: item.web.url),
               let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
@@ -456,6 +510,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
     private(set) var fixtureFrameChanges = 0
     private(set) var fixtureOrderChanges = 0
     private(set) var fixtureStateReports = 0
+    private(set) var fixtureDocumentLoads = 0
     func fixtureWebView(id: String) -> WKWebView? { items[id]?.web }
     func fixtureGestureHit(id: String, point: NSPoint) -> Bool { items[id]?.gestures?.hitTest(point) != nil }
     func fixtureCommitFrame(id: String, frame: NSRect) {
