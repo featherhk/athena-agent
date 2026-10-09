@@ -462,6 +462,7 @@ class Registry:
     async def present_file(self, session_id, file_id, *, reveal):
         """Idempotent default delivery through the ordinary versioned registry.
 
+        Reuse a current native file view before creating the host's default id.
         Closing, removing or Reset leaves a durable component tombstone. Passive
         delivery never undoes that choice; only an explicit reveal can reopen it.
         """
@@ -469,8 +470,8 @@ class Registry:
         from .files import component_file, ensure_component_file
         if type(reveal) is not bool or not isinstance(file_id, str) or not COMPONENT_ID.fullmatch(file_id):
             raise UserError('invalid_input', 'Select a valid file to present.')
-        name = FILE_COMPONENT_PREFIX + file_id
-        if not COMPONENT_ID.fullmatch(name):
+        reserved_name = FILE_COMPONENT_PREFIX + file_id
+        if not COMPONENT_ID.fullmatch(reserved_name):
             raise UserError('invalid_input', 'Invalid file presentation identifier.')
         await initialize_registry(self.store)
         user, owner = await self._scope(session_id, 'component')
@@ -484,13 +485,39 @@ class Registry:
                 json.dump({'kind': 'file', 'file_id': file_id}, output)
         await asyncio.to_thread(write)
         def present(db):
+            db.execute('BEGIN IMMEDIATE')
             file = component_file(db, owner, file_id, inherited_only=not reveal)
+            expired = bool(expire_components(db, owner))
+            name = reserved_name
             prior = db.execute('SELECT * FROM components WHERE session_id=? AND id=? ORDER BY version DESC LIMIT 1',
                                (owner, name)).fetchone()
             if prior is not None and prior['file_id'] != file_id:
                 raise UserError('component_changed', 'This reserved id already belongs to another component; it was not overwritten.')
+            # Choose and create on the SQLite owner in one transaction. An agent
+            # may already have registered this file with a useful title/layout;
+            # only explicit registry calls should add another view of it.
+            candidates = []
+            rows = db.execute('''SELECT c.*,v.state AS _view FROM components c
+                LEFT JOIN component_views v ON v.session_id=c.session_id AND v.component_id=c.id
+                WHERE c.session_id=? AND c.file_id=? AND c.version=(
+                    SELECT MAX(n.version) FROM components n WHERE n.session_id=c.session_id AND n.id=c.id)''',
+                (owner, file_id)).fetchall()
+            for row in rows:
+                state = json.loads(row['_view'] or '{}')
+                if row['id'] != reserved_name and state.get('placement', row['placement']) != 'desktop':
+                    continue
+                rank = (bool(row['active']), bool(row['active'] and row['id'] == reserved_name),
+                        bool(row['active'] and not state.get('hidden', False)), row['created_at'], row['id'])
+                candidates.append((rank, row))
+            persistent = [item for item in candidates if item[1]['duration_ms'] is None]
+            # A one-shot presentation is not permission to create a persistent
+            # copy. Passive delivery only observes it, even after it has ended.
+            eligible = persistent or ([] if reveal else candidates)
+            if eligible:
+                prior = max(eligible, key=lambda item: item[0])[1]
+                name = prior['id']
             created = prior is None
-            changed = created
+            changed = created or expired
             if created:
                 record = {'title': file['name'][:80], 'html': '', 'file_id': file_id,
                           'placement': 'desktop', 'file_path': str(path.relative_to(self.config.data_dir))}
@@ -516,7 +543,8 @@ class Registry:
             row = dict(db.execute('SELECT * FROM components WHERE session_id=? AND id=? AND version=?', (owner, name, version)).fetchone())
             return {'component': {**row, **read_view(db, owner, name), **file_fields(db, owner, row),
                                   'surface_selected': surface_selected(db, owner, name, version)},
-                    'created': created, 'changed': changed}
+                    'created': created, 'changed': changed,
+                    **({'status': 'transient'} if row['duration_ms'] is not None else {})}
         try:
             result = await self.store.call(present)
         except Exception:

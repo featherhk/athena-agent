@@ -12,7 +12,7 @@ from athena.component_views import update_view
 from athena.errors import UserError
 from athena.files import initialize_files
 from athena.registry import Registry
-from athena.store import now
+from athena.store import Store, now
 from frontend_fixtures import observe_client
 from test_desktop_surfaces import native, receipt
 
@@ -51,6 +51,133 @@ async def test_file_delivery_is_concurrently_idempotent_and_has_one_external_man
     assert (await store.components(session))[0]['file']['content_revision'] == 's1-new'
     passive = await registry.present_file(session, 'report', reveal=False)
     assert not passive['changed'] and passive['component']['file']['size'] == 300
+
+
+async def test_default_delivery_reuses_agent_file_view_concurrently_without_changing_it(config, store, file_surface):
+    _, session, _, registry = file_surface
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'quote_compare',
+                            'file_id': 'report', 'title': 'Compare these quotes', 'placement': 'desktop'}, session)
+    await update_view(store, session, 'quote_compare', 1, 0, {'width': 920, 'height': 620, 'x': 0.4, 'y': 0.2})
+    before = (await store.components(session))[0]
+    event_count = len(await store.rows('SELECT * FROM events'))
+    results = await asyncio.gather(*(registry.present_file(session, 'report', reveal=False) for _ in range(8)))
+    assert all(not item['created'] and not item['changed'] and item['component'] == before for item in results)
+    assert await store.components(session) == [before]
+    assert len(await store.rows('SELECT * FROM events')) == event_count
+    assert len(list((config.data_dir / 'extensions').rglob('*.json'))) == 1
+    await store.execute("UPDATE file_entries SET content_revision='s1-latest',size=321 WHERE id='report'")
+    clicked = await registry.present_file(session, 'report', reveal=True)
+    assert clicked['component']['id'] == 'quote_compare' and not clicked['changed']
+    assert clicked['component']['file']['content_revision'] == 's1-latest'
+    assert clicked['component']['file']['size'] == 321
+    assert clicked['component']['title'] == before['title'] and clicked['component']['view'] == before['view']
+
+
+async def test_file_delivery_serializes_selection_across_database_connections(config, store, file_surface):
+    _, session, _, registry = file_surface
+    other_store = Store(store.path)
+    try:
+        other_registry = Registry(config, other_store)
+        results = await asyncio.gather(*(client.present_file(session, 'report', reveal=False)
+                                         for client in (registry, other_registry) * 4))
+        assert sum(item['created'] for item in results) == 1
+        assert len(await store.components(session)) == 1
+        assert len(await store.rows('SELECT * FROM components WHERE session_id=?', (session,))) == 1
+    finally:
+        await other_store.close()
+
+
+@pytest.mark.parametrize('closed', ['hidden', 'removed', 'reset'])
+async def test_default_delivery_respects_closed_custom_file_views_and_explicit_reopen(store, engine, file_surface, closed):
+    user, session, _, registry = file_surface
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'custom_file',
+                            'file_id': 'report', 'placement': 'desktop'}, session)
+    await update_view(store, session, 'custom_file', 1, 0, {'width': 950, 'hidden': True})
+    if closed == 'removed':
+        await registry.operate({'kind': 'component', 'action': 'remove', 'id': 'custom_file'}, session)
+    elif closed == 'reset':
+        await engine.models.ensure_default()
+        await engine.reset_user(user)
+    for _ in range(2):
+        passive = await registry.present_file(session, 'report', reveal=False)
+        assert passive['component']['id'] == 'custom_file'
+        assert not passive['created'] and not passive['changed']
+        assert passive['component']['view'].get('hidden') or not passive['component']['active']
+    assert not await store.rows("SELECT * FROM components WHERE session_id=? AND id='athena_file_report'", (session,))
+    clicked = await registry.present_file(session, 'report', reveal=True)
+    assert clicked['component']['id'] == 'custom_file' and clicked['component']['active']
+    assert not clicked['component']['view']['hidden']
+    assert clicked['component']['view']['width'] == (860 if closed == 'reset' else 950)
+    assert len(await store.components(session)) == 1
+
+
+async def test_multiple_explicit_file_views_remain_valid_with_deterministic_default_selection(store, file_surface):
+    _, session, _, registry = file_surface
+    canonical = (await registry.present_file(session, 'report', reveal=False))['component']
+    for name in ('other_a', 'other_b'):
+        await registry.operate({'kind': 'component', 'action': 'register', 'id': name,
+                                'file_id': 'report', 'placement': 'desktop'}, session)
+    assert len(await store.components(session)) == 3
+    assert (await registry.present_file(session, 'report', reveal=False))['component']['id'] == canonical['id']
+    await registry.operate({'kind': 'component', 'action': 'remove', 'id': canonical['id']}, session)
+    assert (await registry.present_file(session, 'report', reveal=False))['component']['id'] == 'other_b'
+    await update_view(store, session, 'other_b', 1, 0, {'hidden': True})
+    assert (await registry.present_file(session, 'report', reveal=False))['component']['id'] == 'other_a'
+    await update_view(store, session, 'other_a', 1, 0, {'hidden': True})
+    assert (await registry.present_file(session, 'report', reveal=False))['component']['id'] == 'other_b'
+    clicked = await registry.present_file(session, 'report', reveal=True)
+    assert clicked['component']['id'] == 'other_b' and not clicked['component']['view']['hidden']
+    assert len(await store.components(session)) == 2
+
+
+async def test_file_delivery_uses_current_native_source_and_never_other_sessions_layout(store, file_surface):
+    user, session, _, registry = file_surface
+    for name, placement in (('inline_file', 'inline'), ('moved_file', 'desktop'), ('replaced_file', 'desktop')):
+        await registry.operate({'kind': 'component', 'action': 'register', 'id': name,
+                                'file_id': 'report', 'placement': placement}, session)
+    await update_view(store, session, 'moved_file', 1, 0, {'placement': 'inline'})
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'replaced_file', 'source': '<p>Now HTML</p>'}, session)
+    other = await store.session(user_id=user)
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'elsewhere', 'file_id': 'report', 'placement': 'desktop'}, other)
+    presented = await registry.present_file(session, 'report', reveal=False)
+    assert presented['created'] and presented['component']['id'] == 'athena_file_report'
+    # A current layout override to desktop is reusable even if registration was inline.
+    third = await store.session(user_id=user)
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'promoted', 'file_id': 'report', 'placement': 'inline'}, third)
+    await update_view(store, third, 'promoted', 1, 0, {'placement': 'desktop'})
+    selected = await registry.present_file(third, 'report', reveal=True)
+    assert not selected['created'] and selected['component']['id'] == 'promoted'
+    with pytest.raises(UserError):
+        await registry.present_file(third, 'report', reveal=False)
+
+
+async def test_fork_keeps_custom_file_identity_and_closed_choice(store, file_surface):
+    _, session, _, registry = file_surface
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'custom_file', 'file_id': 'report', 'placement': 'desktop'}, session)
+    await update_view(store, session, 'custom_file', 1, 0, {'hidden': True})
+    fork = await store.fork(session)
+    passive = await registry.present_file(fork, 'report', reveal=False)
+    assert not passive['created'] and not passive['changed'] and passive['component']['id'] == 'custom_file'
+    assert passive['component']['view']['hidden']
+    clicked = await registry.present_file(fork, 'report', reveal=True)
+    assert clicked['component']['id'] == 'custom_file' and not clicked['component']['view']['hidden']
+    assert (await store.components(session))[0]['view']['hidden']
+
+
+async def test_transient_file_delivery_is_observed_without_becoming_persistent(store, file_surface):
+    _, session, _, registry = file_surface
+    await registry.operate({'kind': 'component', 'action': 'register', 'id': 'temporary',
+                            'file_id': 'report', 'placement': 'desktop', 'duration_ms': 60000}, session)
+    active = await registry.present_file(session, 'report', reveal=False)
+    assert not active['created'] and not active['changed'] and active['component']['id'] == 'temporary'
+    assert active['status'] == 'transient'
+    await registry.finish_component(session, 'temporary', 1)
+    finished = await registry.present_file(session, 'report', reveal=False)
+    assert not finished['created'] and not finished['changed'] and not finished['component']['active']
+    explicit = await registry.present_file(session, 'report', reveal=True)
+    assert explicit['created'] and explicit['component']['id'] == 'athena_file_report'
+    assert explicit['component']['duration_ms'] is None
+    assert len(await store.components(session)) == 1
 
 
 async def test_close_remove_and_reset_are_not_undone_by_passive_delivery(config, store, engine, file_surface):
