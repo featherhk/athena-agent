@@ -9,18 +9,46 @@ final class CompanionPanel: NSPanel {
 }
 
 enum DesktopCompanion {
-    enum Mode: String { case compact, expanded }
+    enum Mode: String { case avatar, compact, expanded }
+
+    static let placementKey = "AthenaCompanionPlacement"
+
+    static func screenID(_ screen: NSScreen) -> String {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue ?? "0"
+    }
+
+    static func placement(frame: NSRect, screen: NSScreen) -> [String: Any] {
+        let area = screen.visibleFrame
+        return ["screen_id": screenID(screen), "center_x": min(1, max(0, (frame.midX - area.minX) / area.width)),
+                "bottom_y": min(1, max(0, (frame.minY - area.minY) / area.height))]
+    }
+
+    static func anchor(_ placement: [String: Any]?, area: NSRect) -> NSPoint? {
+        guard let placement, let x = placement["center_x"] as? NSNumber, let y = placement["bottom_y"] as? NSNumber,
+              CFGetTypeID(x) != CFBooleanGetTypeID(), CFGetTypeID(y) != CFBooleanGetTypeID(),
+              x.doubleValue.isFinite, y.doubleValue.isFinite, (0...1).contains(x.doubleValue), (0...1).contains(y.doubleValue) else { return nil }
+        return NSPoint(x: area.minX + x.doubleValue * area.width, y: area.minY + y.doubleValue * area.height)
+    }
 
     static func frame(mode: Mode, visibleFrame: NSRect, anchor: NSPoint? = nil, preferredHeight: CGFloat? = nil) -> NSRect {
         let margin: CGFloat = 12
         let area = visibleFrame.insetBy(dx: min(margin, visibleFrame.width / 4), dy: min(margin, visibleFrame.height / 4))
         // Answers grow upwards. The input must not slide sideways when a reply arrives.
-        let desired = NSSize(width: 560, height: min(680, max(260, preferredHeight ?? (mode == .compact ? 260 : 680))))
+        let desired = mode == .avatar
+            ? NSSize(width: 180, height: min(220, max(140, preferredHeight ?? 170)))
+            : NSSize(width: 560, height: min(680, max(260, preferredHeight ?? (mode == .compact ? 260 : 680))))
         let size = NSSize(width: min(desired.width, area.width), height: min(desired.height, area.height))
         let center = anchor?.x ?? area.midX
         let bottom = anchor?.y ?? min(area.minY + 72, area.maxY - size.height)
         return NSRect(x: min(max(center - size.width / 2, area.minX), area.maxX - size.width),
                       y: min(max(bottom, area.minY), area.maxY - size.height), width: size.width, height: size.height)
+    }
+
+    static func clamp(_ frame: NSRect, to visibleFrame: NSRect) -> NSRect {
+        let area = visibleFrame.insetBy(dx: min(12, visibleFrame.width / 4), dy: min(12, visibleFrame.height / 4))
+        let width = min(frame.width, area.width), height = min(frame.height, area.height)
+        return NSRect(x: min(max(frame.minX, area.minX), area.maxX - width),
+                      y: min(max(frame.minY, area.minY), area.maxY - height), width: width, height: height)
     }
 
     static func home(_ base: URL) -> URL? {
@@ -72,6 +100,59 @@ enum DesktopCompanion {
         defer { try? handle.close() }
         do { try handle.seekToEnd(); try handle.write(contentsOf: bytes + Data([10])) } catch { }
     }
+}
+
+/// A short press remains an owl click. Only a deliberate drag moves Athena;
+/// input fields and the rest of the transparent panel never become drag handles.
+@MainActor
+final class CompanionGestureView: NSView {
+    var regions: [NSRect] = []
+    var activate: (() -> Void)?
+    var moved: (() -> Void)?
+    private var start: (frame: NSRect, pointer: NSPoint)?
+    private var dragging = false
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        !isHidden && bounds.contains(point) && regions.contains(where: { $0.contains(point) }) ? self : nil
+    }
+    @discardableResult func updateRegions(_ payload: Any?) -> Bool {
+        guard let objects = payload as? [[String: Any]], objects.count <= 16 else { return false }
+        var next: [NSRect] = []
+        for object in objects {
+            var values: [CGFloat] = []
+            for key in ["x", "y", "width", "height"] {
+                guard let number = object[key] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite,
+                      number.doubleValue >= 0, number.doubleValue <= 16384 else { return false }
+                values.append(number.doubleValue)
+            }
+            next.append(NSRect(x: values[0], y: values[1], width: values[2], height: values[3]))
+        }
+        regions = next; return true
+    }
+    private func begin(pointer: NSPoint) { if let window { start = (window.frame, pointer); dragging = false } }
+    private func move(pointer: NSPoint) {
+        guard let start, let window else { return }
+        let delta = NSPoint(x: pointer.x - start.pointer.x, y: pointer.y - start.pointer.y)
+        guard dragging || hypot(delta.x, delta.y) >= 4 else { return }
+        dragging = true
+        let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? window.screen ?? NSScreen.main
+        guard let area = screen?.visibleFrame else { return }
+        let target = DesktopCompanion.clamp(start.frame.offsetBy(dx: delta.x, dy: delta.y), to: area)
+        window.setFrame(target, display: true)
+    }
+    private func end() {
+        guard start != nil else { return }
+        start = nil
+        if dragging { moved?() } else { activate?() }
+        dragging = false
+    }
+    override func mouseDown(with event: NSEvent) { begin(pointer: NSEvent.mouseLocation) }
+    override func mouseDragged(with event: NSEvent) { move(pointer: NSEvent.mouseLocation) }
+    override func mouseUp(with event: NSEvent) { end() }
+    #if ATHENA_NATIVE_CHECKS
+    func fixtureGesture(from: NSPoint, to: NSPoint) { begin(pointer: from); move(pointer: to); end() }
+    #endif
 }
 
 /// Carbon hot keys do not need Accessibility permission or monitor ordinary keystrokes.

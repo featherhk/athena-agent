@@ -65,6 +65,10 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             passed.append("transparent-panel-native-marker-no-titlebar")
             try require(window.isVisible, "Explicit launch hid the companion after a previous launch")
             passed.append("explicit-launch-is-visible-after-a-previous-launch")
+            try require(window.frame.width == 180 && window.frame.height == 170, "Launch did not begin with the small avatar surface")
+            await send(["action": "resize", "mode": "compact"])
+            try await wait { self.window.frame.width == 560 && self.window.frame.height == 260 }
+            passed.append("avatar-launch-expands-to-compact-input-on-request")
             let constrained = DesktopCompanion.frame(mode: .expanded, visibleFrame: NSRect(x: -400, y: -300, width: 320, height: 240))
             try require(NSRect(x: -400, y: -300, width: 320, height: 240).contains(constrained), "Panel exceeded small secondary screen")
             try require(!DesktopCompanion.trusts(frameIsMain: false, frameURL: origin, origin: origin, currentURL: origin), "Subframe trusted")
@@ -106,6 +110,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             // This controlled hide was separate from the draft/voice continuity check below.
             _ = await js("backgroundCount=0")
             passed.append("compact-multiline-height-and-recall-retain-input-bottom-anchor")
+            try await checkCompanionGestures()
             _ = await js("window.frameMarker=null;addEventListener('message',e=>{if(e.data && 'marker' in e.data)frameMarker=e.data.marker});let f=document.createElement('iframe');f.sandbox='allow-scripts';f.srcdoc=\"<script>parent.postMessage({marker:!!window.__ATHENA_DESKTOP__},'*');webkit.messageHandlers.athenaDesktop.postMessage({action:'hide'});<\\/script>\";document.body.append(f)")
             try await wait { await self.js("window.frameMarker === false") as? Bool == true }
             try require(window.isVisible, "Sandbox iframe hid native panel")
@@ -231,6 +236,44 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             finish(nil)
         } catch { finish(error) }
     }
+    private func checkCompanionGestures() async throws {
+        await send(["action": "companionDragRegions", "regions": [["x": 230, "y": 32, "width": 100, "height": 100]]])
+        try await wait { self.host.fixtureCompanionGestureHit(NSPoint(x: 270, y: 65)) }
+        try require(!host.fixtureCompanionGestureHit(NSPoint(x: 270, y: 220)), "Owl drag layer intercepted the text composer")
+        let origin = window.frame
+        let pointer = NSPoint(x: origin.midX, y: origin.midY)
+        host.fixtureCompanionGesture(from: pointer, to: NSPoint(x: pointer.x + 2, y: pointer.y))
+        try await wait { await self.js("events.filter(e=>e.action==='avatar').length===1") as? Bool == true }
+        try require(window.frame == origin, "A short owl click moved the window")
+        host.fixtureCompanionGesture(from: pointer, to: NSPoint(x: pointer.x + 60, y: pointer.y + 32))
+        let moved = window.frame
+        try require(moved.origin != origin.origin && host.fixtureCompanionPlacement?["screen_id"] as? String != nil,
+                    "Deliberate owl drag did not move and persist the companion")
+        let saved = UserDefaults.standard.dictionary(forKey: DesktopCompanion.placementKey)
+        try require(DesktopCompanion.anchor(saved, area: window.screen!.visibleFrame) != nil, "Owl location was not saved outside runtime state")
+        let clicks = await js("events.filter(e=>e.action==='avatar').length") as? Int
+        try require(clicks == 1, "Dragging the owl also toggled it")
+        await send(["action": "resize", "mode": "avatar", "height": 170])
+        try await wait { self.window.frame.width == 180 && self.window.frame.height == 170 }
+        try require(abs(window.frame.midX - moved.midX) < 0.001 && abs(window.frame.minY - moved.minY) < 0.001,
+                    "Collapsing avatar lost its chosen desktop anchor")
+        await send(["action": "hide"])
+        try await wait { !self.window.isVisible }
+        try invoke("toggleCompanion")
+        try await wait { self.window.isVisible }
+        try require(window.frame.width == 180 && abs(window.frame.midX - moved.midX) < 0.001,
+                    "Recall expanded or recentered the avatar")
+        await send(["action": "resize", "mode": "compact"])
+        try await wait { self.window.frame.width == 560 }
+        try require(abs(window.frame.midX - moved.midX) < 0.001 && abs(window.frame.minY - moved.minY) < 0.001,
+                    "Reopening composer moved the persistent owl anchor")
+        host.fixtureCompanionGesture(from: pointer, to: NSPoint(x: pointer.x + 100000, y: pointer.y + 100000))
+        try require(window.screen!.visibleFrame.contains(window.frame), "Owl drag could strand controls outside the display")
+        let current = window.frame
+        host.fixtureCompanionGesture(from: pointer, to: NSPoint(x: pointer.x + origin.minX - current.minX, y: pointer.y + origin.minY - current.minY))
+        _ = await js("backgroundCount=0")
+        passed.append("owl-click-drag-threshold-persistent-location-avatar-collapse-and-recall")
+    }
     private func checkFileSurface(_ origin: URL) async throws {
         var item: [String: Any] = ["id": "file_surface", "version": 1, "view_revision": 1, "title": "Synthetic ledger.xlsx",
             "file_id": "file_ledger", "content_revision": "sha256-v1", "x": 0.0, "y": 0.0, "width": 860, "height": 540]
@@ -243,6 +286,10 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
                     "File work surface became a conversation window or covered the companion")
         try require(child.url?.query?.contains("file=file_ledger") == true && components().first?["file_id"] as? String == "file_ledger"
                     && components().first?["content_revision"] as? String == "sha256-v1", "File content identity missing from child and observation")
+        _ = await js("window.refreshes=[];window.stableDocument=61;addEventListener('athena:widget-refresh',event=>refreshes.push(event.detail))", in: child)
+        await send(["action": "sceneRefresh", "scope": "owner:wrong_session"])
+        await send(["action": "sceneRefresh", "scope": "owner:session_a"])
+        try await wait { await self.js("refreshes.length===1&&refreshes[0].scope==='owner:session_a'&&refreshes[0].component_id==='file_surface'&&refreshes[0].version===1&&stableDocument===61", in: child) as? Bool == true }
         await send(["action": "surfaceDragRegions", "regions": [["x": 24, "y": 12, "width": 560, "height": 32]]], in: child)
         try await wait { scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: 50, y: 24)) }
         try require(!scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: 50, y: 200))
@@ -250,6 +297,7 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
                     && scene.fixtureGestureHit(id: "file_surface", point: NSPoint(x: panel.frame.width - 5, y: panel.frame.height - 5)),
                     "Native drag regions obstructed cells/header controls or omitted resize grip")
         passed.append("file-work-surface-has-bound-identity-title-and-dedicated-native-gesture-regions")
+        passed.append("parent-refresh-is-scoped-and-preserves-native-document")
         await send(["action": "widgetHealth", "state": "failed", "file_id": "wrong", "content_revision": "sha256-v1", "error_code": "preview_unavailable"], in: child)
         try require(components().first?["state"] as? String == "mounted", "Unbound file health changed mounted state")
         await send(["action": "widgetHealth", "state": "failed", "file_id": "file_ledger", "content_revision": "sha256-v1", "error_code": "preview_unavailable"], in: child)
@@ -267,29 +315,33 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
               let values = event["layout"] as? [String: Any] else { throw NSError(domain: "fixture", code: 9) }
         reconcile()
         try require(panel.frame == moved, "Pending drag snapped back before persistence acknowledgement")
-        event["ok"] = true; event["view_revision"] = 2
-        scene.completeInteraction(event)
+        event["ok"] = true; event["view_revision"] = 2; event["action"] = "sceneResult"
+        await send(event)
+        try await wait { self.components().first?["view_revision"] as? Int == 2 }
         item.merge(values) { _, new in new }; item["view_revision"] = 2
         reconcile()
         try require(panel.frame == moved && components().first?["view_revision"] as? Int == 2, "Persisted drag did not retain canonical frame")
         scene.fixtureCommitFrame(id: "file_surface", frame: moved.offsetBy(dx: 23, dy: -11))
         try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===2") as? Bool == true }
         var rejected = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
-        rejected["ok"] = false; scene.completeInteraction(rejected)
+        rejected["ok"] = false; rejected["action"] = "sceneResult"; await send(rejected)
+        try await wait { panel.frame == moved }
         try require(panel.frame == moved, "Failed layout persistence did not restore previous frame")
         passed.append("native-layout-retains-pending-frame-acknowledges-persistence-and-rolls-back-failure")
         await send(["action": "maximizeWidget"], in: child)
         try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===3") as? Bool == true }
         var maximized = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
         try require(panel.frame == panel.screen?.visibleFrame, "Maximize clipped a file surface to the conversation")
-        maximized["ok"] = true; maximized["view_revision"] = 3; scene.completeInteraction(maximized)
+        maximized["ok"] = true; maximized["view_revision"] = 3; maximized["action"] = "sceneResult"; await send(maximized)
+        try await wait { self.components().first?["view_revision"] as? Int == 3 }
         item.merge(maximized["layout"] as! [String: Any]) { _, new in new }; item["view_revision"] = 3
         await send(["action": "downloadFile", "file_id": "forged", "content_revision": "forged"], in: child)
         try await wait { await self.js("events.some(e=>e.action==='download'&&e.file_id==='file_ledger'&&e.content_revision==='sha256-v1')") as? Bool == true }
         await send(["action": "closeWidget"], in: child)
         try await wait { await self.js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').length===4") as? Bool == true }
         var closed = await js("events.filter(e=>e.action==='layout'&&e.component_id==='file_surface').at(-1)") as! [String: Any]
-        closed["ok"] = true; closed["view_revision"] = 4; scene.completeInteraction(closed)
+        closed["ok"] = true; closed["view_revision"] = 4; closed["action"] = "sceneResult"; await send(closed)
+        try await wait { self.components().first?["view_revision"] as? Int == 4 }
         item["hidden"] = true; item["view_revision"] = 4; reconcile()
         try require(!panel.isVisible && components().first?["state"] as? String == "hidden", "Closed surface revived after scene reconciliation")
         passed.append("file-maximize-download-and-close-route-identity-bound-actions-and-durable-view")

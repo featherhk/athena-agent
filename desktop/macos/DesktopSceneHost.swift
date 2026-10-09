@@ -237,6 +237,14 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
         for item in items.values { position(item) }
         publish()
     }
+    func refreshDocuments(_ body: [String: Any]) {
+        guard body["scope"] as? String == scope, let scope else { return }
+        for item in items.values {
+            let detail: [String: Any] = ["scope": scope, "component_id": item.id, "version": item.version]
+            guard let bytes = try? JSONSerialization.data(withJSONObject: detail), let json = String(data: bytes, encoding: .utf8) else { continue }
+            item.web.evaluateJavaScript("dispatchEvent(new CustomEvent('athena:widget-refresh',{detail:\(json)}))", completionHandler: nil)
+        }
+    }
     func screensChanged() { for item in items.values { position(item) }; publish() }
     func closeAll() {
         for id in Array(items.keys) { remove(id) }
@@ -326,6 +334,7 @@ final class DesktopSceneHost: NSObject, WKScriptMessageHandler, WKNavigationDele
             }
         } else { item.spec = pending.previous }
         item.pendingLayout = nil; item.gestures?.enabled = true
+        item.web.evaluateJavaScript("dispatchEvent(new CustomEvent('athena:surface-layout',{detail:{ok:\(ok ? "true" : "false")}}))", completionHandler: nil)
         position(item); publish()
     }
     private func reportSurfaceState(_ item: Item, force: Bool = false) {

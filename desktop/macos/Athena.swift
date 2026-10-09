@@ -8,8 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var window: CompanionPanel!
     private var statusItem: NSStatusItem?
     private var shortcut: CompanionShortcut?
-    private var companionMode = DesktopCompanion.Mode.compact
+    private var companionMode = DesktopCompanion.Mode.avatar
     private var companionHeight: CGFloat?
+    private var companionPlacement: [String: Any]?
+    private var companionGestures: CompanionGestureView!
     private var pendingDesktopAction: String?
     private var webView: WKWebView!
     private var child: Process?
@@ -50,8 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func makeWindow() {
-        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1080, height: 780)
-        window = CompanionPanel(contentRect: DesktopCompanion.frame(mode: .compact, visibleFrame: screen),
+        companionPlacement = UserDefaults.standard.dictionary(forKey: DesktopCompanion.placementKey)
+        let screen = placementScreen()?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1080, height: 780)
+        window = CompanionPanel(contentRect: DesktopCompanion.frame(mode: companionMode, visibleFrame: screen,
+                          anchor: DesktopCompanion.anchor(companionPlacement, area: screen)),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.title = "Athena"
         window.delegate = self
@@ -95,11 +99,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             loadingLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             loadingLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor)
         ])
+        companionGestures = CompanionGestureView()
+        companionGestures.translatesAutoresizingMaskIntoConstraints = false
+        companionGestures.activate = { [weak self] in self?.sendDesktopDetail(["action": "avatar"]) }
+        companionGestures.moved = { [weak self] in self?.persistCompanionPlacement() }
+        container.addSubview(companionGestures)
+        NSLayoutConstraint.activate([
+            companionGestures.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            companionGestures.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            companionGestures.topAnchor.constraint(equalTo: container.topAnchor),
+            companionGestures.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
         window.contentView = container
         DesktopHitRegions.shared.register(window)
         scene.onState = { [weak self] state in self?.sendDesktopDetail(["action": "state", "scope": self?.scene.observationScope ?? "", "desktop": state]) }
         scene.onInteraction = { [weak self] detail in
-            self?.showCompanion()
+            if ["submit", "navigate"].contains(detail["action"] as? String ?? "") { self?.showCompanion() }
             self?.sendDesktopDetail(detail)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -132,13 +147,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         companionHeight = height
         let screen = window.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
-        let anchor = NSPoint(x: window.frame.midX, y: window.frame.minY)
+        let anchor = DesktopCompanion.anchor(companionPlacement, area: visible) ?? NSPoint(x: window.frame.midX, y: window.frame.minY)
         let frame = DesktopCompanion.frame(mode: mode, visibleFrame: visible, anchor: anchor, preferredHeight: companionHeight)
         guard window.frame != frame else { return }
         window.setFrame(frame, display: true)
         #if ATHENA_NATIVE_CHECKS
         fixtureFrameChanges += 1
         #endif
+    }
+
+    private func placementScreen() -> NSScreen? {
+        NSScreen.screens.first { DesktopCompanion.screenID($0) == companionPlacement?["screen_id"] as? String }
+            ?? window?.screen ?? NSScreen.main ?? NSScreen.screens.first
+    }
+    private func persistCompanionPlacement() {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        companionPlacement = DesktopCompanion.placement(frame: window.frame, screen: screen)
+        UserDefaults.standard.set(companionPlacement, forKey: DesktopCompanion.placementKey)
+        DesktopHitRegions.shared.refresh()
     }
 
     @objc private func toggleCompanion() {
@@ -148,10 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func showCompanion(action: String = "show") {
         guard !terminating else { return }
         if !window.isVisible {
-            let pointer = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
+            let screen = placementScreen()
             if let visible = screen?.visibleFrame {
-                window.setFrame(DesktopCompanion.frame(mode: companionMode, visibleFrame: visible, preferredHeight: companionHeight), display: false)
+                let anchor = DesktopCompanion.anchor(companionPlacement, area: visible) ?? NSPoint(x: window.frame.midX, y: window.frame.minY)
+                window.setFrame(DesktopCompanion.frame(mode: companionMode, visibleFrame: visible, anchor: anchor, preferredHeight: companionHeight), display: false)
             }
         }
         window.makeKeyAndOrderFront(nil)
@@ -202,14 +228,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             var height: CGFloat?
             if let raw = body["height"] {
                 guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite,
-                      (260...680).contains(number.doubleValue) else { return }
+                      (mode == .avatar ? 140...220 : 260...680).contains(number.doubleValue) else { return }
                 height = number.doubleValue
             }
             resizeCompanion(mode, height: height)
         case "hide": hideCompanion()
         case "hitRegions": DesktopHitRegions.shared.update(window, payload: body["regions"])
+        case "companionDragRegions": companionGestures.updateRegions(body["regions"])
         case "observe": sendDesktopDetail(["action": "state", "scope": scene.observationScope, "desktop": scene.observation()])
         case "scene": if let localURL { scene.reconcile(body, origin: localURL) }
+        case "sceneResult": scene.completeInteraction(body)
+        case "sceneRefresh": scene.refreshDocuments(body)
         default: break
         }
     }
@@ -570,9 +599,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private(set) var fixtureFrameChanges = 0
     var fixtureScene: DesktopSceneHost { scene }
     var fixtureStatusMenu: NSMenu? { statusItem?.menu }
+    var fixtureCompanionPlacement: [String: Any]? { companionPlacement }
+    func fixtureCompanionGesture(from: NSPoint, to: NSPoint) { companionGestures.fixtureGesture(from: from, to: to) }
+    func fixtureCompanionGestureHit(_ point: NSPoint) -> Bool { companionGestures.hitTest(point) != nil }
     /// Separate test executable only; it never starts a backend or opens an account.
     func configureNativeFixture(_ home: URL) -> (NSWindow, WKWebView) {
         precondition(recovery.request(for: home) != nil)
+        UserDefaults.standard.removeObject(forKey: DesktopCompanion.placementKey)
         makeMenu()
         makeWindow()
         makeStatusItem()
