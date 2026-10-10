@@ -42,6 +42,8 @@ Athena は `runtime` で同じアカウントの会話を検索・閲覧し、�
 必要環境：macOS、`uv >= 0.9`、Node.js `>= 24`、npm。管理ブラウザーには Google Chrome または Chromium のインストールも必要です。
 
 ```sh
+git clone https://github.com/featherhk/athena-agent.git
+cd athena-agent
 uv python install 3.14t
 uv sync --locked
 npm ci

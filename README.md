@@ -41,6 +41,8 @@ The source build defaults to **local BYOK**: connect your own model without a Fe
 Requirements: macOS, `uv >= 0.9`, Node.js `>= 24`, and npm. Managed browsing additionally requires installed Google Chrome or Chromium.
 
 ```sh
+git clone https://github.com/featherhk/athena-agent.git
+cd athena-agent
 uv python install 3.14t
 uv sync --locked
 npm ci

@@ -82,7 +82,10 @@ recovering space; a blocked executor cannot be used to delete its way out.
 concurrency, admission, cancellation during create, uncertain cleanup, recovery,
 readiness and resource limits. `scripts/smoke-execution.py` refuses to use a data
 directory without `.athena-execution-fixture`. Run it in a disposable web-like
-container beside a QA broker, never against real user records. It verifies real
+container beside a QA broker, never against real user records. Set
+`ATHENA_TEST_SELF_HOST_URL` to the execution host URL whose access should be
+blocked; the smoke fails when this value is absent and never silently skips
+that isolation assertion. It verifies real
 XLSX generation/readback, account/secret isolation, public HTTP, metadata/host
 rejection, optional same-bridge peer rejection, recoverable clipped output,
 timeout, detached-child cancellation and managed browsing.

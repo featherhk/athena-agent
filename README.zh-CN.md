@@ -41,6 +41,8 @@ Athena 也能通过 `runtime` 查找和读取同账号的其他会话、新建�
 需要 macOS、`uv >= 0.9`、Node.js `>= 24` 和 npm。受管浏览器还需要安装 Google Chrome 或 Chromium。
 
 ```sh
+git clone https://github.com/featherhk/athena-agent.git
+cd athena-agent
 uv python install 3.14t
 uv sync --locked
 npm ci
