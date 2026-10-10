@@ -46,6 +46,15 @@ test('native post reports unavailable and throwing transports without executing 
   assert.equal(desktopPost({ action: 'hide' }, host), false);
 });
 
+test('quit bridge is exclusive to the companion role while widget actions remain available', () => {
+  const calls = [], companion = nativeWindow(), widget = nativeWindow('?desktop=widget&component=generated');
+  for (const host of [companion, widget]) host.webkit.messageHandlers.athenaDesktop.postMessage = value => calls.push(value);
+  assert.equal(desktopPost({ action: 'quit' }, widget), false);
+  assert.equal(desktopPost({ action: 'widgetHealth', state: 'mounted' }, widget), true);
+  assert.equal(desktopPost({ action: 'quit' }, companion), true);
+  assert.deepEqual(calls, [{ action: 'widgetHealth', state: 'mounted' }, { action: 'quit' }]);
+});
+
 test('valid native observations preserve fractional points and own their bounded data', () => {
   const input = state(), parsed = readDesktopState(input);
   assert.deepEqual(parsed, input);

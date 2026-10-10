@@ -233,6 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             resizeCompanion(mode, height: height)
         case "hide": hideCompanion()
+        case "quit": NSApp.terminate(nil)
         case "hitRegions": DesktopHitRegions.shared.update(window, payload: body["regions"])
         case "companionDragRegions": companionGestures.updateRegions(body["regions"])
         case "observe": sendDesktopDetail(["action": "state", "scope": scene.observationScope, "desktop": scene.observation()])
@@ -598,6 +599,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     #if ATHENA_NATIVE_CHECKS
     private(set) var fixtureFrameChanges = 0
+    var fixtureIsTerminating: Bool { terminating }
     var fixtureScene: DesktopSceneHost { scene }
     var fixtureStatusMenu: NSMenu? { statusItem?.menu }
     var fixtureCompanionPlacement: [String: Any]? { companionPlacement }

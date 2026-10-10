@@ -309,6 +309,7 @@
   "desktop.focus": "Athena に話しかける",
   "desktop.prompt": "何かお手伝いしましょうか",
   "desktop.hide": "Athena を隠す",
+  "desktop.quit": "Athenaを終了",
   "desktop.back": "履歴を閉じる",
   "surface.desktop": "デスクトップ",
   "desktop.collapse": "閉じる",

@@ -17,6 +17,12 @@ BUILD = runpy.run_path(str(ROOT / 'scripts/build-ios.py'))
 
 
 class Fixture(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path != '/__fixture/quit-save': return self.send_error(404)
+        data = self.rfile.read(int(self.headers.get('Content-Length', '0')))
+        self.server.quit_saves.append(data.decode())
+        self.send_response(200); self.send_header('Content-Length', '0'); self.end_headers()
+
     def do_GET(self):
         self.server.requests.append(self.path)
         static = getattr(self.server, 'static_root', None)
@@ -175,7 +181,7 @@ def main():
     BUILD['capture'](['codesign', '--force', '--sign', '-', str(bundle)], env=env)
     with ThreadingHTTPServer(('127.0.0.1', 0), IntegrationFixture if args.integration_dist else Fixture) as server:
         server.requests = []
-        server.downloads = []; server.fixture_cookie = secrets.token_hex(16)
+        server.downloads = []; server.quit_saves = []; server.fixture_cookie = secrets.token_hex(16)
         server.static_root = (args.integration_dist or args.preview_dist).resolve() if (args.integration_dist or args.preview_dist) else None
         server.finished = threading.Event(); server.changed = threading.Condition(); server.events = []
         server.submissions = []; server.observations = []; server.component_reports = []
@@ -200,9 +206,11 @@ def main():
     if not markers:
         raise RuntimeError(f'No native companion receipt; inspect {output}/console.log')
     receipt = json.loads(markers[-1])
-    receipt.update(bundle=str(bundle), requests=server.requests, downloads=server.downloads)
+    receipt.update(bundle=str(bundle), requests=server.requests, downloads=server.downloads, quit_saves=server.quit_saves)
     if not args.preview_dist and not args.integration_dist and receipt['ok'] and server.downloads != [{'authenticated': True}]:
         receipt.update(ok=False, error='Expected exactly one authenticated WebKit attachment download')
+    if not args.preview_dist and not args.integration_dist and receipt['ok'] and server.quit_saves != ['Unsent quit fixture']:
+        receipt.update(ok=False, error='Normal quit did not await exactly one final synthetic draft save')
     if args.integration_dist:
         receipt.update(submissions=server.submissions, observations=server.observations, component_reports=server.component_reports)
         if receipt['ok'] and (len(server.submissions) != 1 or server.submissions[0].get('text') != 'Synthetic desktop widget request'):

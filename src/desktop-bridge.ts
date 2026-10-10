@@ -17,7 +17,8 @@ export function desktopRole(win: Window = window): 'companion' | 'widget' | null
   return role === 'companion' || role === 'widget' ? role : null;
 }
 export function desktopPost(value: Record<string, unknown>, win: Window = window): boolean {
-  if (!desktopRole(win)) return false;
+  const role = desktopRole(win);
+  if (!role || (value.action === 'quit' && role !== 'companion')) return false;
   try { win.webkit!.messageHandlers!.athenaDesktop!.postMessage(value); return true; }
   catch { return false; }
 }

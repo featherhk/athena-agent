@@ -309,6 +309,7 @@
   "desktop.focus": "与 Athena 交流",
   "desktop.prompt": "有什么需要我帮忙？",
   "desktop.hide": "隐藏 Athena",
+  "desktop.quit": "退出 Athena",
   "desktop.back": "收起记录",
   "surface.desktop": "桌面",
   "desktop.collapse": "收起",

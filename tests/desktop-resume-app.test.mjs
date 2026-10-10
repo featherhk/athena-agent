@@ -14,6 +14,11 @@ const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../src/App.t
 const app = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'App');
 const functions = ['restoreUser', 'submit', 'navigate', 'freezeDesktop', 'thawDesktop', 'editDraft', 'upload', 'signOut', 'submissionGuard'].map(name => app.body.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(source));
 const code = ts.transpileModule(functions.join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const quitEffect = app.body.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+  && node.expression.expression.getText(source) === 'useEffect' && node.getText(source).includes('window.__ATHENA_FLUSH_RESUME__'));
+const installQuitFlush = ts.transpileModule(`(${quitEffect.expression.arguments[0].getText(source)})()`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
 function fixture() {
@@ -82,6 +87,36 @@ test('actual App refuses final persistence boundary while an attachment upload i
   assert.throws(() => f.context.freezeDesktop('quit'), /desktop.saveFailed/);
   assert.equal(f.state.desktopTransition.current.blocked, false);
   assert.deepEqual(f.steps, []);
+});
+
+test('actual native quit hook awaits the current owner draft receipt and thaws after a failed save', async () => {
+  for (const fails of [false, true]) {
+    const f = fixture(), saved = deferred(), paths = [], listeners = new Map();
+    f.state.window.addEventListener = (name, fn) => listeners.set(name, fn);
+    f.state.window.removeEventListener = name => listeners.delete(name);
+    f.state.desktopResume.current = { flush: async owner => { paths.push(owner); await saved.promise; if (fails) throw Error('offline'); } };
+    const cleanup = vm.runInContext(installQuitFlush, f.context);
+    const pending = f.state.window.__ATHENA_FLUSH_RESUME__();
+    let settled = false; pending.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(paths, ['alice']);
+    assert.equal(settled, false);
+    assert.equal(f.state.desktopTransition.current.blocked, true);
+    f.context.editDraft({ text: 'Cannot edit past final save' });
+    assert.equal(f.state.text, 'Do something');
+    saved.resolve();
+    if (fails) {
+      await assert.rejects(pending, /offline/);
+      assert.equal(f.state.desktopTransition.current.blocked, false);
+    } else {
+      assert.equal(await pending, true);
+      assert.equal(f.state.desktopTransition.current.blocked, true);
+      listeners.get('athena:quit-cancelled')();
+      assert.equal(f.state.desktopTransition.current.blocked, false);
+    }
+    cleanup();
+    assert.equal(f.state.window.__ATHENA_FLUSH_RESUME__, undefined);
+  }
 });
 
 test('actual App failed logout thaws only after final flush and logout attempt', async () => {

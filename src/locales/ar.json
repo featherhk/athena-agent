@@ -309,6 +309,7 @@
   "desktop.focus": "تحدث إلى Athena",
   "desktop.prompt": "كيف يمكنني مساعدتك؟",
   "desktop.hide": "إخفاء Athena",
+  "desktop.quit": "إنهاء Athena",
   "desktop.back": "إغلاق السجل",
   "surface.desktop": "سطح المكتب",
   "desktop.collapse": "طيّ",

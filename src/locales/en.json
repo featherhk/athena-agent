@@ -309,6 +309,7 @@
   "desktop.focus": "Speak to Athena",
   "desktop.prompt": "What can I do for you?",
   "desktop.hide": "Hide Athena",
+  "desktop.quit": "Quit Athena",
   "desktop.back": "Back to companion",
   "surface.desktop": "Desktop",
   "desktop.collapse": "Put away",

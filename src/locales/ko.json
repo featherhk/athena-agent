@@ -309,6 +309,7 @@
   "desktop.focus": "Athena에게 말하기",
   "desktop.prompt": "무엇을 도와드릴까요?",
   "desktop.hide": "Athena 숨기기",
+  "desktop.quit": "Athena 종료",
   "desktop.back": "기록 접기",
   "surface.desktop": "데스크탑",
   "desktop.collapse": "접기",

@@ -309,6 +309,7 @@
   "desktop.focus": "Parler à Athena",
   "desktop.prompt": "Comment puis-je vous aider ?",
   "desktop.hide": "Masquer Athena",
+  "desktop.quit": "Quitter Athena",
   "desktop.back": "Fermer l’historique",
   "surface.desktop": "Bureau",
   "desktop.collapse": "Replier",

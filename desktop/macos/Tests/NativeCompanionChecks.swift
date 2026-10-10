@@ -18,6 +18,20 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
     private var hotkeyStatus = "not-tested"
     private var pointerStatus = "not-tested"
     private var injected = false
+    private var quitRequests = 0
+    private var expectsTermination = false
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        quitRequests += 1
+        return host.applicationShouldTerminate(sender)
+    }
+    func applicationWillTerminate(_ notification: Notification) {
+        guard expectsTermination, host.fixtureIsTerminating, components().isEmpty else {
+            finish(NSError(domain: "macOS companion acceptance", code: 12, userInfo: [NSLocalizedDescriptionKey: "Unexpected termination or shutdown bypassed the desktop host"]))
+            return
+        }
+        passed.append("trusted-companion-quit-awaits-draft-flush-then-runs-normal-native-shutdown")
+        finish(nil)
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--fixture-origin"), index + 1 < arguments.count,
@@ -239,8 +253,42 @@ final class NativeCompanionChecks: NSObject, NSApplicationDelegate {
             window.endSheet(window.attachedSheet!, returnCode: .alertFirstButtonReturn)
             try await wait { self.components().isEmpty && !self.web.isLoading && self.web.url?.query == "desktop=companion&recovery=1" }
             passed.append("native-reset-closes-scene-and-loads-default-without-mutation")
-            finish(nil)
+            try await checkQuit(origin)
         } catch { finish(error) }
+    }
+    private func checkQuit(_ origin: URL) async throws {
+        // Both a same-origin child frame and a generated component main frame
+        // have a WK message handler, but neither owns application lifecycle.
+        _ = await js("window.quitProbeDone=false;addEventListener('message',e=>{if(e.data==='quit-probe-done')quitProbeDone=true});const probe=document.createElement('iframe');probe.srcdoc=\"<script>webkit.messageHandlers.athenaDesktop.postMessage({action:'quit'});parent.postMessage('quit-probe-done','*')<\\/script>\";document.body.append(probe)")
+        try await wait { await self.js("quitProbeDone") as? Bool == true }
+        await send(["action": "scene", "scope": "owner:session_a", "session_id": "session_a", "items": [["id": "quit_probe", "version": 1, "view_revision": 1]]])
+        try await wait { self.components().first?["state"] as? String == "mounted" }
+        guard let child = host.fixtureScene.fixtureWebView(id: "quit_probe") else { throw NSError(domain: "fixture", code: 13) }
+        await send(["action": "quit"], in: child)
+        try require(quitRequests == 0 && !host.fixtureIsTerminating, "A child frame or generated surface could quit Athena")
+        passed.append("same-origin-subframe-and-generated-surface-cannot-terminate-app")
+
+        _ = await js("document.getElementById('draft').value='Unsent quit fixture';window.__ATHENA_FLUSH_RESUME__=async()=>false")
+        await send(["action": "quit"])
+        try await wait { self.window.attachedSheet != nil }
+        let draft = await js("document.getElementById('draft').value") as? String
+        try require(quitRequests == 1 && !host.fixtureIsTerminating && draft == "Unsent quit fixture" && components().count == 1,
+                    "Failed quit flush discarded the draft, closed surfaces or began shutdown")
+        window.endSheet(window.attachedSheet!, returnCode: .alertFirstButtonReturn)
+        try await wait { self.window.attachedSheet == nil }
+        passed.append("quit-save-failure-keeps-app-draft-and-surfaces-available")
+
+        _ = await js("window.flushCalls=0;window.__ATHENA_FLUSH_RESUME__=async()=>{flushCalls++;await new Promise(resolve=>window.allowQuitSave=resolve);const response=await fetch('/__fixture/quit-save',{method:'POST',body:document.getElementById('draft').value});return response.ok}")
+        await send(["action": "quit"])
+        try await wait { await self.js("flushCalls") as? Int == 1 }
+        try require(quitRequests == 2 && !host.fixtureIsTerminating && components().count == 1,
+                    "Quit stopped native work before its final draft receipt")
+        expectsTermination = true
+        _ = await js("allowQuitSave()")
+        // Successful termination is asserted by applicationWillTerminate and
+        // the runner verifies the actual synthetic save arrived first.
+        try await Task.sleep(for: .seconds(10))
+        throw NSError(domain: "macOS companion acceptance", code: 14, userInfo: [NSLocalizedDescriptionKey: "Trusted quit did not terminate after a saved draft"])
     }
     private func checkCompanionGestures() async throws {
         await send(["action": "companionDragRegions", "regions": [["x": 230, "y": 32, "width": 100, "height": 100]]])
