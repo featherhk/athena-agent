@@ -40,6 +40,11 @@ app.athena.featherhk.com {
     import athena_https
     handle_path /downloads/* {
         root * /srv/downloads
+        @disk_image path *.dmg
+        header @disk_image {
+            Content-Type application/x-apple-diskimage
+            Content-Disposition attachment
+        }
         file_server
     }
     @shared path /css/* /js/* /assets/* /release.json

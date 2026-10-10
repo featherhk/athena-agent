@@ -25,6 +25,21 @@ Set `ATHENA_BUILD_NUMBER` to the next positive build number for each published p
 
 The disk image is assembled in temporary staging before the `.app` enters the output directory. A synced workspace can attach Finder metadata immediately on arrival and invalidate strict signature checks if that copy is used as the image source. The build strips copy metadata, verifies the staged app, then mounts the finished DMG read-only and verifies the contained app and Applications link before emitting its manifest. Test the downloaded image itself, rather than relying on the loose `.app` in a synced output directory.
 
+The download server must return `Content-Type: application/x-apple-diskimage` and
+`Content-Disposition: attachment` for DMG files, including previously published
+builds. The download page also declares the link as a download. A release check
+must click that link in a real browser, verify that it saves a file without
+replacing the page with binary text, and compare the saved file's SHA-256 with
+the release manifest. A successful HTTP fetch and checksum alone do not verify
+this user-facing behavior. JSON feeds and HTML pages must retain their normal
+content types.
+
+On 2026-10-10, missing DMG response headers were corrected in the live Caddy
+configuration. Both the older Build 15 and Build 25 URLs returned the attachment
+headers. Clicking the public download page in the in-app browser saved the
+55,695,373-byte Build 25 DMG while leaving the page open; its SHA-256 matched
+`d7a97a80f75161a1b67a6f1e9a75ebe017720141cfc560300cdac34f29fd6c01`.
+
 To exercise the shipped browser executable against disposable form, download and login fixtures, mount that image and run `ATHENA_TEST_BROWSER=1 ATHENA_TEST_BROWSER_ROOT='/path/to/mounted/Athena.app/Contents/Resources/app' uv run pytest tests/test_browser_native.py -q`. This check uses an isolated browser profile and no model requests or personal cookies.
 
 Open the DMG and drag Athena to Applications. To remove the application, quit it and move `Athena.app` to the Trash. User conversations and files remain in `~/Library/Application Support/Athena Desktop`, independently of the app bundle. Removing that folder is a separate, destructive action, never an automatic uninstall side effect. This preview deliberately keeps desktop data separate from the developer web app’s `Athena` directory.
@@ -54,7 +69,7 @@ Apple’s [notarization documentation](https://developer.apple.com/documentation
 
 ## Cloud and account boundary
 
-Hosted conversation origin: `https://chat.athena.featherhk.com`; gateway base: `https://chat.athena.featherhk.com/v1`. The separate `https://app.athena.featherhk.com` site provides application downloads. The gateway endpoint is not permission to package a provider key. Hosted authentication and a server-side model gateway must enforce account entitlement and reserve/settle balance for each request. Only operator-enabled accounts with positive test credit can consume; registration grants no credit and there is no recharge UI. An API key configured in a customer’s local SQLite database would defeat this design.
+Hosted conversation origin: `https://chat.athena.featherhk.com`; gateway base: `https://chat.athena.featherhk.com/v1`. The separate `https://app.athena.featherhk.com` site provides application downloads. The gateway endpoint is not permission to package a provider key. Hosted authentication and a server-side model gateway must enforce account entitlement and reserve/settle balance for each request. Public registration is enabled and grants zero credit. A synthetic new-account registration, login and authenticated account read were verified against the public gateway on 2026-10-10. Model use still requires an enabled account with positive credit. Optional cryptocurrency top-ups are implemented in source but are not live: the deployed gateway advertises `recharge_enabled: false`, and no receiving wallet/payment provider is configured. See [the payment integration and remaining acceptance](recharge.md). An operator API key in a customer’s local database would defeat the hosted design.
 
 A cloud-configured preview sidecar uses the central account and credit gateway implemented in `cloud_client.py`; provider credentials remain on the server. It does not inherit the developer’s key, create a default user account, or grant arbitrary accounts a balance. A build with no cloud URL retains isolated local authentication for development. This integration must pass before a customer build is published:
 
