@@ -4,6 +4,12 @@ English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
 Athena is a personal assistant that starts with a conversation. Describe what you want done; progress, results, and useful controls appear when needed. Everyday use should not require understanding agent frameworks. The open-source local edition uses your own model connection; the hosted preview uses an operator-enabled account.
 
+**Continue the work, in the same place.** Ask Athena to compare two quotes, then
+change a price: the original Excel file and its desktop panel update, keeping
+the position and size you chose. [See the real Build 26 walkthrough](https://featherhk.com/athena/#demonstration)
+— separate application-window screenshots using fictional data, not a video.
+See [the acceptance record](docs/releases/2026-10-10-build26.md) for the tested boundaries.
+
 The current release is a **limited macOS and hosted web preview**, built with Python 3.14T, SQLite, TypeScript, and React. It is a general assistant with programmable capabilities, not a coding-only interface. The [product direction](docs/product.md) separates implemented behavior from ideas still to validate.
 
 The current preview also includes a separate account/model gateway with zero-credit registration, audited USD test credits, and a self-contained Apple Silicon macOS test package. The gateway has passed a real provider-stream and settlement check; the authenticated [web preview](https://chat.athena.featherhk.com/) and [Mac download page](https://app.athena.featherhk.com/) are live over HTTPS on Tencent Cloud. The DMG is ad-hoc signed, not notarized. Voice turn-taking, interruption, and provider adapters are implemented, but a real audio channel and microphone call have not yet been verified. See [release readiness](docs/requirements-status.md), [cloud operations](docs/cloud-deployment.md), [desktop distribution](docs/distribution.md), and [voice](docs/voice.md).

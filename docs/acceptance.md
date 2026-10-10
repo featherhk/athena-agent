@@ -82,6 +82,12 @@ Release checks: 1,114 Python tests passed / 7 skipped; 449 Node tests passed; Py
 
 ## Local source setup — 2026-10-10
 
+The later [Build 26 acceptance](releases/2026-10-10-build26.md) adds a real-provider
+fresh-checkout path, independently checked workbook bytes, stop/restart without
+replay, installed Quit/draft recovery and a browser-downloaded public DMG. The
+fixture-only path below remains useful protocol coverage and is not conflated
+with that later live acceptance.
+
 The current production frontend and backend were started with a fresh temporary data directory, explicit loopback binding and no cloud gateway or provider credentials. A separate loopback HTTP server returned a synthetic Chat Completions SSE response in multiple chunks. No customer database or installed app was used and no paid model request was made.
 
 The in-app browser completed this user journey:

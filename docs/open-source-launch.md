@@ -14,11 +14,11 @@ Organization setup/transfer and Discord server creation have not been completed.
 Discord login is deferred at the user's request; do not keep retrying it or block
 the source release on it. There is no verified organization repository URL or
 community invite to publish.
-Build 25 (`c4cc0fa`) passed installed-app acceptance and is now in the public
-macOS preview download/feed. The public DMG was downloaded again, hashed and
-mounted for verification; the prior Build 15 remains available. This preview
-still lacks Developer ID signing and notarization. It is the hosted-account
-distribution, not a public source release.
+Build 25 (`c4cc0fa`) passed installed-app acceptance and was followed by
+[Build 26](releases/2026-10-10-build26.md), now available on the
+[Mac preview download page](https://app.athena.featherhk.com/). Build 26 adds the
+verified explicit-Quit path. The preview still lacks Developer ID signing and
+notarization. It is the hosted-account distribution, not a public source release.
 
 The [context evolution research](context-evolution-research.md) is a proposal:
 single-entry task routing, source-wide retrieval, context manifests and expanded
@@ -196,6 +196,14 @@ return to unfinished work, unwanted focus/occlusion, failures to stop, and repea
 use. Use these results to choose the next release, not star counts.
 
 ## Demo acceptance
+
+The [published Build 26 walkthrough](https://featherhk.com/athena/#demonstration)
+uses real application-window screenshots captured as separate steps, not a
+continuous video. Its lighting-cost follow-up updates the original file and
+panel to quote A 13,200 and quote B 13,500, difference 300, retaining the saved
+position and size. All quote data is synthetic. The installation-cost scenario
+below is the earlier Build 25 acceptance path; do not conflate its 13,000/13,500
+totals with the published Build 26 sequence.
 
 Prefer an isolated OS account with a plain desktop and only synthetic files/apps
 visible. If that is unavailable, record an exact window/region containing only

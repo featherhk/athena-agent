@@ -178,13 +178,42 @@ async def test_engine_tool_receipts_arrive_over_client_sse_before_tools_return(c
         assert (await store.rows('SELECT status FROM runs WHERE id=?', (run,)))[0]['status'] == 'complete'
 
 
-@pytest.mark.parametrize('control', ['stop', 'reset', 'shutdown'])
+@pytest.mark.parametrize('ordering,control', [
+    ('cancel_first', 'stop'), ('cancel_first', 'reset'), ('cancel_first', 'shutdown'),
+    ('receipt_first', 'stop'), ('receipt_first', 'reset'),
+])
 @pytest.mark.parametrize('claimed', [False, True])
-async def test_stopping_receipt_wait_preserves_pairing_and_never_replays(engine, store, surface, monkeypatch, control, claimed):
+async def test_stopping_receipt_wait_preserves_pairing_and_never_replays(engine, store, surface, monkeypatch, ordering, control, claimed):
     owner, session, token, initial = surface
     # Use the real engine for a new run, rather than leave fixture work running.
     await store.execute("UPDATE runs SET status='complete' WHERE id=?", (initial,))
     monkeypatch.setattr('athena.app_controls.RECEIPT_WAIT_SECONDS', 30)
+    read_reached, dismissal_committed, tool_persisted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_call, original_message = store.call, store.message
+
+    async def gated_call(operation):
+        if operation.__qualname__ == 'wait_app_action_receipt.<locals>.read':
+            read_reached.set()
+            # Cancel-first never releases this read. Receipt-first lets the real
+            # waiter see the durable dismissal before Stop cancels its actor.
+            await dismissal_committed.wait()
+        result = await original_call(operation)
+        if ordering == 'receipt_first' and operation.__qualname__ == 'Engine._stop.<locals>.cancel_queue':
+            dismissal_committed.set()
+            await tool_persisted.wait()
+        return result
+
+    async def gated_message(sid, rid, role, content='', status='complete', **kwargs):
+        result = await original_message(sid, rid, role, content, status, **kwargs)
+        if ordering == 'receipt_first' and role == 'tool' and kwargs.get('tool_call_id') == 'waiting-ui' and json.loads(content)['status'] == 'dismissed':
+            tool_persisted.set()
+            # Exercise cancellation after the real result committed but before
+            # outstanding.pop: the interrupted fallback must not overwrite it.
+            await asyncio.Event().wait()
+        return result
+
+    monkeypatch.setattr(store, 'call', gated_call)
+    monkeypatch.setattr(store, 'message', gated_message)
     payloads = []
     async def provider(client, base, key, payload, *args, **kwargs):
         payloads.append(payload)
@@ -195,6 +224,7 @@ async def test_stopping_receipt_wait_preserves_pairing_and_never_replays(engine,
     identifier = await pending_action(store, run)
     if claimed:
         assert (await claim_app_action(store, session, owner, identifier, 'browser-one', token_hash(token)))['accepted']
+    await asyncio.wait_for(read_reached.wait(), 1)
     if control == 'reset':
         await asyncio.wait_for(engine.reset_user(owner), 1)
     elif control == 'shutdown':
@@ -203,20 +233,44 @@ async def test_stopping_receipt_wait_preserves_pairing_and_never_replays(engine,
         await asyncio.wait_for(engine.stop(session), 1)
     assert len(payloads) == 1
     tools = await store.rows('SELECT content FROM messages WHERE run_id=? AND tool_call_id=?', (run, 'waiting-ui'))
-    assert len(tools) == 1 and json.loads(tools[0]['content'])['status'] == 'interrupted'
-    row = (await store.rows('SELECT status,receipt FROM app_actions WHERE id=?', (identifier,)))[0]
+    assert len(tools) == 1
+    result = json.loads(tools[0]['content'])
+    assert result['status'] == ('dismissed' if ordering == 'receipt_first' else 'interrupted')
+    row = (await store.rows('SELECT status,error_code,receipt FROM app_actions WHERE id=?', (identifier,)))[0]
     assert row['status'] == ('dispatched' if control == 'shutdown' and claimed else 'dismissed')
     if row['status'] == 'dismissed':
         receipt = json.loads(row['receipt'])
-        assert receipt['may_have_applied'] is claimed
+        assert receipt == {'effect': 'unknown' if claimed else 'not_dispatched', 'may_have_applied': claimed}
+        assert row['error_code'] == ('reset' if control == 'reset' else 'interrupted')
+    if ordering == 'receipt_first':
+        assert tool_persisted.is_set() and not result['completed'] and 'wait_timed_out' not in result
+        assert result['request']['id'] == identifier and result['request']['run_id'] == run
+        assert result['request']['receipt'] == receipt and result['request']['error_code'] == row['error_code']
+    assistants = await store.rows('SELECT tool_calls FROM messages WHERE run_id=? AND tool_calls IS NOT NULL', (run,))
+    assert len(assistants) == 1 and [call['id'] for call in json.loads(assistants[0]['tool_calls'])] == ['waiting-ui']
+    assert (await store.rows('SELECT status,phase FROM runs WHERE id=?', (run,))) == [{'status': 'interrupted', 'phase': 'stopped'}]
     assert not engine.active_runs or all(task.done() for task in engine.active_runs.values())
     reopened = Store(store.path)
     try:
         await reopened.initialize()
-        assert (await reopened.rows('SELECT status FROM app_actions WHERE id=?', (identifier,)))[0]['status'] == row['status']
-        assert len(await reopened.rows('SELECT id FROM messages WHERE run_id=? AND tool_call_id=?', (run, 'waiting-ui'))) == 1
-        if control != 'reset':
+        assert (await reopened.rows('SELECT status,error_code,receipt FROM app_actions WHERE id=?', (identifier,)))[0] == row
+        assert await reopened.rows('SELECT content FROM messages WHERE run_id=? AND tool_call_id=?', (run, 'waiting-ui')) == tools
+        if control == 'reset':
+            # Reset revokes the old client identity. Neither it nor a fresh
+            # valid browser may reclaim an intent addressed to the old view.
+            with pytest.raises(UserError) as revoked:
+                await observe_client(reopened, owner, session, token, revision=3)
+            assert revoked.value.code == 'frontend_identity_revoked'
+            await observe_client(reopened, owner, session, token, 'browser-after-reset')
+            for client in ('browser-one', 'browser-after-reset'):
+                with pytest.raises(UserError) as unavailable:
+                    await claim_app_action(reopened, session, owner, identifier, client, token_hash(token))
+                assert unavailable.value.code == 'frontend_unavailable'
+        else:
+            await observe_client(reopened, owner, session, token, revision=3)
             assert not (await claim_app_action(reopened, session, owner, identifier, 'browser-one', token_hash(token)))['accepted']
+        assert (await reopened.rows('SELECT status,error_code,receipt FROM app_actions WHERE id=?', (identifier,)))[0] == row
+        assert await reopened.claim(session) is None
     finally:
         await reopened.close()
 
