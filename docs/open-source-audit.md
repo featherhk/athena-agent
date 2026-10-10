@@ -1,5 +1,9 @@
 # Open-source release audit
 
+This is the original dated audit. Its outstanding source-release gates were
+subsequently resolved in the [2026-10-11 publication record](releases/2026-10-11-open-source.md);
+the observations below remain historical evidence.
+
 Reviewed 2026-10-10, against the current working tree, the installed macOS Build 22, and the private `NoW0NDER/Athena` repository. This is a bounded release audit, not a claim that all secrets, copyright issues, vulnerabilities, or user data have been ruled out. No repository visibility, repository ownership, historical commits, remote logs, or releases were changed.
 
 ## Release decision

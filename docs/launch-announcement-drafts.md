@@ -1,13 +1,9 @@
 # Developer-preview announcement drafts
 
-Prepared 2026-10-10. **Not sent.** Use the source-launch versions below only after
-the [source gates](open-source-launch.md#source-release-gates) pass and anonymous
-access to the public repository works. Source and feedback links remain pending;
-replace their placeholders only after anonymous access has been verified. The
-demonstration and download links below are live. The demonstration is a sequence
-of real Build 26 window screenshots, not a continuous video. Do not publish a
-private repository link, an uncreated Discord invite, or a video placeholder.
-If source remains private, use the fallback wording instead.
+Updated 2026-10-11. **Not sent.** Source and feedback links have been verified
+following organization publication. The demonstration is a sequence of real
+Build 26 window screenshots, not a continuous video. Refresh current build,
+platform requirements and limitations before sending these drafts.
 
 ## 简体中文：源码公开后
 
@@ -28,10 +24,10 @@ Athena 的开发者预览开放了。
 组织还需要继续实现和验证。我们希望找到 5–10 位愿意用真实任务试一周的人：
 第一次在哪里卡住，补充材料能否接上，回来时是否找得到结果？
 
-- 源码：[经匿名访问验证的仓库链接]
+- 源码：[featherhk/athena-agent](https://github.com/featherhk/athena-agent)
 - 安装与限制：[Mac 预览下载](https://app.athena.featherhk.com/)
 - 演示：[Build 26 真实分步截图](https://featherhk.com/athena/#demonstration)
-- 反馈：[已启用的 Issues 链接]
+- 反馈：[GitHub Issues](https://github.com/featherhk/athena-agent/issues)
 
 ## English: after source publication
 
@@ -58,27 +54,10 @@ effects host, and automatic task organization behind one conversation are still
 work ahead. We're looking for 5–10 people to try concrete tasks for a week and
 tell us where starting, updating, or returning to their work breaks down.
 
-- Source: [verified public repository]
+- Source: [featherhk/athena-agent](https://github.com/featherhk/athena-agent)
 - Installation and limitations: [Mac preview download](https://app.athena.featherhk.com/)
 - Demo: [Build 26 screenshot walkthrough](https://featherhk.com/athena/#demonstration)
-- Feedback: [enabled Issues page]
-
-## Fallback while source remains private
-
-中文：Athena 的 Mac 托管预览已可测试，需要已开通且有余额的账号。我们正在
-完成源码公开前的最终核验，暂不将其称为已开源版本。当前预览安装包尚未公证。
-[下载与安装限制](https://app.athena.featherhk.com/)；
-[Build 26 真实分步截图](https://featherhk.com/athena/#demonstration)，展示补充报价后
-更新原文件和原面板，保留位置与尺寸。演示仅使用合成数据，并非连续视频。
-
-English: Athena's hosted Mac preview is available for testing with an enabled
-account and credit. Source publication is still pending final verification; this
-is not an open-source release announcement. The preview installer is not yet
-notarized. [Download and limitations](https://app.athena.featherhk.com/).
-The [Build 26 walkthrough](https://featherhk.com/athena/#demonstration) shows a
-follow-up updating the original file and panel, with position and size retained.
-It uses synthetic data and separately captured window screenshots, not a
-continuous video.
+- Feedback: [GitHub Issues](https://github.com/featherhk/athena-agent/issues)
 
 Before sending, refresh the exact build, platform requirements, account policy
 and links. Do not imply an organization, Discord, payment method, all-provider

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/featherhk/athena-agent/security/advisories/new
+    about: Report sensitive security details privately. Do not include keys or private logs in public issues.
+  - name: Ideas and product feedback
+    url: https://github.com/featherhk/athena-agent/discussions
+    about: Discuss a task, proposed behavior, or contribution before implementing it.

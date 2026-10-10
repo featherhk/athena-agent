@@ -1,24 +1,25 @@
 # Athena open-source launch
 
-Decision date: 2026-10-10. This is the launch record, not a claim that the
-repository, Discord, or external-agent adapter is already public.
+License decision: 2026-10-10. Organization source publication: 2026-10-11.
+See the [publication record](releases/2026-10-11-open-source.md) for verified scope.
 
 ## Current release status
 
-As of 2026-10-10, `NoW0NDER/Athena` remains a private repository. Apache-2.0,
-contribution guidance, local BYOK and the dependency-notice work are committed;
-this does not mean the open-source launch is complete. Public visibility and
-historical operational-record disclosure still require a final release decision.
+The source is public at [featherhk/athena-agent](https://github.com/featherhk/athena-agent) under Apache-2.0.
+The original private repository is retained. Public history comes from an
+isolated copy with operational account details, host addresses and machine
+paths redacted across old commits; the private repository was not made public.
+Anonymous cloning, the organization CI, Issues, Discussions and private
+vulnerability reporting have been verified.
 
-Organization setup/transfer and Discord server creation have not been completed.
-Discord login is deferred at the user's request; do not keep retrying it or block
-the source release on it. There is no verified organization repository URL or
-community invite to publish.
-Build 25 (`c4cc0fa`) passed installed-app acceptance and was followed by
-[Build 26](releases/2026-10-10-build26.md), now available on the
-[Mac preview download page](https://app.athena.featherhk.com/). Build 26 adds the
-verified explicit-Quit path. The preview still lacks Developer ID signing and
-notarization. It is the hosted-account distribution, not a public source release.
+Local source mode uses the user's own Chat Completions model connection without
+a Feather account. The [Mac download](https://app.athena.featherhk.com/) remains
+[Build 26](releases/2026-10-10-build26.md), the hosted-account distribution. It
+requires an enabled account with credit and is ad-hoc signed, not notarized.
+There is no prebuilt BYOK installer on that page.
+
+Discord login remains deferred. Announcement drafts have not been sent;
+payment collection and external-agent integration are not part of this release.
 
 The [context evolution research](context-evolution-research.md) is a proposal:
 single-entry task routing, source-wide retrieval, context manifests and expanded
@@ -68,25 +69,23 @@ provider or the future public download.
 
 ## Source release gates
 
-- [x] Decide license; retain historical and third-party notices.
-- [x] Scan tracked paths and all reachable Git blobs for prohibited data and
-  known credential patterns (`node scripts/check-repository.mjs --history`).
-  This is a pattern scan, not a complete secret/provenance audit.
-- [x] Review the accessible Actions logs/artifacts, releases and reachable LFS
-  references; see [the audit and its remaining scope](open-source-audit.md).
-  Recheck newly created runs before changing visibility.
-- [x] Fresh local BYOK start without cloud sign-in; write-only credentials,
-  streamed response and reload persistence verified with synthetic fixtures.
-- [ ] Resolve historical operational records in the three known document paths
-  below; then scan the exact publication candidate and its reachable refs.
-- [ ] Reproduce the README from a clean checkout, empty external data directory
-  and environment without operator configuration. Record the commit,
-  OS/architecture, dependency versions and first-task result; do not describe
-  an existing development Mac as an independently tested clean machine.
-- [ ] Check final source/download links and distribution labels; provide a
-  working private vulnerability-reporting route before inviting contributions.
-  Verify the repository's fork-workflow approval setting as part of visibility
-  preparation; do not add deployment credentials to pull-request jobs.
+- [x] Apache-2.0, contribution guidance, historical MIT and third-party notices.
+- [x] All reachable publication history reviewed; known operational records
+  redacted; exact comparisons with the two configured provider keys found no
+  matches. See the bounded [publication record](releases/2026-10-11-open-source.md).
+- [x] Repository/history checks, strict Git integrity checks, Python 3.14T
+  doctor, 1,118 Python tests and 453 Node tests, TypeScript and production build.
+- [x] Clean checkout and empty external data directory: local BYOK setup,
+  real-provider synthetic file task, Stop and restart without replay. This was
+  verified on a development Mac, not an independently provisioned clean machine.
+- [x] Public source cloned without credentials; source/download labels match
+  their actual distributions. Issues, Discussions and private reports work.
+- [x] Read-only workflow token, no PR review approval by Actions, and approval
+  required for all external contributors' fork workflows. No deployment keys
+  were added to the public repository.
+
+The [original audit](open-source-audit.md) remains a dated snapshot. The public
+repository has fresh Actions history; original private logs are not copied.
 
 Build 25's installed acceptance covers moving/resizing/closing an independent
 file surface, restoring it from the current conversation, updating the same
@@ -97,30 +96,24 @@ still missing; it is a promotion deliverable, not a reason to claim source is
 unsafe. Organization transfer, Discord, payment activation, and the research
 roadmap are not prerequisites for releasing local BYOK source.
 
-### Minimum history treatment
+### Completed history treatment
 
-The bounded audit found historical preview-account and credit-operation records
-in `docs/cloud-deployment.md`, `docs/distribution.md`, and
-`docs/requirements-status.md`. Their current examples are generic. No API key or
-private conversation transcript was identified by that review; this is not proof
-that none exists. Do not expose real operational records just because a token
-scanner passes.
+An isolated publication copy preserves all 103 existing commits, their
+parent relationships, authorship, dates and license notices. The three known
+operations documents were redacted throughout their history. A second pass
+removed operator-specific references in two scripts and five acceptance
+records. Changed commits and their descendants have new hashes.
 
-Recommended publication preparation: retain the private original, inspect those
-exact historical passages, and replace only the real account/credit details in
-an isolated publication copy. Keep code, authorship and license notices intact.
-Even a document-only history rewrite changes descendant commit IDs: verify the
-resulting tree, branches/tags, provenance and fresh CI before deciding how to
-publish it. Do not force-push the shared working repository as a cleanup step.
-The final review must also cover visible Actions logs and any newly added refs;
-rewriting Git does not itself remove old hosting records.
+The execution smoke now requires `ATHENA_TEST_SELF_HOST_URL` instead of assuming
+one operator's host; the network-denial check is still mandatory. Other changed
+current files contain documentation only. Legitimate third-party names and
+synthetic test fixtures are preserved. Original private history has not been rewritten.
 
-If a bounded review cannot establish that this history is suitable for public
-view, a clean release snapshot in a separate public repository is the fallback.
-Retain the original private history and attribution, and state where public
-history begins. Do not delete all history by default or advertise a private
-repository as already open source. These are recommendations, not authorization
-or evidence that a rewrite/publication has happened.
+The public branch is maintained in a separate checkout. Never merge or force-push
+unclean private history into it. Transfer reviewed changes as patches or individual
+commits, then scan the reachable history again. Build identifiers in older
+acceptance documents refer to their original pre-redaction source revisions;
+released binaries and checksums have not been changed by this source publication.
 
 ### Clean first-use acceptance
 
@@ -147,35 +140,25 @@ Never publish runtime data or keys to make a reproduction easier.
 
 ## Weekend developer preview: October 10–11
 
-Keep the scope to an inspectable source release and one convincing task. The
-download response headers have been fixed and a browser-saved Build 25 was
-verified against its checksum. On October 10, finish the explicit-Quit fix, close
-the source gates above, and capture the synthetic continuity flow below on the
-exact build being offered. If a new build is needed, identify it and repeat the affected
-installed checks; do not present Build 25 footage as proof of newer code.
+Source publication is complete. The [real Build 26 walkthrough](https://featherhk.com/athena/#demonstration)
+is a reviewed sequence of synthetic application-window screenshots, not a
+continuous video. The [Chinese and English announcement drafts](launch-announcement-drafts.md)
+now have verified source and feedback links but remain unsent.
 
-On October 11, publish only after those gates pass. Verify the source can be
-read/cloned without maintainer credentials, then use one factual announcement
-and invite 5–10 testers with concrete file-comparison tasks. Initially direct
-feedback to Issues; enable Discussions for longer design feedback when ready.
-Organization and Discord setup can follow actual participation. The
-[Chinese and English drafts](launch-announcement-drafts.md) are unsent and must
-be filled with verified links before use.
-
-If a source gate remains open, keep the repository private and describe the
-available product as a hosted Mac preview. Do not spend the weekend making
-unverified launch claims. The first week's useful evidence is a completed task,
-an update to the same result, and successful return later; publish exact known
-limitations and fix the first reproducible failures before expanding the pitch.
+Invite 5–10 testers around concrete file-comparison tasks. Record whether they
+can finish a first task, update the same result and resume later without losing
+work. Use [Issues](https://github.com/featherhk/athena-agent/issues) for reproducible failures and
+[Discussions](https://github.com/featherhk/athena-agent/discussions) for design feedback. Fix observed failures
+before expanding the pitch. Stage, new memory architecture and payment activation
+have separate acceptance requirements; source publication does not deliver them.
 
 ## Organization and community
 
-Use a Feather organization for the product family and Athena as the repository
-name; check name availability before deciding the final URL. An organization
-helps ownership and contributor roles, not automatic credibility. Start on the
-free plan unless a required capability demonstrably needs a paid plan. Transfer
-only after the release audit and link checks; do not break the installed update
-feed during an ownership change.
+The repository belongs to the [Feather AI organization](https://github.com/featherhk).
+Its public name is `featherhk/athena-agent`; the prior private repository remains
+separate. Issues and Discussions are enabled, and sensitive reports use
+[private vulnerability reporting](https://github.com/featherhk/athena-agent/security/advisories/new). Keep the installed update
+feed independent of source ownership and preserve historical download URLs.
 
 Discord is deferred. When it is usable and someone can maintain it, begin with
 `start-here`, `announcements`, `help`, `showcase`, and `contributors`. Keep bug

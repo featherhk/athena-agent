@@ -1,10 +1,9 @@
 # Reporting a vulnerability
 
 Do not put secrets, exploit details involving real users, or private logs in a
-public issue. Use GitHub's **Report a vulnerability** on this repository when it
-is available. If private reporting is not yet enabled, contact the repository
-owner through an existing private channel and first ask for a secure reporting
-route; do not send sensitive evidence in a public comment.
+public issue. [Report a vulnerability privately](https://github.com/featherhk/athena-agent/security/advisories/new)
+through GitHub. Private vulnerability reporting is enabled for this repository;
+a GitHub account is required to submit a report.
 
 Include the affected revision, a minimal synthetic reproduction, expected
 boundary, and observed effect. Redact tokens and personal data. We do not yet
