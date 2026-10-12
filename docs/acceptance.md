@@ -103,3 +103,52 @@ A read-only database check found exactly one local identity, one conversation, t
 Chrome's client blocked the specific `localhost` test origin in this run with `ERR_BLOCKED_BY_CLIENT`; its block was not bypassed. The existing authorized in-app browser successfully opened that same origin. This result is distinct from the managed-browser executor's tests and does not establish general provider compatibility, a paid cloud connection or installed-app acceptance.
 
 The review also found and fixed an IPv6 loopback boundary: `[::1]` could start in local mode but its browser Origin was rejected. Targeted HTTP tests now cover same-origin bootstrap, session-cookie reuse, keyless local configuration and the selected profile in a new conversation. Alternate ports, HTTPS origins, mapped/other IPv6 addresses and deceptive hostnames remain rejected.
+
+## Focused desktop interaction — 2026-10-13, Build 27
+
+The installed Mac preview uses a compact header above the current exchange and
+keeps the composer at the lower edge. Earlier messages can be expanded in place;
+queued, running and waiting work remains visible. This is presentation only: no
+model context or durable history is removed. Explicitly delivered files appear as
+results; intermediate working files stay accessible in a collapsed disclosure.
+Requested source code is still a result. Retained files from earlier exchanges
+no longer appear to belong to an unrelated current reply.
+
+A real hosted-model task used fictional quotes: A materials 800 plus installation
+200, B materials 750 with installation missing. The installed app completed the
+request while collapsed and showed the result when recalled. A follow-up supplied
+B's installation of 180 and updated the original XLSX and the same logical desktop
+component (a new component version, not a second panel). The native preview and an
+independent read of workbook values/formula caches both showed A 1000, B 930 and
+a difference of 70. The old conversation and its earlier workbook remained
+reachable. Quit/relaunch restored an unsent synthetic draft without submitting it
+or reopening a closed file panel; all 439 message rows in the native database
+matched the pre-restart snapshot. The test draft was then cleared.
+
+The native runtime uses its own **Athena Desktop** data directory. A separate
+662-row development database was initially checked during upgrade preparation;
+that check is not evidence about native data preservation. A consistent backup
+of the actual native database was subsequently taken. The installed-app checks
+above establish visible continuity and restart preservation, not a full
+pre-upgrade hash comparison of every native record.
+
+Validation: clean source `5f5bbb7`, 1118 Python tests passed / 7 skipped, 459 Node
+tests passed, and dependency imports kept Python 3.14T's GIL disabled. Real
+WebKit checks passed: 98 companion, 48 modal-focus, 37 surface and 17 spreadsheet.
+Companion tests now deliver events to their own visible native view without
+activating the application; dedicated modal tests retain activation to verify
+real focus. Bundle relocation, startup, authentication/origin boundaries,
+shutdown/restart and credential exclusion passed. The public artifact was fully
+downloaded and its bytes, hash and download headers matched the local manifest.
+
+[Build 27 download](https://app.athena.featherhk.com/downloads/5f5bbb7/Athena-0.1.0-macos-arm64-preview.dmg)
+is an Apple Silicon/macOS 13+ preview, ad-hoc signed and **not notarized**.
+Only static distribution artifacts and the Mac update feed changed in this
+release; the hosted web runtime was not deployed or restarted.
+
+Remaining product work: long prompts still consume too much reading space;
+spreadsheet previews do not fully reproduce original workbook layout; closing a
+result and resuming conversation still need a more direct relationship. This
+release does not establish automatic task routing or reliable control of Finder
+and arbitrary third-party application windows. Desktop component control must
+not be presented as proof of full system control.
