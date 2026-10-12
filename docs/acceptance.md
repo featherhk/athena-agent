@@ -152,3 +152,32 @@ result and resuming conversation still need a more direct relationship. This
 release does not establish automatic task routing or reliable control of Finder
 and arbitrary third-party application windows. Desktop component control must
 not be presented as proof of full system control.
+
+## 2026-10-13 — initial native accessibility path (local Build 28)
+
+A real installed Mac run submitted a narrowly scoped capability check through
+Athena's conversation UI. The model read the desktop skill and called
+`runtime computer status`. The native application replied `supported:true` and
+`accessibility:not_granted`; the durable `computer_actions` receipt and visible
+reply agreed. No other application content was read, no window was operated,
+and no OS permission was changed. Existing message rows matched the pre-update
+SQLite backup exactly.
+
+This establishes the model → runtime → native parent → durable receipt → reply
+path, **not** successful control of Finder or an image preview. Those effects
+remain unverified pending OS authorization and real cross-application tests.
+The new host supports AX observations and observed-element actions only; it has
+no screenshot, coordinate input, global keyboard or drag capability.
+
+The clean-source check passed 1,132 Python tests (7 skipped) and 459 Node tests.
+The subsequent real-pipe regression passed with all 15 focused computer tests.
+48 existing native host checks passed; pointer injection was explicitly skipped
+because that fixture lacks OS posting access. The dedicated control fixture
+checks non-prompting status, bounded Unicode responses, queued cancellation,
+expired requests and revoked host generations. Bundled relocation, GIL-free
+imports, startup, auth/origin boundaries, restart/shutdown and credential
+exclusion passed. These fixtures do not prove third-party application effects.
+
+The locally installed Build 28 uses clean public source `5fd71e7`. It is an
+ad-hoc signed, unnotarized test build. The public download feed remains Build 27
+until cross-application acceptance is completed; the hosted service is unchanged.
