@@ -1,5 +1,7 @@
 import asyncio
 import json
+from pathlib import Path
+import sys
 
 import pytest
 
@@ -179,3 +181,32 @@ async def test_transport_eof_fails_pending_without_resend():
         await task
     assert len(sent) == 1 and not host.connected
     await host.close()
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='Native parent pipe transport is macOS/POSIX')
+async def test_real_parent_child_pipe_round_trip_and_clean_shutdown():
+    code = '''import asyncio,json,sys
+from athena.native_host import NativeHost
+async def main():
+    host = await NativeHost.stdio()
+    result = await host.call({'action':'status'})
+    print(json.dumps(result), file=sys.stderr)
+    await host.close()
+asyncio.run(main())
+'''
+    child = await asyncio.create_subprocess_exec(sys.executable, '-c', code,
+        cwd=Path(__file__).resolve().parents[1] / 'backend',
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        request = json.loads(await asyncio.wait_for(child.stdout.readline(), 5))
+        assert request['event'] == 'computer_request'
+        child.stdin.write((json.dumps({'event': 'computer_result', 'id': request['id'],
+                                      'result': {'status': 'complete', 'synthetic': True}}) + '\n').encode())
+        await child.stdin.drain()
+        out, err = await asyncio.wait_for(child.communicate(), 5)
+        assert child.returncode == 0 and out == b''
+        assert json.loads(err) == {'status': 'complete', 'synthetic': True}
+    finally:
+        if child.returncode is None:
+            child.kill()
+            await child.wait()
