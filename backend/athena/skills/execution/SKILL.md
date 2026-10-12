@@ -9,6 +9,8 @@ description: "执行命令、检查可用能力及恢复完整工具输出"
 
 exec 执行一个 shell 命令，默认工作目录在当前会话的独立工作空间。默认最长运行 120 秒；当前版本不提供交互式 PTY。用系统已安装的 CLI、Python 与 HTTP 客户端完成工作。工具失败不代表用户目标改变，依据结果修正。
 
+操作其他 Mac 应用的窗口/菜单，先读取 desktop 技能的 references/control.md，使用原生宿主的权限状态和辅助功能通路。受保护命令中的 Apple Events `-10004` 不能证明缺少哪项系统授权；不要凭猜测要求用户给辅助进程授权或反复执行相同失败脚本。
+
 本机 exec 的 `python3` 使用 Athena 自带的 Python 及依赖，也可用 `"$ATHENA_PYTHON"` 明确调用，无需寻找系统 Python。Excel 已有 openpyxl 与 XlsxWriter，不必重复安装；创建时先读 files 技能。当前目录就是 `ATHENA_WORKSPACE`，相对路径可直接保存文件；路径含空格时使用引号。云端使用执行容器的 `python3`，不要照抄本机解释器路径。
 
 命令全部输出保存在 artifact 中。进入上下文的结果只保留有限片段。需要完整内容时，用 runtime 的 read_artifact 操作，传 artifact_id、offset、limit；offset 和 limit 按字符计数。

@@ -73,7 +73,7 @@ def public_message(message):
     return result
 
 
-def create_app(config: Config | None = None):
+def create_app(config: Config | None = None, *, native_host=None):
     config = config or Config.from_env()
     @asynccontextmanager
     async def lifespan(app):
@@ -91,6 +91,8 @@ def create_app(config: Config | None = None):
         await initialize_voice(store)
         app.state.voice = VoiceService(VoiceConfig.from_env(), store)
         engine = Engine(config, store)
+        if native_host is not None and not config.execution_socket and not config.public_origin:
+            engine.tools.computer.native = native_host
         await engine.models.ensure_default()
         app.state.engine, app.state.store = engine, store
         app.state.auth = Auth(store, local_setup=config.local_setup)

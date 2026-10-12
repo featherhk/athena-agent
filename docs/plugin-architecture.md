@@ -34,6 +34,7 @@ The launcher and independent recovery path form a minimal control plane, not a p
 - Account-scoped [task continuity](task-continuity.md): existing runs project background progress, requests for help and persistent unread outcomes into a conditional shell control, also reachable in file preview. The universal tool exposes the same discovery, read receipts and conversation stop functions. Updates do not navigate or replace drafts automatically.
 - Bounded delegated runs behind the same runtime envelope, with durable waits, branch cancellation, main-conversation questions/files and referenced results. This uses the current concrete Engine and Store, not a replaceable execution provider; see [delegation](delegation.md).
 - Durable events and context projection boundaries, recoverable originals, fixed model/default recovery, and account-scoped state.
+- An initial [Mac accessibility host](mac-system-control.md) with structured application observations and observed-element actions, explicit OS authorization state and non-replaying receipts. It is separate from desktop components and remains a concrete host adapter; it is not full computer use or a replaceable execution service.
 
 ## What remains before “everything is replaceable” is true
 

@@ -14,7 +14,7 @@ from typing import Callable, TypeVar
 from uuid import uuid4
 
 T = TypeVar("T")
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 def now() -> str:
@@ -97,6 +97,8 @@ class Store:
             initialize_frontend_state(db)
             from .desktop_resume import initialize as initialize_desktop_resume
             initialize_desktop_resume(db)
+            from .computer import initialize as initialize_computer
+            initialize_computer(db)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         await self.call(migrate)
         from .context_controls import initialize_context_controls

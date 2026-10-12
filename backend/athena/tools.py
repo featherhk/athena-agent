@@ -57,6 +57,8 @@ class ToolRunner:
         self.introspection = Introspection(store, self.models)
         from .browser import BrowserHost
         self.browser = BrowserHost(config, store)
+        from .computer import ComputerHost
+        self.computer = ComputerHost(store)
         from .agents import Agents
         self.agents = Agents(config, store, self.models)
 
@@ -197,7 +199,9 @@ class ToolRunner:
         user = owner["user_id"]
         if op == "capabilities":
             from .capabilities import execution_capabilities
-            return execution_capabilities(self.config)
+            return execution_capabilities(self.config, computer=self.computer.available)
+        if op == "computer":
+            return await self.computer.operate(args, session_id, run_id)
         if op == "agents":
             return await self.agents.operate(session_id, run_id, {key: value for key, value in args.items() if key != 'op'})
         if op == "browser":

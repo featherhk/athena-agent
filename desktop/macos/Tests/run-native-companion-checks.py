@@ -166,7 +166,7 @@ def main():
     executable.parent.mkdir()
     source = ROOT / 'desktop/macos'
     files = ['Athena.swift', 'UpdateCheck.swift', 'WindowRecovery.swift', 'DesktopCompanion.swift', 'DesktopSceneHost.swift',
-             'DesktopHitRegions.swift', 'Tests/NativeCompanionChecks.swift']
+             'DesktopHitRegions.swift', 'ComputerControl.swift', 'Tests/NativeCompanionChecks.swift']
     subprocess.run(['xcrun', 'swiftc', '-parse-as-library', '-target', 'arm64-apple-macos13.0', '-g', '-D', 'ATHENA_NATIVE_CHECKS',
                     '-framework', 'AppKit', '-framework', 'WebKit', *[str(source / name) for name in files], '-o', str(executable)],
                    env=env, check=True, timeout=180)

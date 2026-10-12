@@ -49,7 +49,11 @@ async def main():
     listener.setblocking(False)
     port = listener.getsockname()[1]
     os.environ["ATHENA_PORT"] = str(port)
-    config = uvicorn.Config(create_app(), loop="asyncio", http="h11", access_log=False,
+    native = None
+    if os.environ.get('ATHENA_NATIVE_HOST') == '1':
+        from athena.native_host import NativeHost
+        native = await NativeHost.stdio()
+    config = uvicorn.Config(create_app(native_host=native), loop="asyncio", http="h11", access_log=False,
                             proxy_headers=False, log_level="warning", timeout_graceful_shutdown=5)
     server = AthenaServer(config)
     parent_pid = os.getppid()
@@ -74,6 +78,8 @@ async def main():
     finally:
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
+        if native:
+            await native.close()
 
 
 if __name__ == "__main__":

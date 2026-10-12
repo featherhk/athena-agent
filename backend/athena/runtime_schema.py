@@ -112,6 +112,12 @@ def validate_arguments(value, schema, *, location="arguments", operation=None):
 # model-facing runtime envelope. Individual operations validate allowed fields.
 RUNTIME_PROPERTIES['op']['enum'].append('browser')
 RUNTIME_PROPERTIES['op']['enum'].append('capabilities')
+RUNTIME_PROPERTIES['op']['enum'].append('computer')
+RUNTIME_PROPERTIES['action']['enum'].extend(['invoke', 'set_value'])
+RUNTIME_PROPERTIES.update({
+    'app_id': {'type': 'string', 'maxLength': 200},
+    'native_action': {'type': 'string', 'maxLength': 200},
+})
 for action in ('status', 'snapshot', 'click', 'fill', 'press', 'select', 'check', 'uncheck', 'upload',
                'scroll', 'back', 'forward', 'reload', 'screenshot', 'handoff'):
     if action not in RUNTIME_PROPERTIES['action']['enum']:
@@ -120,7 +126,7 @@ RUNTIME_PROPERTIES.update({
     'tab_id': {'type': 'string', 'maxLength': 64},
     'observation_id': {'type': 'string', 'maxLength': 64},
     'url': {'type': 'string', 'maxLength': 4096},
-    'ref': {'type': 'string', 'pattern': '^@e[0-9]+$'},
+    'ref': {'type': 'string', 'pattern': '^@[en][0-9]+$'},
     'text': {'type': 'string', 'maxLength': 10000},
     'value': {'type': 'string', 'maxLength': 1000},
     'key': {'type': 'string', 'maxLength': 60},

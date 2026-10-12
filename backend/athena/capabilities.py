@@ -10,7 +10,7 @@ def manual_browser_handoff_available(config, driver):
             and bool(getattr(driver, "headed", False)) and driver.available())
 
 
-def execution_capabilities(config):
+def execution_capabilities(config, *, computer=False):
     hosted = bool(config.execution_socket)
     command = Path(config.execution_socket).is_socket() if hosted else sys.platform == "darwin" and bool(shutil.which("sandbox-exec"))
     from .browser_driver import browser_driver
@@ -20,6 +20,8 @@ def execution_capabilities(config):
             "command_scope": "account_container" if hosted else "local_protected_process",
             "browser": driver.available(),
             "browser_manual_handoff": manual_browser_handoff_available(config, driver),
-            "user_help": True, "computer_control": False,
+            "user_help": True, "computer_control": computer and not hosted,
+            "computer_control_scope": ("Mac accessibility host; runtime computer status checks OS authorization; desktop skill documents actions."
+                                       if computer and not hosted else "No native accessibility host connected."),
             "controls_user_phone": False,
             "files": "Current account workspace; generated files appear in the conversation."}

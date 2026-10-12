@@ -311,9 +311,9 @@ class Engine:
                 raise ValueError("Memory policy must select existing candidate IDs")
         policy = await PolicyRunner(self.config, self.store).apply("memory_recall", session_id, payload, validate)
         environment = ""
-        if self.config.execution_socket:
+        if self.config.execution_socket or self.tools.computer.available:
             from .capabilities import execution_capabilities
-            environment = "\nExecution environment for this turn (host facts, superseding older availability reports): " + json.dumps(execution_capabilities(self.config))
+            environment = "\nExecution environment for this turn (host facts, superseding older availability reports): " + json.dumps(execution_capabilities(self.config, computer=self.tools.computer.available))
         # The admitted input freezes recall before its first model request.
         await self.store.call(lambda db: db.execute("UPDATE messages SET context_note=? WHERE session_id=? AND run_id=? AND role='user' AND NOT EXISTS(SELECT 1 FROM requests WHERE run_id=?)",
             (snapshot_note(db, session_id, policy['value'], candidate_ids=payload['default']) + environment, session_id, run_id, run_id)).rowcount)

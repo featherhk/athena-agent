@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var webView: WKWebView!
     private var child: Process?
     private var output: Pipe?
+    private var nativeInput: Pipe?
+    private var computerControl = ComputerControl()
     private var pendingOutput = Data()
     private var localURL: URL?
     private var terminating = false
@@ -133,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         menu.addItem(withTitle: tr("new_chat"), action: #selector(newConversation), keyEquivalent: "n").target = self
         menu.addItem(withTitle: tr("history"), action: #selector(showHistory), keyEquivalent: "").target = self
         menu.addItem(withTitle: tr("account_settings"), action: #selector(showSettings), keyEquivalent: "").target = self
+        menu.addItem(withTitle: tr("mac_control_settings"), action: #selector(showMacControlSettings), keyEquivalent: "").target = self
         menu.addItem(withTitle: tr("stop_work"), action: #selector(stopWork), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: tr("recover_window"), action: #selector(offerRecovery), keyEquivalent: "").target = self
@@ -201,6 +204,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc private func showHistory() { showCompanion(action: "history") }
     @objc private func showSettings() { showCompanion(action: "menu") }
+    @objc private func showMacControlSettings() {
+        // The person grants OS access. Opening this page does not alter TCC.
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
     @objc private func newConversation() { showCompanion(action: "new") }
     @objc private func stopWork() { sendDesktopAction("stop") }
 
@@ -335,11 +344,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let data = home.appendingPathComponent("Library/Application Support/Athena Desktop")
         process.environment = ["HOME": home.path, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                                "TMPDIR": NSTemporaryDirectory(), "LANG": "en_US.UTF-8",
-                               "ATHENA_DATA_DIR": data.path, "PYTHONDONTWRITEBYTECODE": "1"]
+                               "ATHENA_DATA_DIR": data.path, "PYTHONDONTWRITEBYTECODE": "1", "ATHENA_NATIVE_HOST": "1"]
         process.currentDirectoryURL = resources.appendingPathComponent("app")
         let pipe = Pipe()
         output = pipe
         process.standardOutput = pipe
+        let input = Pipe()
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        nativeInput = input
+        process.standardInput = input
+        computerControl.invalidate()
+        computerControl = ComputerControl()
+        let control = computerControl
         // Logs remain local and private; they are never bundled or uploaded.
         do {
             try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true,
@@ -359,8 +375,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 Task { @MainActor [weak self] in self?.receive(bytes, generation: generation) }
             }
             process.terminationHandler = { [weak self] _ in
+                control.invalidate()
                 Task { @MainActor [weak self] in
                     guard let self, self.startupGeneration == generation else { return }
+                    self.computerControl.invalidate()
                     self.child = nil
                     if self.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
                     else { self.showFailure() }
@@ -380,13 +398,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func receive(_ bytes: Data, generation: Int) {
-        guard generation == startupGeneration, localURL == nil else { return }
+        guard generation == startupGeneration else { return }
         pendingOutput.append(bytes)
         while let newline = pendingOutput.firstIndex(of: 10) {
             let line = pendingOutput.prefix(upTo: newline)
             pendingOutput.removeSubrange(...newline)
-            guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  value["event"] as? String == "ready", let port = value["port"] as? Int, port > 0, port <= 65535,
+            guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+            if value["event"] as? String == "computer_cancel", let id = value["id"] as? String {
+                computerControl.cancel(id); continue
+            }
+            if value["event"] as? String == "computer_request", !terminating, let input = nativeInput {
+                computerControl.handle(value) { response in
+                    guard var bytes = try? JSONSerialization.data(withJSONObject: response) else { return }
+                    bytes.append(10)
+                    try? input.fileHandleForWriting.write(contentsOf: bytes)
+                }
+                continue
+            }
+            guard localURL == nil, value["event"] as? String == "ready", let port = value["port"] as? Int, port > 0, port <= 65535,
                   let url = URL(string: "http://127.0.0.1:\(port)/") else { continue }
             localURL = url
             reload()
@@ -497,6 +526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func beginTermination() {
         terminating = true
+        computerControl.invalidate()
         quitRequest = nil
         updateTask?.cancel()
         shortcut?.unregister()
