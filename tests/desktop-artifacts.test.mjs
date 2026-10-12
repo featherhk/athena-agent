@@ -145,3 +145,12 @@ test('owned links and registered closed results survive presentation without pub
   state.components[0].active = 0;
   assert.deepEqual(outputFilePresentation(state, origin), { delivered: [], working: [file] });
 });
+
+
+test('focused exchange does not inherit an earlier task result even when its panel is retained', () => {
+  const question = { id: 'next', role: 'user', content: 'What time is it?', run_id: 'next' };
+  const state = snapshot({ messages: [message, question], components: [component] });
+  assert.deepEqual(outputFilePresentation(state, origin).delivered, [file]);
+  assert.deepEqual(outputFilePresentation({ ...state, messages: [question], components: [] }, origin).delivered, []);
+  assert.deepEqual(outputFilePresentation(state, origin).delivered, [file], 'the original result remains available in history');
+});

@@ -1144,7 +1144,7 @@ export default function App() {
   const runsById = new Map(snapshot.runs.map(run => [run.id, run]));
   const lastAnswerByRun = new Map(snapshot.messages.filter(message => message.run_id && message.role === 'assistant' && (message.content || message.attachments?.length)).map(message => [message.run_id, message.id]));
   const latestRun = snapshot.runs[0]?.id;
-  const desktopMessages = snapshot.messages.filter(message => ['user', 'assistant'].includes(message.role));
+  const desktopMessages = useMemo(() => snapshot.messages.filter(message => ['user', 'assistant'].includes(message.role)), [snapshot.messages]);
   const conversationScope = `${user?.id}:${session}`;
   const showEarlier = earlierScope === conversationScope;
   const recentStart = companionConversationStart(desktopMessages, snapshot.runs);
@@ -1153,7 +1153,10 @@ export default function App() {
   const canonicalFile = (file: FileEntry) => snapshot.files.find(item => item.id === file.id) || file;
   const attachedPreviewIds = new Set(desktopMessages.filter(message => !message.help_reply && !taskOrigin(message) && !agentOrigin(message)).flatMap(message => message.attachments?.map(canonicalFile).filter(file => file.source === 'output' && canDisplayArtifact(file)).map(file => file.id) || []));
   const outputFiles = useMemo(() => outputFilePresentation(snapshot, location.origin), [snapshot.messages, snapshot.files, snapshot.components]);
-  const latestFiles = outputFiles.delivered.filter(file => !attachedFileIds.has(file.id));
+  // A previous task's retained desktop panel is not a result of this exchange.
+  // Its file stays reachable through expanded history, Files, and the panel itself.
+  const currentOutputFiles = useMemo(() => outputFilePresentation({ ...snapshot, messages: desktopMessages.slice(recentStart), components: [] }, location.origin).delivered, [desktopMessages, snapshot.files, recentStart]);
+  const latestFiles = (showEarlier ? outputFiles.delivered : currentOutputFiles).filter(file => !attachedFileIds.has(file.id));
   const desktopHasResult = Boolean(desktopMessages.length || latestRun || latestFiles.length || lastError || inlinePreview || desktopWidgets.length);
   const desktopResult = desktopHasResult && desktopReplyOpen && !desktopMinimized;
   const desktopQuestion = conversationSubject(desktopMessages);
