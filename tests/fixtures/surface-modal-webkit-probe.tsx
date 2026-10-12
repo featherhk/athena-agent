@@ -30,6 +30,7 @@ window.fetch = async (path, init) => {
   path = String(path); const body = init?.body ? JSON.parse(init.body) : undefined;
   let value;
   if (path === '/api/auth/me') value = { user: { id: 'probe', username: 'synthetic', developer_mode: false }, configured: true, has_users: true };
+  else if (path === '/api/local/setup') value = { mode: 'account' };
   else if (path.startsWith('/api/service')) value = { configured: true };
   else if (path === '/api/sessions') value = [{ id: 's1', title: 'Synthetic workspace', pending: 0 }];
   else if (path === '/api/sessions/s1') value = structuredClone(snapshot);

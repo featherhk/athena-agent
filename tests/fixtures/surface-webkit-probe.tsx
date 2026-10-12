@@ -30,6 +30,7 @@ window.fetch = async (path, init) => {
   path = String(path); if(path.includes('/files/')) window.webkit.messageHandlers.probe.postMessage({progress:'fetch:'+path}); const body = init?.body ? JSON.parse(init.body) : undefined;
   let value;
   if (path === '/api/auth/me') value = { user: { id: 'probe', username: 'synthetic', developer_mode: false }, configured: true, has_users: true };
+  else if (path === '/api/local/setup') value = { mode: 'account' };
   else if (path.startsWith('/api/service')) value = { configured: true };
   else if (path === '/api/sessions') value = [{ id: 's1', title: 'Synthetic workspace', pending: 0 }];
   else if (path === '/api/sessions/s1') value = structuredClone(snapshot);
@@ -219,6 +220,9 @@ async function run() {
     await until(() => document.querySelector('[data-component-id="chart"]'), 'inline workspace chart');
     check('workspace_content_does_not_replace_conversation', document.querySelector('.conversation:not([hidden])') && !document.querySelector('.workspace-panel'));
     snapshot.files = ['sheet', 'note'].map((id, index) => ({ id, session_id: 's1', name: index ? 'result.md' : 'budget.xlsx', source: 'output', size: 40, path: '', media_type: index ? 'text/markdown' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', created_at: '', content_url: '/api/files/' + id + '/content', preview_url: '/api/files/' + id + '/preview' })); emit();
+    await until(() => document.querySelector('.working-files'), 'indexed working files');
+    check('indexing_files_alone_does_not_publish_intermediate_artifacts', !document.querySelector('.artifact-result') && !document.querySelector('.working-files').open);
+    snapshot.messages[1].attachments = structuredClone(snapshot.files); emit();
     await until(() => document.querySelector('.spreadsheet-preview table') && document.querySelector('.artifact-result h1'), 'inline documents');
     check('spreadsheet_and_markdown_render_in_conversation', document.querySelector('.conversation .spreadsheet-preview').textContent.includes('Travel') && document.querySelector('.conversation .artifact-result h1').textContent === 'A result in the conversation' && !document.querySelector('.preview-overlay'));
     const scroll = document.querySelector('.scroll-area');
