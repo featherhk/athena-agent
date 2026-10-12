@@ -7,6 +7,25 @@ export function isDesktopArtifact(file: FileEntry) {
   return /\.(png|jpe?g|gif|webp|avif|docx|xlsx|md|markdown|html?|txt|csv|json|log)$/i.test(file.name);
 }
 
+/** Publication intent, not the file extension, separates results from working files.
+ * Explicitly delivered source code is a result too. All files remain accessible. */
+export function outputFilePresentation(snapshot: Snapshot, origin: string) {
+  const published = new Set<string>();
+  for (const message of snapshot.messages) {
+    if (message.role !== 'assistant') continue;
+    for (const file of message.attachments || []) published.add(file.id);
+    for (const match of message.content.matchAll(/\]\(\s*<?([^\s)>]+)>?(?:\s+["'][^)]*)?\)|(?<!\S)(https?:\/\/[^\s<>]+|\/api\/files\/[^\s<>]+)/g)) {
+      const file = artifactLinkFile(match[1] || match[2], snapshot.files, origin);
+      if (file) published.add(file.id);
+    }
+  }
+  for (const component of snapshot.components || []) {
+    if (component.file_id && component.active !== false && component.active !== 0) published.add(component.file_id);
+  }
+  const outputs = snapshot.files.filter(file => file.source === 'output');
+  return { delivered: outputs.filter(file => published.has(file.id)), working: outputs.filter(file => !published.has(file.id)) };
+}
+
 /** Deliver one completed result, not every intermediate file indexed by a run. */
 export function deliveredArtifact(snapshot: Snapshot, origin = 'http://athena.invalid'): FileEntry | null {
   const last = snapshot.messages.findLast(message => message.role === 'assistant' && message.status === 'complete' && Boolean(message.content || message.attachments?.length));

@@ -47,7 +47,7 @@ ${companion ? `final class OfflineDocument: NSObject, WKURLSchemeHandler {
   window.title = "Athena · Offline ${preview ? 'Spreadsheet' : modal ? 'Surface Modal' : companion ? 'Companion' : 'Surface'} Check"
   // Real WebKit visibility is required for IntersectionObserver and animation/timer delivery.
   // A hidden window plus a JavaScript document.hidden override is not an end-to-end fixture.
-  window.center(); window.makeKeyAndOrderFront(nil); window.makeFirstResponder(web); NSApp.activate(ignoringOtherApps:true)
+  window.center(); window.orderFrontRegardless(); window.makeFirstResponder(web)
   ${companion ? 'web.load(URLRequest(url:URL(string:"athena-probe://offline/?desktop=companion")!))' : 'web.loadHTMLString(try! String(contentsOfFile:CommandLine.arguments[1],encoding:.utf8),baseURL:nil)'}
   Task { try? await Task.sleep(for:.seconds(${companion ? 55 : 20})); finish(["error":"native_timeout","last_progress":lastProgress]) }
  }
@@ -61,12 +61,17 @@ ${companion ? `final class OfflineDocument: NSObject, WKURLSchemeHandler {
   }
   // Synthetic native events are confined to this offline nonpersistent test window.
   if let body = message.body as? [String:Any], let point = body["nativeClick"] as? [String:Double], let x = point["x"], let y = point["y"] {
-   window.makeKeyAndOrderFront(nil); window.makeFirstResponder(web); NSApp.activate(ignoringOtherApps:true)
-   // Activation can settle asynchronously when another local test/app was
-   // focused. Deliver the fixture click after that turn of the AppKit loop.
+   window.makeFirstResponder(web)
+   // Deliver only to this visible fixture window; never activate the app or
+   // intercept hardware input intended for the person using the computer.
    DispatchQueue.main.asyncAfter(deadline:.now() + 0.06) {
     for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-     if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x:x,y:self.web.bounds.height-y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: self.window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) { self.window.sendEvent(event) }
+     if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x:x,y:self.web.bounds.height-y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: self.window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1) {
+      let point = self.web.convert(event.locationInWindow, from:nil)
+      if let target = self.web.hitTest(point) {
+       if type == .leftMouseDown { target.mouseDown(with:event) } else { target.mouseUp(with:event) }
+      }
+     }
     }
    }
    return
@@ -75,7 +80,7 @@ ${companion ? `final class OfflineDocument: NSObject, WKURLSchemeHandler {
    let chars = key == "Enter" ? "\\r" : key == "Tab" ? "\\t" : key
    let code: UInt16 = key == "Enter" ? 36 : key == "Tab" ? 48 : 6
    let modifiers: NSEvent.ModifierFlags = body["shift"] as? Bool == true ? [.shift] : []
-   if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) { window.sendEvent(event) }
+   if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) { window.firstResponder?.keyDown(with:event) }
    return
   }
   if let body = message.body as? [String:Any], let progress = body["progress"] as? String { lastProgress = progress; FileHandle.standardError.write(Data((progress + "\\n").utf8)); return }

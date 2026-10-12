@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { artifactLinkFile, deliveredArtifact, desktopFilePreview, isDesktopArtifact } from '../src/desktop-artifacts.ts';
+import { artifactLinkFile, deliveredArtifact, desktopFilePreview, isDesktopArtifact, outputFilePresentation } from '../src/desktop-artifacts.ts';
 
 const origin = 'http://127.0.0.1:64417';
 const file = { id: 'budget', session_id: 'chat', name: 'Budget.xlsx', path: 'Budget.xlsx', size: 1200,
@@ -121,4 +121,27 @@ test('loading and preview failure stay explicit instead of becoming a success re
   assert.deepEqual(desktopFilePreview(file, [component], native({ components: [{ ...receipt, state: 'failed', error_code: 'preview_unavailable' }] })),
     { file_id: file.id, status: 'failed', error_code: 'preview_unavailable' });
   assert.equal(desktopFilePreview(file, [component], native({ presented: false, components: [{ ...receipt, state: 'failed', error_code: 'preview_unavailable' }] })), null);
+});
+
+
+test('results follow delivery intent while generator files remain available as working files', () => {
+  const script = { ...file, id: 'generator', name: 'generate.py' };
+  const current = { ...file, content_revision: 'new-bytes' };
+  const uploaded = { ...file, id: 'input', source: 'upload' };
+  const state = snapshot({ files: [script, current, uploaded] });
+  assert.deepEqual(outputFilePresentation(state, origin), { delivered: [current], working: [script] });
+  const codeDelivery = { ...message, attachments: [script], content: 'Here is the script you requested.' };
+  assert.deepEqual(outputFilePresentation(snapshot({ files: [script, current], messages: [codeDelivery] }), origin),
+    { delivered: [script], working: [current] });
+});
+
+test('owned links and registered closed results survive presentation without publishing unrelated files', () => {
+  const state = snapshot({ messages: [{ ...message, attachments: [], content: `[Budget](${origin}/api/files/budget/content)` }] });
+  assert.deepEqual(outputFilePresentation(state, origin), { delivered: [file], working: [] });
+  state.messages[0].content = '[Budget](https://unrelated.example/api/files/budget/content)';
+  assert.deepEqual(outputFilePresentation(state, origin), { delivered: [], working: [file] });
+  state.components = [{ ...component, view: { hidden: true } }];
+  assert.deepEqual(outputFilePresentation(state, origin), { delivered: [file], working: [] });
+  state.components[0].active = 0;
+  assert.deepEqual(outputFilePresentation(state, origin), { delivered: [], working: [file] });
 });

@@ -87,6 +87,25 @@ html[data-reduce-motion='true'] .companion-portrait * { animation:none!important
 .companion-result-heading { display:flex; justify-content:flex-end; margin:-14px -14px 0; }
 .companion-result-heading .quiet { padding:5px 10px; font-size:11px; }
 
+/* One working surface: a quiet header, readable result, and a fixed reply edge.
+   The free-standing portrait is reserved for the collapsed desktop companion. */
+.desktop-companion[data-desktop-avatar='false'] .companion-presence { order:0; flex-direction:row; gap:9px; width:100%; height:48px; padding:6px 12px; background:var(--surface); border:1px solid var(--tint); border-bottom:0; border-radius:12px 12px 0 0; }
+.desktop-companion[data-desktop-avatar='false'] .companion-avatar { width:30px; height:34px; flex-shrink:0; border-radius:6px; }
+.desktop-companion[data-desktop-avatar='false'] .custom-presence { width:30px; height:34px; flex-shrink:0; }
+.desktop-companion[data-desktop-avatar='false'] .companion-status { padding:0; background:none; white-space:normal; line-height:1.4; text-align:start; }
+.desktop-companion[data-desktop-avatar='false'] .companion-menu,
+.desktop-companion[data-desktop-avatar='false'] .companion-hide { position:static; flex-shrink:0; width:28px; height:28px; opacity:.8; background:none; }
+.desktop-companion[data-desktop-avatar='false'] .companion-menu { margin-inline-start:auto; }
+.desktop-companion[data-desktop-avatar='false'] .companion-result { margin:0; border-block:0; border-radius:0; padding:8px 20px 12px; }
+.desktop-companion[data-desktop-avatar='false'] .composer-area { padding:8px 12px 12px; background:var(--surface); border:1px solid var(--tint); border-top:0; border-radius:0 0 12px 12px; }
+.desktop-companion[data-desktop-avatar='false'] .composer { border-radius:8px; box-shadow:none; }
+.desktop-companion[data-desktop-avatar='false'] .companion-result-heading { margin:0 -8px 6px; gap:12px; justify-content:space-between; }
+.companion-result-heading [data-collapse-result] { margin-inline-start:auto; }
+.companion-exchange[hidden] { display:none!important; }
+.working-files { margin:14px 0 4px; color:var(--muted); font-size:12px; }
+.working-files > summary { cursor:pointer; width:fit-content; padding:4px 0; }
+.working-files > .output-files { margin-top:8px; }
+
 /* Generic toolbar SVG rules must not outline the sculpted portrait. */
 .companion-avatar .companion-portrait { stroke:none; stroke-width:0; }
 .desktop-companion .dialog:focus { outline:1px solid var(--tint); outline-offset:2px; }

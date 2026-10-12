@@ -25,6 +25,8 @@ window.EventSource = Source;
 const emptySnapshot = () => ({ cursor: 1, submission_revision: 0, components: [], messages: [], runs: [], files: [], tasks: [], help_requests: [] });
 let snapshot = emptySnapshot();
 const secondSnapshot = emptySnapshot();
+const pointerDiagnostics = [];
+for (const type of ['mousedown', 'mouseup', 'click']) document.addEventListener(type, event => { pointerDiagnostics.push({ type, target: event.target?.closest('button')?.className, x: event.clientX, y: event.clientY, time: Math.round(performance.now()), expanded: document.querySelector('.companion-avatar')?.getAttribute('aria-expanded') }); }, true);
 const observations = [], calls = [], unexpected = [], nativePosts = [], results = {};
 const receipts = new Map(), stops = new Map();
 const appActions = new Map(), actionReceipts = new Map(), previewRequests = [];
@@ -85,6 +87,7 @@ window.fetch = async (path, init) => {
   if (body) calls.push({ path, body });
   let value, status = 200;
   if (path === '/api/auth/me') value = { user: signedIn ? { id: 'probe', username: 'synthetic', developer_mode: false } : null, configured: true, has_users: true };
+  else if (path === '/api/local/setup') value = { mode: 'account' };
   else if (path === '/api/auth/login') { signedIn = true; value = { user: { id: 'probe', username: 'synthetic', developer_mode: false } }; }
   else if (path === '/api/desktop/resume/claim') { resumeSequence = 0; value = { writer: body.writer, sequence: 0, entries: { ...resumeEntries } }; }
   else if (path === '/api/desktop/resume/save') {
@@ -178,7 +181,7 @@ const capture = async name => {
 };
 const input = () => document.querySelector('.composer textarea');
 const result = () => document.querySelector('.companion-result:not([hidden])');
-const visibleMessage = id => result()?.querySelector(`[data-message-id="${id}"]`);
+const messageNode = id => result()?.querySelector(`[data-message-id="${id}"]`);
 const inReadingViewport = element => {
   if (!element || !result()) return false;
   const rect = element.getBoundingClientRect(), reading = result().getBoundingClientRect();
@@ -195,12 +198,13 @@ const nativeClick = async element => {
     return performance.now() - stableSince >= 160;
   }, 'native click target settled');
   const bounds = element.getBoundingClientRect();
+  pointerDiagnostics.push({ type: 'requested', target: element.className, bounds: bounds.toJSON(), time: Math.round(performance.now()) });
   window.webkit.messageHandlers.probe.postMessage({ nativeClick: { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } }); await delay(100);
 };
 const nativeHide = () => window.webkit.messageHandlers.athenaDesktop.postMessage({ action: 'hide' });
 const nativeShow = () => { presented = true; dispatch({ action: 'show' }); publishNative(); };
 const inside = element => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight + 1; };
-const shellAnchors = () => Object.fromEntries(['.companion-avatar', '.composer'].map(selector => {
+const shellAnchors = () => Object.fromEntries(['.composer'].map(selector => {
   const rect = document.querySelector(selector).getBoundingClientRect();
   return [selector, { left: rect.left, bottom: innerHeight - rect.bottom, width: rect.width, height: rect.height }];
 }));
@@ -215,7 +219,7 @@ const settleShell = async () => {
 };
 // The real host preserves the panel's screen bottom while resizing. Normalize
 // DOM bounds to that bottom so every rendered frame, not only the settled
-// layout, must keep the owl and input in the same place. The offline window's
+// layout, must keep the input in the same place. The compact header stays above the result. The offline window's
 // own screen origin is deliberately irrelevant to this content-layout check.
 const clickWithoutShellJump = async (element, name) => {
   await settleShell();
@@ -255,7 +259,7 @@ const repeatOwlToggle = async name => {
     await until(() => result() && innerWidth === 560, 'owl reopens latest result');
     await settleShell();
     check(`${name}_reopen_${cycle}_retains_draft_and_does_not_execute`, Boolean(result()) && document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true'
-      && input() === field && input().value === draft && actions() === beforeActions);
+      && input() === field && input().value === draft && actions() === beforeActions, { result: Boolean(result()), expanded: document.querySelector('.companion-avatar').getAttribute('aria-expanded'), sameInput: input() === field, draft: input().value, expectedDraft: draft, actions: actions(), beforeActions });
   }
 };
 const revealResult = async () => {
@@ -327,7 +331,7 @@ async function run() {
     await until(() => document.querySelector('[data-task-active="true"]') && innerWidth === 560, 'active task');
     check('send_has_one_bound_durable_receipt', calls.filter(item => item.path.endsWith('/messages')).length === 1 && receipts.size === 1 && snapshot.messages[0].content === draft);
     await until(() => result(), 'running result open'); await delay(200);
-    await clickWithoutShellJump(document.querySelector('.companion-result-heading button'), 'collapsing_only_details_keeps_shell_anchored_every_frame');
+    await clickWithoutShellJump(document.querySelector('[data-collapse-result]'), 'collapsing_only_details_keeps_shell_anchored_every_frame');
     await until(() => !result() && innerHeight === 260, 'collapse running task'); await delay(180);
     await capture('companion-compact-running');
     check('compact_running_task_keeps_input_and_stop_inside_panel', inside(document.querySelector('.composer')) && inside(document.querySelector('.send.stop')) && inside(input()),
@@ -350,17 +354,22 @@ async function run() {
     await until(() => result()?.querySelector('table'), 'readable result'); await delay(220);
     check('result_uses_markdown_and_keeps_input', result().querySelectorAll('td').length === 4 && input() === field && inside(document.querySelector('.composer')));
     check('short_result_fits_without_full_height_blank_card', innerHeight < 680 && inside(result()), { height: innerHeight });
-    check('opening_result_keeps_avatar_and_composer_anchored', sameAnchors(compactAnchors, shellAnchors()), { before: compactAnchors, after: shellAnchors() });
+    check('opening_result_keeps_composer_anchored', sameAnchors(compactAnchors, shellAnchors()), { before: compactAnchors, after: shellAnchors() });
+    const header = document.querySelector('.companion-presence').getBoundingClientRect();
+    const portrait = document.querySelector('.companion-avatar').getBoundingClientRect();
+    check('expanded_portrait_is_a_small_header_and_result_meets_composer', portrait.height <= 36 && header.height <= 50
+      && header.bottom <= result().getBoundingClientRect().top + 1
+      && Math.abs(result().getBoundingClientRect().bottom - document.querySelector('.composer-area').getBoundingClientRect().top) <= 1);
     await repeatOwlToggle('idle_short_result');
     await capture('companion-result');
-    document.querySelector('.companion-result-heading button').click(); await until(() => !result() && innerWidth === 560, 'put result away');
+    document.querySelector('[data-collapse-result]').click(); await until(() => !result() && innerWidth === 560, 'put result away');
     check('putting_result_away_returns_to_companion_without_erasing_it', snapshot.messages.some(item => item.id === 'a1') && input().value === 'Do not lose this next request.');
-    await revealResult(); await until(() => visibleMessage('a1'), 'avatar reopens result');
-    check('avatar_reopens_previous_result_without_new_request', document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true' && calls.filter(item => item.path.endsWith('/messages')).length === 1 && visibleMessage('u1')?.textContent === draft);
+    await revealResult(); await until(() => messageNode('a1'), 'avatar reopens result');
+    check('avatar_reopens_previous_result_without_new_request', document.querySelector('.companion-avatar').getAttribute('aria-expanded') === 'true' && calls.filter(item => item.path.endsWith('/messages')).length === 1 && messageNode('u1')?.textContent === draft);
     nativeHide(); await until(() => observations.at(-1)?.foreground === false, 'hide reading result');
-    nativeShow(); await until(() => observations.at(-1)?.foreground === true && visibleMessage('a1'), 'recall reading result');
-    check('recall_restores_reading_without_activity_feed_item', visibleMessage('u1') && visibleMessage('a1') && input() === field && input().value === 'Do not lose this next request.');
-    document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse before help');
+    nativeShow(); await until(() => observations.at(-1)?.foreground === true && messageNode('a1'), 'recall reading result');
+    check('recall_restores_reading_without_activity_feed_item', messageNode('u1') && messageNode('a1') && input() === field && input().value === 'Do not lose this next request.');
+    document.querySelector('[data-collapse-result]').click(); await until(() => !result(), 'collapse before help');
     // The next fixture-native click uses viewport coordinates; wait until the
     // asynchronous native resize has applied before calculating those points.
     await settleShell();
@@ -377,7 +386,7 @@ async function run() {
     check('history_is_reachable_without_replacing_input', document.querySelector('.session-list')?.textContent.includes('Organize my documents') && input() === field);
     await settleShell();
     await nativeClick(document.querySelector('.session-list .session.selected')); await delay(250);
-    check('selecting_current_history_keeps_completed_reply_and_unsent_draft', !document.querySelector('[data-app-view="history"]') && visibleMessage('a1')?.textContent.includes('Your files are ready.')
+    check('selecting_current_history_keeps_completed_reply_and_unsent_draft', !document.querySelector('[data-app-view="history"]') && messageNode('a1')?.textContent.includes('Your files are ready.')
       && input() === field && input().value === 'Do not lose this next request.', { history: Boolean(document.querySelector('[data-app-view="history"]')), result: Boolean(result()), sameInput: input() === field, draft: input()?.value });
     dispatch({ action: 'menu' }); await until(() => document.querySelector('[data-app-view="menu"]'), 'menu');
     check('menu_retains_account_and_recovery', document.querySelector('[data-app-view="menu"]')?.textContent.includes('Account') && document.querySelector('[data-app-view="menu"]')?.textContent.includes('Reset'));
@@ -392,32 +401,43 @@ async function run() {
     check('closing_activity_restores_companion_and_draft', getComputedStyle(document.querySelector('.companion-presence')).visibility === 'visible'
       && input() === field && input().value === 'Do not lose this next request.' && presented);
     await edit('How many notes should I review first?'); send(); await until(() => receipts.size === 2 && input().value === '', 'follow-up accepted'); emit();
-    await until(() => visibleMessage('u2') && visibleMessage('a1'), 'follow-up context retained');
-    check('followup_echoes_question_and_keeps_prior_answer', visibleMessage('u1')?.textContent === draft && visibleMessage('u2')?.textContent === 'How many notes should I review first?' && visibleMessage('a1')?.textContent.includes('Your files are ready.'));
+    await until(() => messageNode('u2') && messageNode('a1'), 'follow-up context retained');
+    check('followup_retains_prior_answer_without_remounting_message_nodes', messageNode('u1')?.textContent === draft && messageNode('u2')?.textContent === 'How many notes should I review first?' && messageNode('a1')?.textContent.includes('Your files are ready.'));
+    check('latest_exchange_is_focused_without_destroying_earlier_messages', !messageNode('a1').getClientRects().length
+      && messageNode('u2').getClientRects().length > 0 && document.querySelector('[data-earlier-conversation]')?.getAttribute('aria-expanded') === 'false');
     snapshot.messages.push({ id: 'a2', role: 'assistant', content: 'Start with the four notes.', status: 'streaming', run_id: 'r2' });
     snapshot.messages.push({ id: 'tool2', role: 'tool', content: 'INTERNAL_TOOL_RESULT_MUST_STAY_IN_ACTIVITY', status: 'complete', run_id: 'r2' }); emit();
-    await until(() => visibleMessage('a2'), 'running follow-up reply');
+    await until(() => messageNode('a2'), 'running follow-up reply');
     await edit('Then show the next step.'); send(); await until(() => receipts.size === 3 && input().value === '', 'next request queued'); emit();
-    await until(() => visibleMessage('u3') && snapshot.runs[0].status === 'queued', 'queued question visible');
-    check('queue_keeps_running_reply_and_ordered_conversation', [...result().querySelectorAll('[data-message-id]')].map(item => item.dataset.messageId).join(',') === 'u1,a1,u2,a2,u3' && visibleMessage('a2')?.textContent === 'Start with the four notes.' && !result().textContent.includes('INTERNAL_TOOL_RESULT_MUST_STAY_IN_ACTIVITY'));
+    await until(() => messageNode('u3') && snapshot.runs[0].status === 'queued', 'queued question visible');
+    check('queue_keeps_running_reply_and_ordered_conversation', [...result().querySelectorAll('[data-message-id]')].map(item => item.dataset.messageId).join(',') === 'u1,a1,u2,a2,u3' && messageNode('a2')?.textContent === 'Start with the four notes.' && !result().textContent.includes('INTERNAL_TOOL_RESULT_MUST_STAY_IN_ACTIVITY'));
+    check('queued_input_cannot_hide_the_running_exchange', messageNode('a2').getClientRects().length > 0 && messageNode('u3').getClientRects().length > 0);
     check('activity_has_one_trace_per_run', result().querySelectorAll('.run-trace').length === 3);
     const beforeStream = shellAnchors();
     snapshot.messages.find(message => message.id === 'a2').content += '\n\n' + Array.from({ length: 12 }, (_, index) => `Note ${index + 1}: inspect the source before making a decision.`).join('\n\n'); emit();
-    await until(() => visibleMessage('a2')?.textContent.includes('Note 12:'), 'long stream reaches reading view'); await delay(180);
+    await until(() => messageNode('a2')?.textContent.includes('Note 12:'), 'long stream reaches reading view'); await delay(180);
     check('growing_stream_keeps_controls_fixed_and_scrolls_only_reading', sameAnchors(beforeStream, shellAnchors()) && result().scrollHeight > result().clientHeight && inside(document.querySelector('.composer')), { before: beforeStream, after: shellAnchors() });
     snapshot.runs = snapshot.runs.map(run => ({ ...run, status: 'complete', phase: 'responding' }));
     snapshot.messages = snapshot.messages.map(message => ({ ...message, status: 'complete' }));
     snapshot.messages.push({ id: 'a3', role: 'assistant', content: 'Read one note, then decide what to keep.', status: 'complete', run_id: 'r3' }); emit();
-    await until(() => visibleMessage('a3'), 'queued task complete'); await delay(180);
+    await until(() => messageNode('a3'), 'queued task complete'); await delay(180);
     await repeatOwlToggle('idle_long_result');
-    check('late_mounted_result_follows_latest_answer_after_initial_empty_snapshot', inReadingViewport(visibleMessage('a3'))
+    check('late_mounted_result_follows_latest_answer_after_initial_empty_snapshot', inReadingViewport(messageNode('a3'))
       && result().scrollHeight - result().clientHeight - result().scrollTop <= 3);
+    document.querySelector('[data-earlier-conversation]').click();
+    await until(() => messageNode('a1').getClientRects().length > 0, 'earlier exchanges revealed in place');
+    check('history_expansion_keeps_input_and_previous_messages', input() === field && messageNode('u1').textContent === draft);
+    document.querySelector('[data-earlier-conversation]').click();
+    await until(() => !messageNode('a1').getClientRects().length, 'return to latest exchange');
+    check('return_to_current_keeps_current_answer_visible', messageNode('a3').getClientRects().length > 0);
+    document.querySelector('[data-earlier-conversation]').click();
+    await until(() => messageNode('a1').getClientRects().length > 0, 'read earlier context again');
     const reading = result();
     reading.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true })); reading.scrollTop = 0;
     reading.dispatchEvent(new Event('scroll', { bubbles: true })); await delay(60);
     const beforeReading = reading.scrollTop;
     snapshot.messages.find(message => message.id === 'a3').content += '\n\nMore information arrived while you read earlier messages.'; emit();
-    await until(() => visibleMessage('a3')?.textContent.includes('More information arrived'), 'stream while reading older context');
+    await until(() => messageNode('a3')?.textContent.includes('More information arrived'), 'stream while reading older context');
     check('new_output_does_not_pull_reader_away_from_older_messages', result() === reading && Math.abs(reading.scrollTop - beforeReading) <= 1);
     snapshot.runs.find(run => run.id === 'r3').status = 'running'; emit();
     await until(() => document.querySelector('[data-task-active="true"]'), 'working before minimizing');
@@ -427,14 +447,14 @@ async function run() {
     await delay(160);
     check('background_completion_does_not_force_avatar_open', innerWidth === 180 && !result());
     await nativeClick(document.querySelector('.companion-avatar')); await until(() => result() && innerWidth === 560, 'reopen completed current request'); await delay(180);
-    check('owl_reopen_shows_current_completion_instead_of_only_history', inReadingViewport(visibleMessage('a3'))
-      && visibleMessage('a3').textContent.includes('CURRENT_RESULT_VISIBLE_AFTER_REOPEN') && result().scrollHeight - result().clientHeight - result().scrollTop <= 3);
+    check('owl_reopen_shows_current_completion_instead_of_only_history', inReadingViewport(messageNode('a3'))
+      && messageNode('a3').textContent.includes('CURRENT_RESULT_VISIBLE_AFTER_REOPEN') && result().scrollHeight - result().clientHeight - result().scrollTop <= 3);
     await edit('Keep this component draft too.');
     snapshot.components = [{ id: 'note', title: 'Working note', placement: 'inline', version: 1, view_revision: 0, html: noteHTML }]; emit();
     await until(() => document.querySelector('[data-component-id="note"] iframe') && widgetReplies.length > 0, 'inline working note');
     const noteFrame = document.querySelector('[data-component-id="note"] iframe');
     const editedNote = await inspectWidget(noteFrame, 'edit');
-    document.querySelector('.companion-result-heading button').click(); await until(() => !result(), 'collapse with inline component');
+    document.querySelector('[data-collapse-result]').click(); await until(() => !result(), 'collapse with inline component');
     check('collapse_hides_reading_surface_even_with_inline_component', document.querySelector('.companion-result')?.hidden && document.querySelector('[data-component-id="note"] iframe') === noteFrame && input().value === 'Keep this component draft too.');
     await revealResult(); await until(() => result(), 'reopen inline component');
     const recalledNote = await inspectWidget(noteFrame);
@@ -468,7 +488,8 @@ async function run() {
     check('desktop_scene_uses_native_bridge_not_conversation_widget', scene.scope === 'probe:s1' && scene.items[0].width === 80 && !('html' in scene.items[0]) && !document.querySelector('[data-component-id="collector"]'));
     check('native_receipt_appears_in_frontend_observation', observations.at(-1).desktop.components[0].state === 'mounted');
     const file = { id: 'report', session_id: 's1', name: 'Notes summary.md', path: 'outputs/notes.md', size: 100, media_type: 'text/markdown', source: 'output', created_at: '2026-10-09T00:00:00Z', content_url: '/api/files/report/content', preview_url: '/api/files/report/preview', content_revision: 'revision-one' };
-    snapshot.files = [file]; snapshot.messages.find(message => message.id === 'a3').attachments = [structuredClone(file)]; emit();
+    const workingScript = { ...file, id: 'generator', name: 'prepare_notes.py', content_url: '/api/files/generator/content', media_type: 'text/plain' };
+    snapshot.files = [file, workingScript]; snapshot.messages.find(message => message.id === 'a3').attachments = [structuredClone(file)]; emit();
     await until(() => nativeComponents.some(item => item.file_id === file.id && item.state === 'mounted'), 'automatic desktop file delivery');
     check('completed_file_opens_a_desktop_surface_without_expanding_chat', !result() && !document.querySelector('.file-preview')
       && snapshot.components.filter(item => item.file_id === file.id).length === 1 && inside(input()));
@@ -486,6 +507,12 @@ async function run() {
     check('closed_deliverable_stays_closed_across_snapshot_refresh', nativeComponents.find(item => item.file_id === file.id)?.state === 'hidden'
       && calls.filter(item => item.path.endsWith('/presentation') && item.body.reveal === false).length === 1);
     await revealResult();
+    const working = result().querySelector('.working-files');
+    check('intermediate_script_is_folded_and_delivered_file_is_visible', working && !working.open
+      && working.textContent.includes('prepare_notes.py') && result().querySelector('.attachment-open').textContent.includes('Notes summary.md'));
+    working.querySelector('summary').click(); await delay();
+    check('working_files_remain_explicitly_accessible', working.open && working.querySelector('.attachment-open').getClientRects().length > 0);
+    working.querySelector('summary').click();
     const card = result().querySelector('.attachment-open'); await nativeClick(card);
     await until(() => nativeComponents.some(item => item.file_id === file.id && item.visible), 'file card reopens native surface');
     check('file_card_reopens_same_surface_without_duplicate_registration', snapshot.components.filter(item => item.file_id === file.id).length === 1 && !result());
@@ -509,7 +536,7 @@ async function run() {
     dispatch({ action: 'new' }); await until(() => !result() && !document.querySelector('.topbar') && !input().value && nativeScope === '', 'native new task');
     check('new_task_clears_visible_context_without_deleting_previous_task', !document.querySelector('[data-message-id="a1"]') && !document.querySelector('.composer-area .notice') && JSON.stringify(snapshot.messages) === JSON.stringify(oldMessages) && !calls.some(item => /delete|reset/.test(item.path)));
     await edit('Check my free disk space.'); send(); await until(() => receipts.size === 4 && input().value === '' && nativeScope === 'probe:s2', 'new task accepted');
-    check('new_task_creates_separate_session_and_keeps_old_draft', calls.filter(item => item.path === '/api/sessions').length === 1 && secondSnapshot.messages[0]?.content === 'Check my free disk space.' && snapshot.messages.length === oldMessages.length && !visibleMessage('a1'));
+    check('new_task_creates_separate_session_and_keeps_old_draft', calls.filter(item => item.path === '/api/sessions').length === 1 && secondSnapshot.messages[0]?.content === 'Check my free disk space.' && snapshot.messages.length === oldMessages.length && !messageNode('a1'));
     dispatch({ action: 'history' }); await until(() => document.querySelector('.session-list'), 'return old session history');
     const previousSession = [...document.querySelectorAll('.session-list .session')].find(item => item.textContent.includes('Organize my documents'));
     previousSession.click(); await until(() => input().value === 'Keep this failed message.' && nativeScope === 'probe:s1', 'old task draft restored');
@@ -555,7 +582,7 @@ async function run() {
     await nativeClick(controlButtons[1]); await until(() => stops.size === stopsBeforeSurface + 1, 'trusted surface Stop');
     check('custom_surface_stop_reaches_backend_without_frame_cooperation', snapshot.runs.every(run => run.status === 'interrupted') && Boolean(document.querySelector('[data-component-id="reader"] iframe')));
     await nativeClick(controlButtons[0]); await until(() => input() && !document.querySelector('.companion-surface-controls'), 'return from generated surface');
-    check('trusted_return_restores_chat_and_unsent_draft', input().value === 'Keep this failed message.' && visibleMessage('a1') && snapshot.components[0].view.hidden);
+    check('trusted_return_restores_chat_and_unsent_draft', input().value === 'Keep this failed message.' && messageNode('a1') && snapshot.components[0].view.hidden);
     snapshot.components[0] = { ...snapshot.components[0], version: 2, view: { hidden: false } }; emit();
     await until(() => document.querySelector('.companion-surface-controls'), 'replacement custom surface');
     const messagesBeforeReset = JSON.stringify(snapshot.messages), filesBeforeReset = JSON.stringify(snapshot.files);
@@ -567,10 +594,10 @@ async function run() {
     snapshot.messages.push({ id: 'reminder-trigger', role: 'user', content: reminderTrigger, status: 'complete', run_id: 'reminder-run',
       origin: { kind: 'task', trigger: 'time', task_id: 'private-timer-id', title: 'Water the plants', occurrence: 2 } },
       { id: 'reminder-answer', role: 'assistant', content: 'It is time to water the plants.', status: 'complete', run_id: 'reminder-run' }); emit();
-    await until(() => visibleMessage('reminder-answer'), 'scheduled reminder displayed');
+    await until(() => messageNode('reminder-answer'), 'scheduled reminder displayed');
     const reminderTrace = [...result().querySelectorAll('.run-trace')].find(trace => trace.querySelector('summary').textContent.includes('Water the plants'));
     check('reminder_uses_human_title_without_injected_instruction_in_default_view', reminderTrace && !reminderTrace.open
-      && !visibleMessage('reminder-trigger') && !result().textContent.includes('private-timer-id') && !result().textContent.includes('请按之前登记')
+      && !messageNode('reminder-trigger') && !result().textContent.includes('private-timer-id') && !result().textContent.includes('请按之前登记')
       && document.querySelector('.companion-status').title === 'Water the plants' && snapshot.messages.find(item => item.id === 'reminder-trigger').content === reminderTrigger);
     reminderTrace.querySelector('summary').click(); await until(() => reminderTrace.textContent.includes('private-timer-id'), 'original reminder trace');
     check('original_reminder_trigger_remains_inspectable_in_explicit_activity', reminderTrace.open && reminderTrace.textContent.includes(reminderTrigger));
@@ -581,7 +608,7 @@ async function run() {
         help_reply: { id: 'answered-help', reason: 'Choose an invoice', items: [{ id: 'invoice-choice', question: 'Which invoice?', answer: 'This one' }] },
         attachments: [{ ...file, id: 'provided-invoice', source: 'output', name: 'Invoice.md', content_url: '/api/files/provided-invoice/content', preview_url: '/api/files/provided-invoice/preview' }] }); emit();
     await until(() => result()?.querySelector('.agent-receipt') && result()?.querySelector('.help-response-files'), 'delegation and help receipts');
-    check('delegation_and_help_use_receipts_without_losing_provided_files', !visibleMessage('delegated-result') && !result().textContent.includes('INTERNAL_DELEGATED_RESULT_INSTRUCTIONS')
+    check('delegation_and_help_use_receipts_without_losing_provided_files', !messageNode('delegated-result') && !result().textContent.includes('INTERNAL_DELEGATED_RESULT_INSTRUCTIONS')
       && result().querySelector('.agent-receipt').textContent.includes('Review the quote') && result().querySelector('.help-response-files').textContent.includes('Invoice.md')
       && result().querySelector('.help-receipt').textContent.includes('This one') && !result().textContent.includes('private-timer-id'));
     result().querySelector('.help-response-files .attachment-open').click();
@@ -594,7 +621,7 @@ async function run() {
       keyboard_mouse: 'dedicated WKWebView fixture', installed_application_touched: false };
     window.webkit.messageHandlers.probe.postMessage(results);
   } catch (error) { window.webkit.messageHandlers.probe.postMessage({ ...results, error: String(error), stack: error.stack, unexpected,
-    native_hits: nativePosts.filter(item => item.action === 'hitRegions').slice(-2),
+    pointer_diagnostics: pointerDiagnostics.slice(-30), native_hits: nativePosts.filter(item => item.action === 'hitRegions').slice(-2),
     ornament_rect: document.querySelector('[data-component-id="ornament"] .canvas-action')?.getBoundingClientRect().toJSON(),
     recent_paths: calls.slice(-6).map(item => item.path) }); }
 }

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, empty, defaultPreferences } from './api';
 import type { User, Snapshot, Session, Preferences, AppAction, Component, ViewChange } from './api';
 import Orb, { AthenaMark } from './Orb';
@@ -56,7 +56,8 @@ import { DesktopTransitionFence } from './desktop-transition';
 import { LocalSetup } from './LocalSetup';
 import { loadIdentity } from './local-identity';
 import { desktopRole, desktopPost, desktopScene, readDesktopState, interactionVisible, setDesktopPresented, companionHitRegions, type DesktopState } from './desktop-bridge';
-import { artifactLinkFile, deliveredArtifact, desktopFilePreview } from './desktop-artifacts';
+import { artifactLinkFile, deliveredArtifact, desktopFilePreview, outputFilePresentation } from './desktop-artifacts';
+import { companionConversationStart } from './companion-conversation';
 import './desktop.css';
 
 function Icon({ name }: { name: 'history' | 'reset' | 'user' | 'files' }) {
@@ -74,6 +75,7 @@ export default function App() {
   const [desktopLog, setDesktopLog] = useState(false);
   const [desktopReplyOpen, setDesktopReplyOpen] = useState(false);
   const [desktopMinimized, setDesktopMinimized] = useState(true);
+  const [earlierScope, setEarlierScope] = useState<string | null>(null);
   const desktopEscape = useRef<() => boolean>(() => false);
   const [desktopState, setDesktopState] = useState<{ scope: string; value: DesktopState } | undefined>();
   const desktopReceipt = useRef<{ scope: string; value: DesktopState } | undefined>(undefined);
@@ -1143,11 +1145,15 @@ export default function App() {
   const lastAnswerByRun = new Map(snapshot.messages.filter(message => message.run_id && message.role === 'assistant' && (message.content || message.attachments?.length)).map(message => [message.run_id, message.id]));
   const latestRun = snapshot.runs[0]?.id;
   const desktopMessages = snapshot.messages.filter(message => ['user', 'assistant'].includes(message.role));
+  const conversationScope = `${user?.id}:${session}`;
+  const showEarlier = earlierScope === conversationScope;
+  const recentStart = companionConversationStart(desktopMessages, snapshot.runs);
   const desktopWidgets = components.filter(item => !['desktop', 'presence', 'surface', 'overlay'].includes(placementOf(item)));
   const attachedFileIds = new Set(desktopMessages.flatMap(message => message.attachments?.map(file => file.id) || []));
   const canonicalFile = (file: FileEntry) => snapshot.files.find(item => item.id === file.id) || file;
   const attachedPreviewIds = new Set(desktopMessages.filter(message => !message.help_reply && !taskOrigin(message) && !agentOrigin(message)).flatMap(message => message.attachments?.map(canonicalFile).filter(file => file.source === 'output' && canDisplayArtifact(file)).map(file => file.id) || []));
-  const latestFiles = snapshot.files.filter(file => file.source === 'output' && !attachedFileIds.has(file.id));
+  const outputFiles = useMemo(() => outputFilePresentation(snapshot, location.origin), [snapshot.messages, snapshot.files, snapshot.components]);
+  const latestFiles = outputFiles.delivered.filter(file => !attachedFileIds.has(file.id));
   const desktopHasResult = Boolean(desktopMessages.length || latestRun || latestFiles.length || lastError || inlinePreview || desktopWidgets.length);
   const desktopResult = desktopHasResult && desktopReplyOpen && !desktopMinimized;
   const desktopQuestion = conversationSubject(desktopMessages);
@@ -1328,14 +1334,17 @@ export default function App() {
       {renderer && <CompanionSurfaceControls back={returnToDefault} stop={() => void stop()} reset={() => void reset()} resetting={resetting} />}
       {!resetting && components.filter(item => placementOf(item) === 'overlay').map(item => <div className="scene-overlay" key={`${item.id}-${item.version}`} inert={desktopTransient}>{renderWidget(item)}</div>)}
       {renderer ? <section className="session-surface companion-result" data-desktop-hit aria-label={renderer.title}>{renderWidget(renderer)}</section> : desktopHasResult && <main className="companion-result scroll-area" hidden={!desktopResult} data-desktop-hit ref={conversationScroll.ref} {...conversationScroll.handlers}>
-        <div className="companion-result-heading"><button className="quiet" onClick={() => setDesktopReplyOpen(false)}>{t('desktop.collapse')}</button></div>
-        {desktopMessages.map(message => {
+        <div className="companion-result-heading">{recentStart > 0 && <button className="quiet" data-earlier-conversation aria-expanded={showEarlier} onClick={() => {
+          conversationScroll.policy.pause(); setEarlierScope(showEarlier ? null : conversationScope);
+          requestAnimationFrame(() => { if (showEarlier) { conversationScroll.policy.resume(); conversationScroll.follow(); } });
+        }}>{t(showEarlier ? 'desktop.latestExchange' : 'desktop.earlierExchanges')}</button>}<button className="quiet" data-collapse-result onClick={() => setDesktopReplyOpen(false)}>{t('desktop.collapse')}</button></div>
+        {desktopMessages.map((message, index) => {
           const run = message.run_id ? runsById.get(message.run_id) : undefined;
           const trace = message.run_id && !tracedRuns.has(message.run_id);
           if (trace) tracedRuns.add(message.run_id!);
           const origin = taskOrigin(message) || agentOrigin(message);
           const visible = Boolean(message.content || message.attachments?.length);
-          return <Fragment key={message.id}>
+          return <div className="companion-exchange" key={message.id} hidden={!showEarlier && index < recentStart}>
             {message.help_reply && <><HelpReceipt reply={message.help_reply} />{Boolean(message.attachments?.length) && <div className="help-response-files">{message.attachments?.map(canonicalFile).map(file => fileCard(file))}</div>}</>}
             {origin?.kind === 'agent_results' && <AgentResults origin={origin} />}
             {visible && !message.help_reply && !origin && <article className={`message ${message.role}`} data-run-id={message.run_id} tabIndex={-1} data-activity-result={run?.status === 'complete' && lastAnswerByRun.get(message.run_id) === message.id ? message.run_id : undefined}>
@@ -1345,10 +1354,11 @@ export default function App() {
             </article>}
             {trace && session && <div data-run-id={message.run_id} tabIndex={-1} data-activity-result={run && ['failed', 'interrupted', 'cancelled'].includes(run.status) ? message.run_id : undefined}><RunTrace sessionId={session} runId={message.run_id!} revision={snapshot.cursor} phase={run?.phase} status={run?.status} origin={origin} /></div>}
             {trace && Boolean(snapshot.agents?.some(job => job.root_run_id === message.run_id)) && <AgentActivity sessionId={session!} revision={snapshot.cursor} jobs={snapshot.agents!.filter(job => job.root_run_id === message.run_id)} />}
-          </Fragment>;
+          </div>;
         })}
         {snapshot.runs.filter(run => !tracedRuns.has(run.id)).map(run => session && <RunTrace key={run.id} sessionId={session} runId={run.id} revision={snapshot.cursor} phase={run.phase} status={run.status} />)}
         {latestFiles.length > 0 && <section className="output-files" aria-label={t('files.outputs')}>{latestFiles.map(file => fileCard(file))}</section>}
+        {outputFiles.working.length > 0 && <details className="working-files"><summary>{t('files.working')}</summary><div className="output-files">{outputFiles.working.map(file => fileCard(file))}</div></details>}
 
         {!resetting && desktopWidgets.map(item => renderWidget(item))}
         {lastError && <p className="notice" role="status">{lastError}</p>}
@@ -1386,8 +1396,9 @@ export default function App() {
         })}
         {!resetting && components.filter(component => ['inline', 'workspace'].includes(placementOf(component)) || (floatingPlacements.has(placementOf(component)) && !panelLayout[component.id])).map(component => renderWidget(component))}
         {snapshot.tasks.length > 0 && <section className="tasks">{snapshot.tasks.map(task => <div className="task" key={task.id}><div><strong>{task.title}</strong><span>{task.status === 'paused' ? t('paused') : task.last_error ? t('watchRetry') : task.condition_command ? t('watching') : new Date(task.due_at).toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>{task.status !== 'paused' && <button className="quiet" onClick={() => void api(`/sessions/${session}/tasks/${task.id}/pause`, {}).catch(e => setError(e.message))}>{t('pause')}</button>}</div>)}</section>}
-        {snapshot.files?.some(file => file.source === 'output') && <section className="output-files" aria-label={t('files.outputs')}>{snapshot.files.filter(file => file.source === 'output').map(file => !desktop && canDisplayArtifact(file) ? <ArtifactResult key={file.id} file={file} selected={inlinePreview?.id === file.id} observe={inlinePreview?.id === file.id ? observeInline : undefined} /> : fileCard(file))}</section>}
-        {!desktop && inlinePreview && !snapshot.files.some(file => file.source === 'output' && file.id === inlinePreview.id && canDisplayArtifact(file)) && <ArtifactResult key={inlinePreview.id} file={inlinePreview} selected close={() => setInlinePreview(null)} observe={observeInline} />}
+        {outputFiles.delivered.length > 0 && <section className="output-files" aria-label={t('files.outputs')}>{outputFiles.delivered.map(file => !desktop && canDisplayArtifact(file) ? <ArtifactResult key={file.id} file={file} selected={inlinePreview?.id === file.id} observe={inlinePreview?.id === file.id ? observeInline : undefined} /> : fileCard(file))}</section>}
+        {outputFiles.working.length > 0 && <details className="working-files"><summary>{t('files.working')}</summary><div className="output-files">{outputFiles.working.map(file => fileCard(file))}</div></details>}
+        {!desktop && inlinePreview && !outputFiles.delivered.some(file => file.id === inlinePreview.id && canDisplayArtifact(file)) && <ArtifactResult key={inlinePreview.id} file={inlinePreview} selected close={() => setInlinePreview(null)} observe={observeInline} />}
         {lastError && <p className="notice" role="status">{lastError}</p>}<div ref={end} />
       </div>
     </main>
