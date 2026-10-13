@@ -116,6 +116,7 @@ RUNTIME_PROPERTIES['op']['enum'].append('computer')
 RUNTIME_PROPERTIES['action']['enum'].extend(['invoke', 'set_value'])
 RUNTIME_PROPERTIES.update({
     'app_id': {'type': 'string', 'maxLength': 200},
+    'window_title': {'type': 'string', 'minLength': 1, 'maxLength': 600},
     'native_action': {'type': 'string', 'maxLength': 200},
 })
 for action in ('status', 'snapshot', 'click', 'fill', 'press', 'select', 'check', 'uncheck', 'upload',

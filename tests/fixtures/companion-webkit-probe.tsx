@@ -533,13 +533,22 @@ async function run() {
     check('send_error_is_visible_and_draft_is_retained', input().value === 'Keep this failed message.' && inside(document.querySelector('.composer')) && Boolean(document.querySelector('.composer-area .notice')?.textContent));
     await capture('companion-error');
     const oldMessages = structuredClone(snapshot.messages);
-    dispatch({ action: 'new' }); await until(() => !result() && !document.querySelector('.topbar') && !input().value && nativeScope === '', 'native new task');
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => innerWidth === 180, 'avatar before new conversation');
+    await nativeClick(document.querySelector('.companion-menu')); await until(() => document.querySelector('[data-app-view="menu"]'), 'new conversation menu');
+    const newConversation = [...document.querySelectorAll('[data-app-view="menu"] button')].find(item => item.textContent.trim() === 'New conversation');
+    check('collapsed_menu_offers_new_conversation', Boolean(newConversation));
+    await nativeClick(newConversation);
+    await until(() => !result() && !document.querySelector('.topbar') && !input().value && nativeScope === '' && inside(input()), 'menu new task reveals input');
+    check('menu_new_conversation_reveals_and_focuses_input', document.activeElement === input() && !document.querySelector('[data-app-view="menu"]'));
+    dispatch({ action: 'new' }); await until(() => inside(input()) && document.activeElement === input(), 'native new task');
     check('new_task_clears_visible_context_without_deleting_previous_task', !document.querySelector('[data-message-id="a1"]') && !document.querySelector('.composer-area .notice') && JSON.stringify(snapshot.messages) === JSON.stringify(oldMessages) && !calls.some(item => /delete|reset/.test(item.path)));
     await edit('Check my free disk space.'); send(); await until(() => receipts.size === 4 && input().value === '' && nativeScope === 'probe:s2', 'new task accepted');
     check('new_task_creates_separate_session_and_keeps_old_draft', calls.filter(item => item.path === '/api/sessions').length === 1 && secondSnapshot.messages[0]?.content === 'Check my free disk space.' && snapshot.messages.length === oldMessages.length && !messageNode('a1'));
+    await nativeClick(document.querySelector('.companion-avatar')); await until(() => innerWidth === 180, 'avatar before history selection');
     dispatch({ action: 'history' }); await until(() => document.querySelector('.session-list'), 'return old session history');
     const previousSession = [...document.querySelectorAll('.session-list .session')].find(item => item.textContent.includes('Organize my documents'));
     previousSession.click(); await until(() => input().value === 'Keep this failed message.' && nativeScope === 'probe:s1', 'old task draft restored');
+    await until(() => inside(input()), 'history selection reveals companion');
     check('returning_to_previous_task_restores_its_own_unsent_draft', input().value === 'Keep this failed message.' && snapshot.messages.length === oldMessages.length && secondSnapshot.messages.length === 1);
     // Session restore and native resizing are separate acknowledgements. Start
     // the background-status check after the restored error notice has settled.

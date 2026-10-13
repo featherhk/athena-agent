@@ -19,13 +19,15 @@ def validate(args):
     fields = {'status': set(), 'list': set(), 'snapshot': {'app_id'},
               'invoke': {'observation_id', 'ref', 'native_action'},
               'set_value': {'observation_id', 'ref', 'text'}, 'history': set()}
-    if action not in fields or set(args) - {'op', 'action'} - fields[action]:
+    optional = {'window_title'} if action == 'snapshot' else set()
+    if action not in fields or set(args) - {'op', 'action'} - fields[action] - optional:
         raise ValueError('Unsupported computer operation; read desktop/references/control.md.')
     required = fields[action]
-    if any(not isinstance(args.get(key), str) or not args[key] or '\x00' in args[key]
-           for key in required):
+    supplied = required | (optional & args.keys())
+    if any(not isinstance(args.get(key), str) or (not args[key] and key != 'text') or '\x00' in args[key]
+           for key in supplied):
         raise ValueError('Computer operation requires its documented string fields.')
-    if any(len(args[key]) > (10000 if key == 'text' else 200) for key in required):
+    if any(len(args[key]) > (10000 if key == 'text' else 600 if key == 'window_title' else 200) for key in supplied):
         raise ValueError('Computer argument is too long.')
     return action
 

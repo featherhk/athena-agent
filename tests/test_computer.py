@@ -118,6 +118,18 @@ async def test_no_native_host_does_not_claim_system_control(computer):
     assert result['supported'] is False and result['code'] == 'native_host_unavailable'
 
 
+async def test_window_scope_is_forwarded_and_empty_text_can_clear_an_observed_field(computer):
+    host, native, (session, _) = computer
+    view = await host.operate({'action': 'snapshot', 'app_id': 'test.synthetic',
+                              'window_title': 'Disposable window'}, session, None)
+    assert native.calls[-1]['window_title'] == 'Disposable window'
+    result = await host.operate({'action': 'set_value', 'observation_id': view['observation_id'],
+                                'ref': '@n1', 'text': ''}, session, None)
+    assert result['status'] == 'complete' and native.calls[-1]['text'] == ''
+    with pytest.raises(ValueError, match='expired'):
+        await host.operate(click(view), session, None)
+
+
 async def test_cancel_after_admission_commit_but_before_dispatch(computer, store, monkeypatch):
     host, native, (session, _) = computer
     committed = asyncio.Event()
@@ -142,6 +154,9 @@ async def test_cancel_after_admission_commit_but_before_dispatch(computer, store
     {'action': 'snapshot'}, {'action': 'snapshot', 'app_id': 'x', 'script': 'run'},
     {'action': 'invoke', 'ref': '@n1'}, {'action': 'click', 'x': 12, 'y': 20},
     {'action': 'status', 'request_permission': True},
+    {'action': 'snapshot', 'app_id': 'x', 'window_title': ''},
+    {'action': 'snapshot', 'app_id': 'x', 'window_title': 1},
+    {'action': 'status', 'window_title': 'x'},
 ])
 def test_no_arbitrary_script_coordinate_or_permission_backdoor(args):
     with pytest.raises(ValueError):

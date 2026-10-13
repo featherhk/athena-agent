@@ -119,10 +119,18 @@ final class ComputerControl: @unchecked Sendable {
             guard apps.count == 1, let app = apps.first else { return rejected("app_not_running_or_ambiguous") }
             let root = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(root, 0.3)
+            var snapshotRoot = root
+            let windowTitle = args["window_title"] as? String
+            if let windowTitle {
+                // Exact, unique scope. Never fall back to reading all windows.
+                let windows = elements(root, kAXWindowsAttribute).filter { text($0, kAXTitleAttribute) == windowTitle }
+                guard windows.count == 1, let window = windows.first else { return rejected("window_not_found_or_ambiguous") }
+                snapshotRoot = window
+            }
             let began = Date()
             var targets: [String: Target] = [:], seen: [AXUIElement] = []
             var snapshot = AccessibilitySnapshotRows()
-            var pending: [(AXUIElement, Int, String?)] = [(root, 0, nil)]
+            var pending: [(AXUIElement, Int, String?)] = [(snapshotRoot, 0, nil)]
             var truncated = false
             while !pending.isEmpty {
                 if cancelled() { return rejected("request_cancelled") }
@@ -144,7 +152,7 @@ final class ComputerControl: @unchecked Sendable {
                 if !secure {
                     if let value = attribute(element, kAXValueAttribute) as? String { row["value"] = String(value.prefix(1200)) }
                     var children = elements(element, kAXChildrenAttribute)
-                    if depth == 0 { children += elements(element, kAXWindowsAttribute) + elements(element, kAXMenuBarAttribute) }
+                    if depth == 0 && windowTitle == nil { children += elements(element, kAXWindowsAttribute) + elements(element, kAXMenuBarAttribute) }
                     if sig[0] == "AXWindow" {
                         children += elements(element, kAXCloseButtonAttribute) + elements(element, kAXMinimizeButtonAttribute)
                     }
@@ -157,10 +165,12 @@ final class ComputerControl: @unchecked Sendable {
                 if !snapshot.append(row) { truncated = true; break }
                 targets[ref] = Target(element: element, signature: sig, actions: ops, writable: canWrite)
             }
-            guard snapshot.rows.count > 1 else { return rejected("application_not_accessible") }
+            guard !snapshot.rows.isEmpty, windowTitle != nil || snapshot.rows.count > 1 else { return rejected("application_not_accessible") }
             let id = UUID().uuidString
             observations = [id: Observation(pid: app.processIdentifier, launch: app.launchDate, created: Date(), targets: targets)]
-            return ["status": "complete", "observation_id": id, "app_id": appID, "nodes": snapshot.rows, "truncated": truncated, "expires_in_seconds": 30]
+            var result: [String: Any] = ["status": "complete", "observation_id": id, "app_id": appID, "nodes": snapshot.rows, "truncated": truncated, "expires_in_seconds": 30]
+            if let windowTitle { result["window_title"] = windowTitle }
+            return result
         }
         guard ["invoke", "set_value"].contains(action),
               let id = args["observation_id"] as? String, let ref = args["ref"] as? String,

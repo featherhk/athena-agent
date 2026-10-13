@@ -181,3 +181,21 @@ exclusion passed. These fixtures do not prove third-party application effects.
 The locally installed Build 28 uses clean public source `5fd71e7`. It is an
 ad-hoc signed, unnotarized test build. The public download feed remains Build 27
 until cross-application acceptance is completed; the hosted service is unchanged.
+
+## 2026-10-13 — real cross-application effects after authorization
+
+The user enabled Athena Accessibility. A second installed-model status check
+reported `granted`. In a separate synthetic AppKit application, the actual model
+then performed 12 persisted computer operations: identify the target, observe,
+set a note, apply it, open an application menu and sort, close only the named
+preview, and observe again. The final snapshot contained only the workspace;
+its status displayed `Saved note: Ready for tomorrow` and
+`Order: Apple, Pear, Plum`. Independent UI inspection confirmed the same effects.
+All operations targeted the disposable application; no real user files or
+third-party conversations were changed. This supersedes the authorization
+blocker recorded above, not the broader computer-use limitations.
+
+The reproducible target source is `desktop/macos/Tests/SystemTarget.swift`.
+It is a test application, not a mocked control transport: the installed Athena
+process used macOS AX across processes through its ordinary model/runtime path.
+Finder, WeChat and pixel-only controls still need separate acceptance.

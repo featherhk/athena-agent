@@ -30,6 +30,7 @@ function fixture() {
     setResumeReady: value => { steps.push(['ready', value]); }, acceptUser: user => { steps.push(['account', user.id, state.selection.current.read(user.id), state.drafts.current.read(user.id, 'trip').text]); },
     ready: true, resumeReady: false, text: 'Do something', attached: [], sending: false, resetting: false, uploading: false,
     uiScope: { current: { owner: 'alice', session: 'trip', generation: 7 } },
+    setDesktopMinimized: value => steps.push(['minimized', value]),
     setDesktopLog: value => steps.push(['log', value]), setDesktopReplyOpen: value => steps.push(['open', value]),
     setHistory: value => steps.push(['history', value]), setMenu: value => steps.push(['menu', value]),
   };
@@ -62,9 +63,15 @@ test('actual App reselecting same history row changes presentation without clear
   // Any reset, snapshot, navigation epoch or submission change is undefined in
   // this fixture and would throw, catching a regression to destructive reload.
   f.context.navigate('trip');
-  assert.deepEqual(f.steps, [['log', false], ['open', true], ['history', false], ['menu', false]]);
+  assert.deepEqual(f.steps, [['log', false], ['open', true], ['minimized', false], ['history', false], ['menu', false]]);
   assert.equal(f.state.uiScope.current.generation, 7);
   assert.equal(f.state.text, 'Do something');
+});
+
+test('background session migration does not reopen a collapsed companion', () => {
+  const f = fixture();
+  f.context.navigate('trip', true);
+  assert.equal(f.steps.some(step => step[0] === 'minimized'), false);
 });
 
 test('actual App freezes edits navigation uploads and sends across final persistence boundary', async () => {
