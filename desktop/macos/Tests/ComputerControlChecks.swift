@@ -12,6 +12,15 @@ import Foundation
         for _ in 0..<300 { if !snapshot.append(longRow) { break } }
         precondition(snapshot.rows.count > 1 && snapshot.rows.count < 300)
         precondition(try! JSONSerialization.data(withJSONObject: snapshot.rows).count < 500000)
+        let longText = ObservedControlText(String(repeating: "草稿", count: 2500))
+        precondition(longText.truncated && !longText.replaceable && longText.value?.count == 1200)
+        precondition(!longText.stillMatches(longText.value))
+        precondition(!ObservedControlText(nil).replaceable)
+        precondition(ObservedControlText("").stillMatches(""))
+        let edited = ObservedControlText("Original draft")
+        precondition(edited.stillMatches("Original draft"))
+        precondition(!edited.stillMatches("Original draft with new user input"))
+        precondition(!edited.stillMatches(nil))
         let first = DispatchSemaphore(value: 0), block = DispatchSemaphore(value: 0), second = DispatchSemaphore(value: 0)
         host.handle(["id": "expired", "expires_at": 0.0, "args": ["action": "invoke"]]) { value in
             precondition((value["result"] as? [String: Any])?["code"] as? String == "request_expired")
@@ -34,6 +43,6 @@ import Foundation
             revoked.signal()
         }
         precondition(revoked.wait(timeout: .now() + 4) == .success)
-        print("Native control: non-prompting status, expiry, queued cancellation and host revocation passed. Cross-app effects not tested.")
+        print("Native control: status, bounded/complete text observations, stale-edit refusal, expiry, cancellation and revocation passed. Cross-app effects not tested.")
     }
 }

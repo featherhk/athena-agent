@@ -199,3 +199,31 @@ The reproducible target source is `desktop/macos/Tests/SystemTarget.swift`.
 It is a test application, not a mocked control transport: the installed Athena
 process used macOS AX across processes through its ordinary model/runtime path.
 Finder, WeChat and pixel-only controls still need separate acceptance.
+
+## 2026-10-13 — local Build 29 and scoped observations
+
+Clean public source `ab3cd9e` passed 1,154 Python tests (7 skipped), 460 Node
+tests, production build, GIL-free doctor, 100 real WebKit companion checks and
+48 native host checks. The native fixture still excludes global pointer input
+without its own OS event-posting permission. Bundled relocation/startup/auth/
+restart/shutdown and credential-exclusion smoke checks passed.
+
+The local installation is Build 29. Its DMG SHA-256 is
+`c5b0a988282b2cc51572e5ece802674d441db1dcc361649c395dc8fce3422fd8`
+(56,433,178 bytes). It is ad-hoc signed and not notarized. All 476 pre-update
+message rows matched the consistent backup after launch. The real installed
+menu now opens a focused input directly from the collapsed avatar. Offline
+checks also cover selecting history from the collapsed avatar and retaining
+the correct unsent draft without reopening on background session creation.
+
+The updated app reported `accessibility:not_granted`, despite the earlier
+Build 28 grant. `codesign -d -r-` shows different cdhash-based designated
+requirements for the two ad-hoc builds. A model request to switch the view of
+a disposable Finder folder therefore stopped before reading or mutating the
+window. The user has been asked to re-enable the updated app. Exact-window AX
+reads and Finder effects in Build 29 remain pending that step; no TCC record or
+signature validation was weakened. The public download feed remains unchanged.
+
+Actual model requests after restart have persisted model-provider bindings;
+replacement/fallback/no-replay and exception-redaction behavior is covered by
+synthetic Engine/database tests, not claimed as arbitrary plugin-code loading.

@@ -30,3 +30,23 @@ or pixel-based operation. The target has no personal files and does not grant
 permissions or inject input into other apps.
 
 References: [AX trust](https://developer.apple.com/documentation/applicationservices/1459186-axisprocesstrusted), [AX actions](https://developer.apple.com/documentation/applicationservices/1462091-axuielementperformaction), [Apple Events privilege error](https://developer.apple.com/documentation/coreservices/1560036-anonymous/erraeprivilegeerror).
+
+### Preview signing and updates
+
+An ad-hoc preview's designated requirement is its code hash. During local
+Build 28 → 29 acceptance, the new hash coincided with macOS reporting the
+previous Accessibility grant as unavailable. Recheck actual host status after
+updates; do not infer permission from an old settings entry or receipt. The
+user may need to re-enable or re-add the updated application. Production needs
+a stable signing identity and proper release signing/notarization. Do not fix
+this by modifying TCC records or loosening the designated requirement.
+
+### Whole-field text edits
+
+Snapshots mark `value_truncated` when a field exceeds 1,200 characters. Such a
+field, or one whose value cannot be read, is not replaceable through `set_value`.
+Before replacing a fully observed field, the host rereads its value and rejects
+`value_changed` if the user has edited it since observation. This is a last-moment
+conflict check, not an atomic cross-process compare-and-set. Selection editing is
+not implemented; do not use whole-field replacement to approximate a local edit
+in an incompletely observed document.

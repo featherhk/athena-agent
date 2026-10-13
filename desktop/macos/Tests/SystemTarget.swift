@@ -31,6 +31,8 @@ import AppKit
         apply.frame = NSRect(x: 365, y: 158, width: 115, height: 32); content.addSubview(apply)
         saved.frame = NSRect(x: 24, y: 108, width: 450, height: 30); content.addSubview(saved)
         order.frame = NSRect(x: 24, y: 60, width: 450, height: 30); content.addSubview(order)
+        let longDraft = NSButton(title: "Load long test draft", target: self, action: #selector(loadLongDraft))
+        longDraft.frame = NSRect(x: 24, y: 16, width: 190, height: 30); content.addSubview(longDraft)
         workspace.orderFront(nil)
 
         preview = makeWindow("Athena Test Image Preview", origin: NSPoint(x: 120, y: 460))
@@ -47,6 +49,7 @@ import AppKit
     }
     @objc private func applyNote() { saved.stringValue = "Saved note: " + note.stringValue }
     @objc private func sortItems() { order.stringValue = "Order: Apple, Pear, Plum" }
+    @objc private func loadLongDraft() { note.stringValue = String(repeating: "Synthetic draft. ", count: 400) }
 }
 
 @main struct SystemTargetMain {

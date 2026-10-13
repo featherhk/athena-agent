@@ -12,6 +12,19 @@ struct AccessibilitySnapshotRows {
     }
 }
 
+/// Whole-field replacement requires a complete observed value. AX has no atomic
+/// compare-and-set; recheck immediately before dispatch to catch intervening edits.
+struct ObservedControlText {
+    let value: String?
+    let truncated: Bool
+    init(_ value: String?) {
+        truncated = (value?.count ?? 0) > 1200
+        self.value = value.map { String($0.prefix(1200)) }
+    }
+    var replaceable: Bool { value != nil && !truncated }
+    func stillMatches(_ current: String?) -> Bool { replaceable && current == value }
+}
+
 /// Owned by the native application, never exposed to generated WebKit frames.
 /// AX calls run on one serial queue so an unresponsive target cannot freeze input.
 final class ComputerControl: @unchecked Sendable {
@@ -26,6 +39,7 @@ final class ComputerControl: @unchecked Sendable {
         let signature: [String]
         let actions: [String]
         let writable: Bool
+        let text: ObservedControlText
     }
     private struct Observation {
         let pid: pid_t
@@ -142,15 +156,20 @@ final class ComputerControl: @unchecked Sendable {
                 AXUIElementSetMessagingTimeout(element, 0.25)
                 let sig = signature(element)
                 if sig[0].isEmpty { continue }
-                let ref = "@n\(snapshot.rows.count + 1)", ops = actions(element), canWrite = writable(element, sig)
+                let ref = "@n\(snapshot.rows.count + 1)", ops = actions(element)
+                let secure = sig[1] == "AXSecureTextField"
+                let observedText = ObservedControlText(secure ? nil : attribute(element, kAXValueAttribute) as? String)
+                let canWrite = writable(element, sig) && observedText.replaceable
                 var row: [String: Any] = ["ref": ref, "role": sig[0], "subrole": sig[1], "title": sig[2],
                                         "description": sig[3], "actions": ops, "settable": canWrite]
                 if let parent { row["parent"] = parent }
                 if let enabled = attribute(element, kAXEnabledAttribute) as? Bool { row["enabled"] = enabled }
                 // Secure fields expose neither values nor descendants.
-                let secure = sig[1] == "AXSecureTextField"
                 if !secure {
-                    if let value = attribute(element, kAXValueAttribute) as? String { row["value"] = String(value.prefix(1200)) }
+                    if let value = observedText.value {
+                        row["value"] = value
+                        row["value_truncated"] = observedText.truncated
+                    }
                     var children = elements(element, kAXChildrenAttribute)
                     if depth == 0 && windowTitle == nil { children += elements(element, kAXWindowsAttribute) + elements(element, kAXMenuBarAttribute) }
                     if sig[0] == "AXWindow" {
@@ -163,7 +182,7 @@ final class ComputerControl: @unchecked Sendable {
                 // Budget actual UTF-8 JSON bytes (CJK/emoji can take multiple bytes).
                 // Leave headroom below the private pipe's 1 MiB framing limit.
                 if !snapshot.append(row) { truncated = true; break }
-                targets[ref] = Target(element: element, signature: sig, actions: ops, writable: canWrite)
+                targets[ref] = Target(element: element, signature: sig, actions: ops, writable: canWrite, text: observedText)
             }
             guard !snapshot.rows.isEmpty, windowTitle != nil || snapshot.rows.count > 1 else { return rejected("application_not_accessible") }
             let id = UUID().uuidString
@@ -188,6 +207,7 @@ final class ComputerControl: @unchecked Sendable {
             result = AXUIElementPerformAction(target.element, name as CFString)
         } else {
             guard target.writable, writable(target.element, target.signature), let value = args["text"] as? String, value.count <= 10000 else { return rejected("value_not_writable") }
+            guard target.text.stillMatches(attribute(target.element, kAXValueAttribute) as? String) else { return rejected("value_changed") }
             if cancelled() { return rejected("request_cancelled") }
             result = AXUIElementSetAttributeValue(target.element, kAXValueAttribute as CFString, value as CFString)
         }
