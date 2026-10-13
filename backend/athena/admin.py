@@ -57,6 +57,7 @@ def main():
     profile.add_argument("--model", required=True)
     profile.add_argument("--base-model", required=True)
     profile.add_argument("--api-base", required=True)
+    profile.add_argument("--protocol", choices=["chat_completions", "chat_completions_json"], default="chat_completions")
     profile.add_argument("--instruction-role", choices=["system", "developer"], default="system")
     profile.add_argument("--output-parameter", choices=["max_tokens", "max_completion_tokens"], default="max_tokens")
     profile.add_argument("--max-output-tokens", type=int, default=16384)
@@ -94,7 +95,7 @@ def main():
                             api_base=args.api_base, instruction_role=args.instruction_role,
                             output_parameter=args.output_parameter, max_output_tokens=args.max_output_tokens,
                             context_chars=args.context_chars, context_window_tokens=args.context_window_tokens, context_window_source=args.context_window_source, preserve_reasoning=args.preserve_reasoning,
-                            options=json.loads(args.options))
+                            options=json.loads(args.options), protocol=args.protocol)
             try:
                 db.execute("INSERT INTO model_profiles VALUES (?,?,1,?)", (value.id, json.dumps(value.snapshot()), now()))
             except sqlite3.IntegrityError:

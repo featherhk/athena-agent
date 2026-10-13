@@ -23,6 +23,7 @@ class Profile:
     context_window_tokens: int | None = None
     context_window_source: str | None = None
     options: dict = field(default_factory=dict)
+    protocol: str = "chat_completions"
 
     def __post_init__(self):
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.id):
@@ -37,6 +38,8 @@ class Profile:
             raise ValueError("Remote model endpoints require HTTPS")
         if self.instruction_role not in ("system", "developer") or self.output_parameter not in ("max_tokens", "max_completion_tokens"):
             raise ValueError("Unsupported Chat Completions profile convention")
+        if self.protocol not in ("chat_completions", "chat_completions_json"):
+            raise ValueError("Unsupported model protocol")
         if not 1024 <= self.context_chars <= 2_000_000 or not 1 <= self.max_output_tokens <= 131072:
             raise ValueError("Invalid model limits")
         if self.context_window_tokens is not None and (type(self.context_window_tokens) is not int or self.context_window_tokens < 1024):
@@ -49,8 +52,10 @@ class Profile:
         return asdict(self)
 
     def payload(self, messages, tools):
+        streaming = self.protocol == "chat_completions"
         return {**self.options, "model": self.model, "messages": messages, "tools": tools,
-                "stream": True, "stream_options": {"include_usage": True}, self.output_parameter: self.max_output_tokens}
+                "stream": streaming, **({"stream_options": {"include_usage": True}} if streaming else {}),
+                self.output_parameter: self.max_output_tokens}
 
 
 class Models:

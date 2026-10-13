@@ -34,11 +34,15 @@ The launcher and independent recovery path form a minimal control plane, not a p
 - Account-scoped [task continuity](task-continuity.md): existing runs project background progress, requests for help and persistent unread outcomes into a conditional shell control, also reachable in file preview. The universal tool exposes the same discovery, read receipts and conversation stop functions. Updates do not navigate or replace drafts automatically.
 - Bounded delegated runs behind the same runtime envelope, with durable waits, branch cancellation, main-conversation questions/files and referenced results. This uses the current concrete Engine and Store, not a replaceable execution provider; see [delegation](delegation.md).
 - Durable events and context projection boundaries, recoverable originals, fixed model/default recovery, and account-scoped state.
+- A [request-bound model service](model-providers.md) consumed by Engine: trusted
+  host implementations can be replaced between requests, with immutable binding
+  receipts and failure fallback only for later requests. SSE and JSON Chat
+  Completions adapters are included. This is not agent-authored protocol loading.
 - An initial [Mac accessibility host](mac-system-control.md) with structured application observations and observed-element actions, explicit OS authorization state and non-replaying receipts. It is separate from desktop components and remains a concrete host adapter; it is not full computer use or a replaceable execution service.
 
 ## What remains before “everything is replaceable” is true
 
-The current Engine and Store still implement the loop and persistence directly. They are not yet providers behind the service graph described above. Provider streaming, scheduling, authentication transport, tool protocol assembly also need explicit service interfaces and lifecycle integration. The frontend work surface is replaceable through the browser bridge; the protected account and recovery shell remains host-owned. Current policy callbacks cannot replace them merely by registering a new name.
+The current Engine and Store still implement the loop and persistence directly. They are not yet providers behind the service graph described above. Model calls now have a real request-bound service, but its activations are process-local trusted host composition, without persisted plugin installation, dependency resolution or stateful lifecycle handoff. Scheduling, authentication transport and tool protocol assembly still need service interfaces and lifecycle integration. The frontend work surface is replaceable through the browser bridge; the protected account and recovery shell remains host-owned. Current policy callbacks cannot replace them merely by registering a new name.
 
 The next architectural milestone must move a real vertical path (input → loop → model adapter → execution → log → UI) through the service host, then demonstrate replacement and recovery of each provider. A generic plugin registry with no consumers is not completion. Nor is an adapter switch that leaves sibling consumers calling the old concrete implementation.
 

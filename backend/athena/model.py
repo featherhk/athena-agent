@@ -4,6 +4,49 @@ import httpx
 from .errors import ServiceError
 
 
+async def complete_json(client: httpx.AsyncClient, api_base: str, api_key: str, payload: dict,
+                        on_text, on_reasoning=None, *, request_id: str | None = None) -> dict:
+    """Non-streaming Chat Completions, normalized to the same canonical contract.
+
+    Useful for compatible servers without SSE. Exactly one HTTP request is sent;
+    protocol/transport failures are never retried by an adapter.
+    """
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if request_id:
+        headers["Idempotency-Key"] = request_id
+    body = {key: value for key, value in payload.items() if key != "stream_options"}
+    body["stream"] = False
+    response = await client.post(api_base.rstrip("/") + "/chat/completions", headers=headers, json=body)
+    if response.status_code >= 400:
+        codes = {401: "provider_auth_failed", 402: "provider_balance_insufficient",
+                 403: "provider_access_denied", 429: "provider_rate_limited"}
+        raise ServiceError(codes.get(response.status_code, f"provider_http_{response.status_code}"),
+                           "Athena 暂时无法继续，这件事已保留，请稍后重试。")
+    try:
+        value = response.json()
+        choices = value["choices"]
+        if value.get("error") or not isinstance(choices, list) or len(choices) != 1:
+            raise ValueError("Invalid completion")
+        choice = choices[0]
+        if choice.get("finish_reason") not in ("stop", "tool_calls"):
+            raise ServiceError("generation_incomplete", "这次生成提前结束，未执行尚未完成的操作。可以让我继续。")
+        message = choice["message"]
+        normalized = {"role": "assistant", "content": "" if message.get("content") is None else message["content"],
+                      "reasoning_content": "" if message.get("reasoning_content") is None else message["reasoning_content"]}
+        if message.get("tool_calls"):
+            normalized["tool_calls"] = message["tool_calls"]
+        result = {"message": normalized, "usage": value.get("usage") or {}, "model": value.get("model")}
+        from .model_service import validate_result
+        validate_result(result)
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise ServiceError("provider_contract_error", "The model adapter returned an invalid result.") from error
+    if normalized["reasoning_content"] and on_reasoning:
+        await on_reasoning(normalized["reasoning_content"])
+    if normalized["content"]:
+        await on_text(normalized["content"])
+    return result
+
+
 async def complete(client: httpx.AsyncClient, api_base: str, api_key: str, payload: dict, on_text: Callable[[str], Awaitable[None]], on_reasoning: Callable[[str], Awaitable[None]] | None = None, *, request_id: str | None = None) -> dict:
     content, reasoning, calls, usage, response_model = "", "", {}, {}, None
     finished = False

@@ -28,6 +28,8 @@ class Engine:
         self.models = self.tools.models
         self.cloud = None
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15))
+        from .model_service import ModelService
+        self.model_service = ModelService(default_complete=lambda: complete)
         self.closing = False
         self.watchers: dict[str, asyncio.Task] = {}
         self.watch_limit = asyncio.Semaphore(4)
@@ -333,6 +335,7 @@ class Engine:
                 # Tool outputs are clipped once at admission; previous messages stay stable.
                 # Freeze configuration for this request; switches affect only the next one.
                 profile, epoch = await self.models.selected(session_id)
+                model_binding = self.model_service.bind(profile.protocol, hosted=bool(self.cloud))
                 if self.cloud:
                     owner = await self.tools.owner(session_id)
                     await self.cloud.require_credit(owner['user_id'])
@@ -349,6 +352,7 @@ class Engine:
                 if len(encoded) > profile.context_chars:
                     raise UserError("context_limit", "这段对话超过当前服务的上下文上限。原始记录仍保留，可以另开对话继续。")
                 await self.store.execute("INSERT INTO requests(id,run_id,model,input,status,created_at,profile_snapshot,context_epoch) VALUES (?,?,?,?,'running',?,?,?)", (request_id, run_id, profile.model, encoded, now(), json.dumps(profile.snapshot()), epoch))
+                await self.model_service.record(self.store, request_id, model_binding)
                 await self.store.execute("UPDATE requests SET tool_versions=? WHERE id=?", (json.dumps({name: row["version"] for name, row in bindings.items()}), request_id))
                 message_id = await self.store.message(session_id, run_id, "assistant", status="streaming")
                 from .streaming import StreamingMessage
@@ -362,9 +366,9 @@ class Engine:
                     await stream.append('reasoning', delta)
                 try:
                     if self.cloud:
-                        result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning, request_id=request_id)
+                        result = await self.model_service.complete(model_binding, self.client, endpoint, key, payload, on_text, on_reasoning, request_id=request_id)
                     else:
-                        result = await complete(self.client, endpoint, key, payload, on_text, on_reasoning)
+                        result = await self.model_service.complete(model_binding, self.client, endpoint, key, payload, on_text, on_reasoning)
                 finally:
                     await stream.close()
                 assistant = result["message"]
