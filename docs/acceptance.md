@@ -227,3 +227,24 @@ signature validation was weakened. The public download feed remains unchanged.
 Actual model requests after restart have persisted model-provider bindings;
 replacement/fallback/no-replay and exception-redaction behavior is covered by
 synthetic Engine/database tests, not claimed as arbitrary plugin-code loading.
+
+### Final local revision: Build 30
+
+The final text-protection revision is installed from clean public source
+`a1c488c`. Whole-field writes now reject incompletely observed values and values
+changed since the snapshot. Dedicated native checks cover empty/unreadable,
+truncated and interveningly edited values; this does not claim atomic AX edits
+or selected-range editing. The complete source check again passed 1,154 Python
+and 460 Node tests, and the final bundle smoke passed. All 488 message rows that
+existed immediately before this update remained byte-for-byte equivalent as
+SQLite row values after launch.
+
+DMG SHA-256:
+`bcb9deb2e0ea80c477d21085f64eb83e5210469d95d56fd7002778ab676f2284`
+(56,434,723 bytes). A real model request from this final installation again
+reported `accessibility:not_granted` and stopped without reading other windows
+or using another control channel. Finder, exact-window reads and long-field
+refusal through the final installed host are therefore still awaiting the user's
+OS reauthorization. Existing Build 28 cross-application effects remain valid
+historical evidence, not a substitute for these final-build checks. No new
+public download feed was published; no hosted service was restarted.
