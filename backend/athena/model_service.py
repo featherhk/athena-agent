@@ -11,12 +11,12 @@ import re
 from typing import Callable
 from uuid import uuid4
 
-from .errors import ServiceError
+from .errors import ServiceError, UserError
 from . import model
 
 
 PROTOCOLS = frozenset(("chat_completions", "chat_completions_json"))
-SAFE_FAILURE_CODES = frozenset(("provider_auth_failed", "provider_balance_insufficient", "provider_access_denied",
+SAFE_FAILURE_CODES = frozenset(("provider_unavailable", "provider_auth_failed", "provider_balance_insufficient", "provider_access_denied",
     "provider_rate_limited", "provider_stream_error", "generation_incomplete", "stream_interrupted", "provider_contract_error"))
 
 
@@ -24,7 +24,7 @@ def safe_failure(error):
     # Even a trusted adapter can accidentally include a request/credential in an
     # exception. The engine persists exception text, so only host-owned prose and
     # a bounded diagnostic code may cross this boundary. Never preserve its cause.
-    code = getattr(error, "code", None) if isinstance(error, ServiceError) else None
+    code = getattr(error, "code", None) if isinstance(error, (ServiceError, UserError)) else None
     if not isinstance(code, str) or (code not in SAFE_FAILURE_CODES and not re.fullmatch(r"provider_http_[45][0-9]{2}", code)):
         code = "provider_adapter_failed"
     return ServiceError(code, "The model request could not finish. Its partial work has been preserved.")

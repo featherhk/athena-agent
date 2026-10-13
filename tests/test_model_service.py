@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from athena.auth import Auth
-from athena.errors import ServiceError
+from athena.errors import ServiceError, UserError
 from athena.model_service import ModelProvider, ModelService
 from athena.profiles import Profile
 from athena.store import now
@@ -317,13 +317,14 @@ async def test_operator_can_register_json_protocol_without_editing_database(conf
         await database.close()
 
 
-@pytest.mark.parametrize("known_service_error", [False, True])
-async def test_provider_exception_cannot_persist_credential_or_raw_message(engine, store, known_service_error):
+@pytest.mark.parametrize("error_type,expected_code", [(RuntimeError, "provider_adapter_failed"),
+    (ServiceError, "provider_auth_failed"), (UserError, "provider_unavailable")])
+async def test_provider_exception_cannot_persist_credential_or_raw_message(engine, store, error_type, expected_code):
     async def failing(client, endpoint, key, *args, **kwargs):
         raw = "private-adapter-diagnostic=" + key
-        if known_service_error:
-            raise ServiceError("provider_auth_failed", raw)
-        raise RuntimeError(raw)
+        if error_type is RuntimeError:
+            raise RuntimeError(raw)
+        raise error_type(expected_code, raw)
 
     engine.model_service.activate(provider("test.redacted", failing))
     session = await store.session()
@@ -335,4 +336,4 @@ async def test_provider_exception_cannot_persist_credential_or_raw_message(engin
     encoded = json.dumps(rows)
     assert "test-provider-key" not in encoded and "private-adapter-diagnostic" not in encoded
     assert request["status"] == "failed"
-    assert request["error_code"] == ("provider_auth_failed" if known_service_error else "provider_adapter_failed")
+    assert request["error_code"] == expected_code
